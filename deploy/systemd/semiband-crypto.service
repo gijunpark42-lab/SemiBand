@@ -1,0 +1,15 @@
+[Unit]
+Description=SemiBand crypto bot (volatility breakout, websocket)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=__USER__
+WorkingDirectory=/opt/semiband
+ExecStart=/opt/semiband/venv/bin/python crypto_run.py
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

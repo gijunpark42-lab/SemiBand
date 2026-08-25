@@ -1,0 +1,8 @@
+[Unit]
+Description=SemiBand weekly fundamentals refresh (Yahoo -> fundamentals.json)
+
+[Service]
+Type=oneshot
+User=__USER__
+WorkingDirectory=/opt/semiband
+ExecStart=/opt/semiband/venv/bin/python fundamentals.py

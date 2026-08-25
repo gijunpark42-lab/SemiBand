@@ -9,3 +9,4 @@ web/.next/
 web/.vercel/
 web/.env*.local
 web/tsconfig.tsbuildinfo
+crypto.log

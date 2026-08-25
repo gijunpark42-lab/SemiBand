@@ -24,8 +24,8 @@ def positions():
     return {p.symbol: p for p in _client.get_all_positions()}
 
 
-def buy(symbol, notional):
-    """Market buy for a dollar amount."""
+def buy(symbol, notional, crypto=False):
+    """Market buy for a dollar amount. Crypto orders must be GTC (no DAY)."""
     if config.DRY_RUN:
         log.info("DRY_RUN buy %s $%.2f", symbol, notional)
         return None
@@ -34,7 +34,7 @@ def buy(symbol, notional):
             symbol=symbol,
             notional=round(notional, 2),
             side=OrderSide.BUY,
-            time_in_force=TimeInForce.DAY,
+            time_in_force=TimeInForce.GTC if crypto else TimeInForce.DAY,
         )
     )
     log.info("BUY %s $%.2f (order %s)", symbol, notional, order.id)

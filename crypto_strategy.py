@@ -6,7 +6,7 @@ decide() is called once per symbol per poll. Return "BUY", "SELL", or None.
 
     bars       DataFrame of daily bars, oldest -> newest, INCLUDING today's
                partial bar (Alpaca sends it; its open is what we need).
-    price      live ask right now
+    price      live ask from the websocket
     position   open Alpaca Position, or None if flat
     entry_day  ISO date (UTC) of this symbol's last entry, or None
 

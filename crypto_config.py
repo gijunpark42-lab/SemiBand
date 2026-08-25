@@ -13,4 +13,4 @@ K = 0.5
 DRY_RUN = True                   # True = log intended orders, send nothing
 POSITION_PCT = 0.10              # each entry = this share of account equity
 MAX_TOTAL_EXPOSURE_USD = 30_000  # crypto-only cap, separate from the stock bot
-POLL_SECONDS = 60
+# quotes arrive over the websocket; no polling interval

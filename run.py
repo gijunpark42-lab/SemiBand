@@ -13,6 +13,7 @@ from pathlib import Path
 import broker
 import config
 import data
+import journal
 import strategy
 
 logging.basicConfig(
@@ -73,9 +74,12 @@ def cycle():
                 # guidance miss: close everything, and no re-entry until cooldown
                 miss = misses[symbol]
                 signal = "SELL" if position is not None else None
-                note = f"{signal or 'blocked'} (guidance sales {_pct(miss.get('sales_pct'))} eps {_pct(miss.get('eps_pct'))})"
+                reason = f"guidance miss: sales {_pct(miss.get('sales_pct'))} eps {_pct(miss.get('eps_pct'))} vs street"
+                note = f"{signal or 'blocked'} ({reason})"
             else:
                 signal = strategy.decide(symbol, bars, price, position)
+                pct = strategy.ps_percentile(symbol, bars, price)
+                reason = None if pct is None else f"P/S percentile {pct:.0f} of own band"
                 note = signal or "watch"
             log.info(
                 "%-6s %10.2f  %+6.2f%%  prev=%.2f  pos=%s  -> %s",
@@ -84,9 +88,11 @@ def cycle():
             )
 
             if signal == "BUY" and position is None:
-                candidates.append((strategy.ps_percentile(symbol, bars, price), symbol))
+                candidates.append((pct, symbol, price, reason))
             elif signal == "SELL" and position is not None:
                 broker.close(symbol)
+                journal.record(symbol, "SELL", reason, price,
+                               qty=position.qty, dry_run=config.DRY_RUN)
                 open_exposure -= abs(float(position.market_value))
         except Exception:
             log.exception("%s: cycle failed", symbol)
@@ -95,8 +101,8 @@ def cycle():
     if len(candidates) > config.MAX_NEW_ENTRIES:
         log.info("%d BUY candidates, taking the %d cheapest: %s",
                  len(candidates), config.MAX_NEW_ENTRIES,
-                 " ".join(f"{s}({p:.0f})" for p, s in candidates[:config.MAX_NEW_ENTRIES]))
-    for _, symbol in candidates[:config.MAX_NEW_ENTRIES]:
+                 " ".join(f"{c[1]}({c[0]:.0f})" for c in candidates[:config.MAX_NEW_ENTRIES]))
+    for pct, symbol, price, reason in candidates[:config.MAX_NEW_ENTRIES]:
         try:
             room = config.MAX_TOTAL_EXPOSURE_USD - open_exposure
             size = min(equity * config.POSITION_PCT, room)
@@ -104,6 +110,7 @@ def cycle():
                 log.warning("%s: BUY skipped, exposure cap reached ($%.0f)", symbol, open_exposure)
                 continue
             broker.buy(symbol, size)
+            journal.record(symbol, "BUY", reason, price, notional=size, dry_run=config.DRY_RUN)
             open_exposure += size
         except Exception:
             log.exception("%s: buy failed", symbol)

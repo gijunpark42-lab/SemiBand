@@ -3,3 +3,8 @@ __pycache__/
 *.pyc
 *.log
 guidance.json
+trades.json
+web/node_modules/
+web/.next/
+web/.vercel/
+web/.env*.local

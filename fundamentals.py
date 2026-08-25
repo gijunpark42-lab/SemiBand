@@ -99,7 +99,14 @@ def refresh(force=False):
 
     for i, symbol in enumerate(todo):
         try:
-            cache[symbol] = _fetch(symbol)
+            fresh = _fetch(symbol)
+            # Yahoo only ever returns the latest ~5 quarters. Merge into what
+            # we already hold so quarters accumulate week over week and the
+            # P/S band grows past the 3-6 months a single fetch can value.
+            old = cache.get(symbol, {})
+            fresh["revenue"] = {**old.get("revenue", {}), **fresh["revenue"]}
+            fresh["shares"] = {**old.get("shares", {}), **fresh["shares"]}
+            cache[symbol] = fresh
         except Exception as exc:
             log.warning("%s: fetch failed, keeping cached entry (%s)", symbol, exc)
         if i < len(todo) - 1:

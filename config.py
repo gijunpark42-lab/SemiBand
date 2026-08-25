@@ -105,10 +105,16 @@ PS_BUY_PCT = 20                  # buy when today's P/S is in the bottom 20% of 
 PS_SELL_PCT = 80                 # sell when it is in the top 20%
 PS_MIN_HISTORY = 60              # bars of valid P/S needed; Yahoo gives ~5 quarters,
                                  # so a full-TTM band is only ~3-6 months long
+MAX_NEW_ENTRIES = 3              # per cycle, the cheapest BUY candidates by P/S percentile
+
+# --- strategy: guidance exit (earnings_stream.py -> guidance.json) ---
+GUIDANCE_FILE = "guidance.json"
+EPS_VS_SALES_RATIO = 2           # exit if EPS guide cut is >= this x the sales guide raise
+GUIDANCE_COOLDOWN_DAYS = 75      # no re-entry after a guidance exit until roughly the next print
 
 # --- execution ---
 DRY_RUN = True                   # True = log intended orders, send nothing
-MAX_POSITION_USD = 10_000        # dollars per symbol on a new entry
+POSITION_PCT = 0.10              # each new entry = this share of account equity
 MAX_TOTAL_EXPOSURE_USD = 100_000 # total long exposure cap; equity = no leverage.
                                  # overnight margin is only 2x ($200k), not the
                                  # 4x intraday figure, so holding past the close

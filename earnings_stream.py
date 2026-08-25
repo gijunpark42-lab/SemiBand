@@ -31,6 +31,8 @@ import websockets
 import config
 import tickers
 
+from pathlib import Path
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)-7s %(message)s",
@@ -70,7 +72,21 @@ _GUIDANCE_RE = re.compile(
     r"[^,]{0,60}?\b(Guidance|Outlook|EPS|Sales|Revenue)\b",
     re.I,
 )
+# Guidance clause: "Sees Q3 Adj EPS $0.81-$0.93 vs $0.83 Est", "Sees Sales
+# $1.650B-$1.750B vs $1.666B Est", "Sees FY26 Revenue ~$207M". The range and
+# the "vs ... Est" tail are both optional; without an Est there is nothing to
+# judge against and the clause is kept for the log only.
+_GUIDE_CLAUSE_RE = re.compile(
+    rf"\b(?:Sees|Raises|Lowers|Cuts|Boosts|Narrows|Reaffirms|Issues)\b"
+    rf"(?:\s+(?:Prelim\.?|Preliminary))?"
+    rf"(?:\s+(?:Q[1-4]|H[12]|FY\d{{0,4}}))?"
+    rf"(?:\s+(Adj\.?|Adjusted|GAAP|Non-GAAP))?"
+    rf"\s+(EPS|Sales|Revenue)\s+(?:Of\s+)?({_NUM})(?:\s*-\s*({_NUM}))?"
+    rf"(?:\s+vs\.?\s+({_NUM})\s+Est)?",
+    re.I,
+)
 _SUFFIX = {"K": 1e3, "M": 1e6, "B": 1e9, "T": 1e12}
+GUIDANCE_FILE = Path(__file__).with_name(config.GUIDANCE_FILE)
 
 
 def _money(text):
@@ -139,7 +155,8 @@ def parse(item):
     guidance = _GUIDANCE_RE.search(headline)
     if guidance:
         event.update(kind="guidance", action=guidance.group(1),
-                     metric=guidance.group(2).lower(), metrics=metrics)
+                     metric=guidance.group(2).lower(), metrics=metrics,
+                     guide=parse_guidance(headline))
         return event
 
     if metrics:
@@ -149,6 +166,57 @@ def parse(item):
         )
         return event
     return None
+
+
+def parse_guidance(headline):
+    """Guidance clauses -> {"eps": {...}, "sales": {...}} (Revenue -> sales).
+
+    Each has mid (midpoint of the range, or the single number), est (street
+    consensus, None if the headline has no "vs X Est"), pct (mid vs est, %),
+    and adj (True for Adj/Non-GAAP EPS). Adj beats GAAP when both appear,
+    because the consensus Benzinga prints is the adjusted one.
+    """
+    guide = {}
+    for basis, metric, low, high, est in _GUIDE_CLAUSE_RE.findall(headline):
+        low_v, high_v, est_v = _money(low), _money(high), _money(est)
+        if low_v is None:
+            continue
+        mid = (low_v + high_v) / 2 if high_v is not None else low_v
+        adj = bool(basis) and basis.upper() != "GAAP"
+        name = "sales" if metric.lower() in ("sales", "revenue") else "eps"
+        if name in guide and guide[name]["adj"] and not adj:
+            continue
+        guide[name] = {
+            "mid": mid, "est": est_v, "adj": adj,
+            "pct": (mid - est_v) / abs(est_v) * 100 if est_v else None,
+        }
+    return guide
+
+
+def record_guidance(event):
+    """Merge a guidance event into guidance.json for run.py's exit check.
+
+    One print often arrives as several headlines (GAAP line, Adj line, a
+    sales-only line), so entries merge per symbol: sales from any headline,
+    EPS replaced only by an Adj figure or when nothing Adj is held yet.
+    """
+    guide = event.get("guide") or {}
+    if not guide:
+        return
+    book = json.loads(GUIDANCE_FILE.read_text()) if GUIDANCE_FILE.exists() else {}
+    for symbol in event["symbols"]:
+        old = book.get(symbol, {})
+        # a new print supersedes last quarter's entry entirely
+        if old.get("at", "")[:10] != event["created_at"].date().isoformat():
+            old = {}
+        new = dict(old, at=event["created_at"].isoformat(), headline=event["headline"])
+        if "sales" in guide:
+            new["sales_pct"] = guide["sales"]["pct"]
+        if "eps" in guide and (guide["eps"]["adj"] or not old.get("eps_adj")):
+            new["eps_pct"] = guide["eps"]["pct"]
+            new["eps_adj"] = guide["eps"]["adj"]
+        book[symbol] = new
+    GUIDANCE_FILE.write_text(json.dumps(book, indent=2))
 
 
 def describe(event):
@@ -187,6 +255,8 @@ def on_earnings(event):
     Runs on a worker task, so blocking here is safe: it will not stall the
     socket. Bursts queue up instead (16:00 ET peaks at ~15 items/min feed-wide).
     """
+    if event["kind"] == "guidance":
+        record_guidance(event)
 
 
 async def _consume(queue):

@@ -54,9 +54,14 @@ export const getHistory = () =>
   get<History>("/v2/account/portfolio/history?period=3M&timeframe=1D");
 
 export async function getTrades(): Promise<Trade[] | null> {
+  // trades.json lives in a private Blob store: read it with the store token.
   const url = process.env.TRADES_URL;
-  if (!url) return null;
-  const res = await fetch(url, { cache: "no-store" });
+  const token = process.env.BLOB_READ_WRITE_TOKEN;
+  if (!url || !token) return null;
+  const res = await fetch(`${url}?cache=0`, {
+    headers: { authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
   if (!res.ok) return null;
   const rows: Trade[] = await res.json();
   return rows.slice().reverse(); // newest first

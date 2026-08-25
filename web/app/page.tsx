@@ -12,9 +12,22 @@ const when = (iso: string) =>
     hour: "2-digit", minute: "2-digit" });
 
 export default async function Page() {
-  const [account, positions, history, trades] = await Promise.all([
-    getAccount(), getPositions(), getHistory(), getTrades(),
-  ]);
+  let account, positions, history, trades;
+  try {
+    [account, positions, history, trades] = await Promise.all([
+      getAccount(), getPositions(), getHistory(), getTrades(),
+    ]);
+  } catch (e) {
+    return (
+      <main>
+        <h1>Semi Bot · paper</h1>
+        <div className="card empty">
+          Alpaca not reachable — set ALPACA_API_KEY / ALPACA_SECRET_KEY in the Vercel project env and redeploy.
+          <div className="muted" style={{ marginTop: 8, fontSize: 12 }}>{String(e)}</div>
+        </div>
+      </main>
+    );
+  }
 
   const equity = Number(account.equity);
   const lastEquity = Number(account.last_equity);
@@ -88,7 +101,7 @@ export default async function Page() {
       <h2>Trades · why</h2>
       <div className="card scroll">
         {trades === null ? (
-          <div className="empty">TRADES_URL not set — the bot journal is not connected</div>
+          <div className="empty">TRADES_URL / BLOB_READ_WRITE_TOKEN not set — the bot journal is not connected</div>
         ) : trades.length === 0 ? (
           <div className="empty">No trades yet</div>
         ) : (

@@ -2,7 +2,8 @@
 
 Every fill-intent (also in DRY_RUN) is appended to trades.json locally and,
 when BLOB_READ_WRITE_TOKEN is set in .env, the whole file is re-uploaded to
-Vercel Blob at a fixed pathname so the web app (web/) can read it. Upload
+Vercel Blob at a fixed pathname so the web app (web/) can read it. The store
+is private: the web app reads it with the same token, nobody else can. Upload
 failures are logged and never block trading.
 """
 import json
@@ -12,6 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
+
+import config  # noqa: F401  (loads .env so BLOB_READ_WRITE_TOKEN is visible)
 
 log = logging.getLogger("journal")
 
@@ -49,6 +52,7 @@ def _upload(body):
             headers={
                 "authorization": f"Bearer {token}",
                 "x-api-version": "7",
+                "x-vercel-blob-access": "private",
                 "x-content-type": "application/json",
                 "x-add-random-suffix": "0",
                 "x-allow-overwrite": "1",

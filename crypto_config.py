@@ -10,7 +10,7 @@ SYMBOLS = ["BTC/USD", "ETH/USD", "SOL/USD"]
 K = 0.5
 
 # --- execution ---
-DRY_RUN = True                   # True = log intended orders, send nothing
+DRY_RUN = False                  # True = log intended orders, send nothing
 POSITION_PCT = 0.10              # each entry = this share of account equity
 MAX_TOTAL_EXPOSURE_USD = 30_000  # crypto-only cap, separate from the stock bot
 # quotes arrive over the websocket; no polling interval

@@ -113,7 +113,7 @@ EPS_VS_SALES_RATIO = 2           # exit if EPS guide cut is >= this x the sales 
 GUIDANCE_COOLDOWN_DAYS = 75      # no re-entry after a guidance exit until roughly the next print
 
 # --- execution ---
-DRY_RUN = True                   # True = log intended orders, send nothing
+DRY_RUN = False                  # True = log intended orders, send nothing
 POSITION_PCT = 0.10              # each new entry = this share of account equity
 MAX_TOTAL_EXPOSURE_USD = 100_000 # total long exposure cap; equity = no leverage.
                                  # overnight margin is only 2x ($200k), not the

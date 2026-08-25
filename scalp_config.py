@@ -16,7 +16,7 @@ MAX_HOLD_MINUTES = 240           # time stop
 REENTRY_COOLDOWN_MINUTES = 30    # after any exit, no new entry on that coin for this long
 
 # --- sizing & risk ---
-DRY_RUN = True
+DRY_RUN = False
 POSITION_PCT = 0.04              # 4% of equity per trade
 MAX_OPEN = 3                     # concurrent positions
 DAILY_LOSS_LIMIT_PCT = 0.015     # realized loss today >= 1.5% of equity -> no new entries until next UTC day

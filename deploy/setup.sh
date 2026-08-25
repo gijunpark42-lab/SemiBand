@@ -36,10 +36,10 @@ for unit in deploy/systemd/*.service deploy/systemd/*.timer; do
   sed "s|__USER__|$USER_NAME|g" "$unit" | sudo tee "/etc/systemd/system/$(basename "$unit")" > /dev/null
 done
 sudo systemctl daemon-reload
-sudo systemctl enable semiband-stocks semiband-crypto semiband-earnings semiband-fundamentals.timer
+sudo systemctl enable semiband-stocks semiband-feed semiband-crypto semiband-earnings semiband-scalp semiband-fundamentals.timer
 
 echo
 echo "Setup done. Next:"
 echo "  1. scp your .env to $DIR/.env   (chmod 600)"
-echo "  2. sudo systemctl start semiband-stocks semiband-crypto semiband-earnings semiband-fundamentals.timer"
+echo "  2. sudo systemctl start semiband-stocks semiband-feed semiband-crypto semiband-earnings semiband-scalp semiband-fundamentals.timer"
 echo "  3. journalctl -fu semiband-crypto     (live log)"

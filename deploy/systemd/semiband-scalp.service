@@ -1,12 +1,12 @@
 [Unit]
-Description=SemiBand crypto bot (volatility breakout, websocket)
+Description=SemiBand intraday crypto bot (Donchian breakout, XRP/DOGE/AVAX)
 After=network-online.target semiband-feed.service
 Wants=network-online.target semiband-feed.service
 
 [Service]
 User=__USER__
 WorkingDirectory=/opt/semiband
-ExecStart=/opt/semiband/venv/bin/python crypto_run.py
+ExecStart=/opt/semiband/venv/bin/python scalp_run.py
 Restart=always
 RestartSec=10
 Environment=PYTHONUNBUFFERED=1

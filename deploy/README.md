@@ -38,15 +38,15 @@ On the VM:
 
 ```bash
 chmod 600 /opt/semiband/.env
-sudo systemctl start semiband-stocks semiband-crypto semiband-earnings semiband-fundamentals.timer
+sudo systemctl start semiband-stocks semiband-feed semiband-crypto semiband-earnings semiband-scalp semiband-fundamentals.timer
 ```
 
 ## Day to day
 
 ```bash
 systemctl status semiband-*                 # what is running
-journalctl -fu semiband-crypto              # live crypto log (stocks / earnings likewise)
-cd /opt/semiband && git pull && sudo systemctl restart semiband-stocks semiband-crypto semiband-earnings
+journalctl -fu semiband-crypto              # live crypto log (feed / scalp / stocks / earnings likewise)
+cd /opt/semiband && git pull && sudo systemctl restart semiband-stocks semiband-feed semiband-crypto semiband-earnings semiband-scalp
 ```
 
 `DRY_RUN` is read from `config.py` / `crypto_config.py`, so flipping it is a

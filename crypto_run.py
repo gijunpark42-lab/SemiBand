@@ -1,4 +1,4 @@
-"""Crypto main loop: real-time quotes over Alpaca's crypto websocket, 24/7.
+"""Crypto main loop: real-time quotes from feed.py (Alpaca crypto websocket), 24/7.
 
 Two things happen here:
 
@@ -29,6 +29,7 @@ import broker
 import config as shared          # .env keys
 import crypto_config as config
 import crypto_strategy as strategy
+import feed
 import journal
 
 logging.basicConfig(
@@ -39,7 +40,6 @@ logging.basicConfig(
 )
 log = logging.getLogger("crypto")
 
-STREAM_URL = "wss://stream.data.alpaca.markets/v1beta3/crypto/us"
 ROLLOVER_CHECK_S = 5             # how often the timer looks for a new UTC day
 HEARTBEAT_S = 300                # ask-vs-target summary line while nothing fires
 
@@ -171,23 +171,12 @@ async def heartbeat_task(state, asks):
 
 
 async def stream(state, asks):
-    """One socket session: auth, subscribe to quotes, dispatch ticks."""
-    async with websockets.connect(STREAM_URL, max_size=None) as socket:
-        await socket.recv()
-        await socket.send(json.dumps({"action": "auth", "key": shared.API_KEY,
-                                      "secret": shared.SECRET_KEY}))
-        reply = json.loads(await socket.recv())[0]
-        if reply.get("T") == "error":
-            raise RuntimeError(f"auth failed: {reply.get('msg')}")
-        await socket.send(json.dumps({"action": "subscribe", "quotes": config.SYMBOLS}))
-        reply = json.loads(await socket.recv())[0]
-        if reply.get("T") == "error":
-            raise RuntimeError(f"subscribe failed: {reply.get('msg')}")
-        log.info("subscribed to quotes: %s", ",".join(reply.get("quotes", [])))
-
+    """One session on the local feed (feed.py owns the Alpaca socket)."""
+    async with websockets.connect(feed.LOCAL_URL, max_size=None) as socket:
+        log.info("connected to feed %s", feed.LOCAL_URL)
         async for raw in socket:
             for item in json.loads(raw):
-                if item.get("T") != "q":
+                if item.get("T") != "q" or item["S"] not in config.SYMBOLS:
                     continue
                 symbol, ask = item["S"], float(item["ap"])
                 asks[symbol] = ask
@@ -210,7 +199,7 @@ async def run():
             await stream(state, asks)
             backoff = 1
         except Exception as exc:
-            log.warning("stream dropped (%s), retrying in %ds", exc, backoff)
+            log.warning("feed dropped (%s), retrying in %ds", exc, backoff)
         await asyncio.sleep(backoff)
         backoff = min(backoff * 2, 60)
 

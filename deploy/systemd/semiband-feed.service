@@ -1,0 +1,15 @@
+[Unit]
+Description=SemiBand crypto quote feed (single Alpaca socket, fan-out to bots)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=__USER__
+WorkingDirectory=/opt/semiband
+ExecStart=/opt/semiband/venv/bin/python feed.py
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

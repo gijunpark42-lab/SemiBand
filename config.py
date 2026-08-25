@@ -100,6 +100,12 @@ SECTORS = {
 # --- data ---
 LOOKBACK_DAYS = 200              # completed daily bars handed to the strategy
 
+# --- strategy: P/S band ---
+PS_BUY_PCT = 20                  # buy when today's P/S is in the bottom 20% of its history
+PS_SELL_PCT = 80                 # sell when it is in the top 20%
+PS_MIN_HISTORY = 60              # bars of valid P/S needed; Yahoo gives ~5 quarters,
+                                 # so a full-TTM band is only ~3-6 months long
+
 # --- execution ---
 DRY_RUN = True                   # True = log intended orders, send nothing
 MAX_POSITION_USD = 10_000        # dollars per symbol on a new entry

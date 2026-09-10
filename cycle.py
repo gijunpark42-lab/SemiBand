@@ -300,6 +300,12 @@ def main():
                 (broker.buy if side == "BUY" else broker.sell)(t, part, f"{coid}-{k}", dry_run=dry)
             except Exception as exc:
                 log.error("slice %d %s %s failed: %s", k, side, t, exc)
+    if not dry and done:
+        log.info("waiting %d min for limit fills before the market cleanup", config.LIMIT_CLEANUP_MIN)
+        time.sleep(config.LIMIT_CLEANUP_MIN * 60)
+        n = broker.cleanup_open_orders(config.ORDER_PREFIX, dry_run=dry)
+        if n:
+            notes.append(f"{n} limit remainders converted to market")
     log.info("done: %d orders; top: %s", len(done),
              ", ".join(f"{t} {c:+.2f}" for t, c in ranked[:8]))
     return 0

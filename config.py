@@ -88,6 +88,9 @@ ORDER_PREFIX = "sb2-"             # client_order_id prefix: how we tell our orde
 # --- execution: spread each day's buys/trims over the first hour instead of one market order at the bell ---
 EXECUTION_SLICES = 2              # 2 slices -> 09:30 and 09:40 ET; the entry-time study (timing.py, 2026-09-10) showed the open beats every later hour
 EXECUTION_INTERVAL_MIN = 10
+LIMIT_COLLAR_BPS = 20             # buys/sells go as MARKETABLE LIMIT orders: ask x (1 + 20 bps) / bid x (1 - 20 bps); fills like a market order but cannot be run over by a wild print
+MAX_SPREAD_BPS_FOR_LIMIT = 300    # if the quoted spread is wider than this (or the quote is stale/missing) fall back to a plain market order
+LIMIT_CLEANUP_MIN = 8             # unfilled limit remainders are cancelled and re-sent as market orders after this many minutes
 
 # --- intraday guardian (guardian.py, hourly during the session) ---
 GUARDIAN_EXIT_SEVERITY = 0.7      # exit a holding only when Claude rates a NEW headline as material and this severe

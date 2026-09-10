@@ -4,12 +4,15 @@ from datetime import datetime, timedelta, timezone
 
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import AssetClass, AssetStatus, OrderSide, QueryOrderStatus, TimeInForce
-from alpaca.trading.requests import GetAssetsRequest, GetOrdersRequest, MarketOrderRequest
+from alpaca.data.historical import StockHistoricalDataClient
+from alpaca.data.requests import StockLatestQuoteRequest
+from alpaca.trading.requests import GetAssetsRequest, GetOrdersRequest, LimitOrderRequest, MarketOrderRequest
 
 import config
 
 log = logging.getLogger(__name__)
 _client = TradingClient(config.API_KEY, config.SECRET_KEY, paper=config.PAPER)
+_data = StockHistoricalDataClient(config.API_KEY, config.SECRET_KEY)
 
 
 def account():
@@ -40,10 +43,38 @@ def _dry(dry_run):
     return config.DRY_RUN if dry_run is None else dry_run
 
 
+def quote(symbol):
+    """(bid, ask, spread_bps) from the free IEX feed; (None, None, None) if unavailable."""
+    try:
+        q = _data.get_stock_latest_quote(StockLatestQuoteRequest(symbol_or_symbols=symbol))[symbol]
+        bid, ask = float(q.bid_price or 0), float(q.ask_price or 0)
+        age = (datetime.now(timezone.utc) - q.timestamp).total_seconds() if q.timestamp else 1e9
+        if bid <= 0 or ask <= 0 or ask < bid or age > 120:      # stale (e.g. yesterday's last quote) -> no limit
+            return None, None, None
+        return bid, ask, (ask - bid) / ((ask + bid) / 2) * 1e4
+    except Exception as exc:
+        log.warning("quote %s: %s", symbol, exc)
+        return None, None, None
+
+
 def _order(symbol, notional, side, client_order_id, dry_run):
+    """Marketable limit when a sane quote exists (fills at once, capped slippage); market otherwise."""
     if _dry(dry_run):
         log.info("DRY_RUN %s %s $%.2f", side.name, symbol, notional)
         return None
+    bid, ask, spread = quote(symbol)
+    if bid and spread is not None and spread <= config.MAX_SPREAD_BPS_FOR_LIMIT and config.LIMIT_COLLAR_BPS:
+        collar = config.LIMIT_COLLAR_BPS / 1e4
+        limit = round(ask * (1 + collar), 2) if side == OrderSide.BUY else round(bid * (1 - collar), 2)
+        qty = round(notional / limit, 4)
+        try:
+            order = _client.submit_order(LimitOrderRequest(
+                symbol=symbol, qty=qty, side=side, time_in_force=TimeInForce.DAY,
+                limit_price=limit, client_order_id=client_order_id))
+            log.info("%s %s $%.2f as LIMIT %.2f (spread %.0f bps, order %s)", side.name, symbol, notional, limit, spread, order.id)
+            return order
+        except Exception as exc:
+            log.warning("limit order %s %s rejected (%s); falling back to market", side.name, symbol, exc)
     order = _client.submit_order(
         MarketOrderRequest(
             symbol=symbol,
@@ -53,8 +84,31 @@ def _order(symbol, notional, side, client_order_id, dry_run):
             client_order_id=client_order_id,
         )
     )
-    log.info("%s %s $%.2f (order %s)", side.name, symbol, notional, order.id)
+    log.info("%s %s $%.2f MARKET (spread %s bps, order %s)", side.name, symbol, notional,
+             f"{spread:.0f}" if spread is not None else "n/a", order.id)
     return order
+
+
+def cleanup_open_orders(prefix, dry_run=None):
+    """Cancel our still-open limit orders and re-send the unfilled remainder as market orders."""
+    if _dry(dry_run):
+        return 0
+    n = 0
+    for o in _client.get_orders(GetOrdersRequest(status=QueryOrderStatus.OPEN, limit=500)):
+        if not (o.client_order_id or "").startswith(prefix):
+            continue
+        try:
+            _client.cancel_order_by_id(o.id)
+            remaining = float(o.qty or 0) - float(o.filled_qty or 0)
+            if remaining > 0:
+                _client.submit_order(MarketOrderRequest(symbol=o.symbol, qty=round(remaining, 4), side=o.side,
+                                                        time_in_force=TimeInForce.DAY,
+                                                        client_order_id=(o.client_order_id + "-mkt")[:48]))
+                log.info("cleanup: %s %s remaining %.4f sent as MARKET", o.side.name, o.symbol, remaining)
+                n += 1
+        except Exception as exc:
+            log.error("cleanup %s failed: %s", o.symbol, exc)
+    return n
 
 
 def buy(symbol, notional, client_order_id=None, dry_run=None):

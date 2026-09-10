@@ -70,8 +70,11 @@ live learner at half weight (`WARM_START_WEIGHT`). Not simulated: fundamentals (
 
 ## Execution and the intraday guardian
 
-- Orders: exits go out in full at the open; buys and trims are split into `EXECUTION_SLICES` (4) market orders
-  15 minutes apart (09:30, 09:45, 10:00, 10:15 ET) to avoid paying the whole opening spread at once.
+- Orders: exits go out in full at the open; buys and trims are split into `EXECUTION_SLICES` (2) orders 10 minutes
+  apart (09:30, 09:40 ET). The entry-time study (`timing.py`, hourly bars) showed the open beats every later hour.
+  Each order is a marketable LIMIT (ask + 20 bps for buys, bid - 20 bps for sells) when a fresh IEX quote with a
+  spread under 300 bps exists, otherwise a market order; unfilled limit remainders are cancelled and re-sent as
+  market orders after `LIMIT_CLEANUP_MIN` minutes. Wide-spread small caps therefore never get run over by one print.
 - `guardian.py` runs hourly during the session (Task Scheduler "SemiBand-Guardian", 07:35–13:05 PT). For each
   holding it pulls today's headlines (Finnhub + DuckDuckGo), and only when there are NEW titles asks Claude whether
   they describe a material adverse event. It exits only on action=exit with severity ≥ `GUARDIAN_EXIT_SEVERITY`

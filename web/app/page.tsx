@@ -88,6 +88,54 @@ export default async function Page() {
         )}
       </div>
 
+      <h2>Backtest · walk-forward, point-in-time rule agents only</h2>
+      <div className="card">
+        {!dash?.backtest ? (
+          <div className="empty">No backtest published yet</div>
+        ) : (() => {
+          const bt = dash.backtest!;
+          const p = bt.portfolio;
+          return (
+            <>
+              <div className="muted" style={{ fontSize: 12, marginBottom: 10 }}>
+                {bt.period.start} → {bt.period.end} · {bt.period.trading_days} trading days · agents simulated: {bt.agents.join(", ")} ·
+                learner refit weekly on outcomes known at the time · 5 bps per unit turnover
+              </div>
+              <div className="tiles">
+                <div className="tile"><div className="label">Live rules (sim)</div>
+                  <div className={`value ${cls(p.total_return)}`}>{pct(p.total_return)}</div>
+                  <div className="delta muted">avg gross {(p.avg_gross * 100).toFixed(0)}% · {p.avg_names} names · Sharpe {p.sharpe}</div></div>
+                {bt.rank_portfolio && (
+                  <div className="tile"><div className="label">Top-15 rank (signal quality)</div>
+                    <div className={`value ${cls(bt.rank_portfolio.total_return)}`}>{pct(bt.rank_portfolio.total_return)}</div>
+                    <div className={`delta ${cls(bt.rank_portfolio.excess_vs_soxx)}`}>{pct(bt.rank_portfolio.excess_vs_soxx)} vs SOXX · Sharpe {bt.rank_portfolio.sharpe}</div></div>
+                )}
+                <div className="tile"><div className="label">SOXX</div><div className={`value ${cls(p.soxx_return)}`}>{pct(p.soxx_return)}</div></div>
+                <div className="tile"><div className="label">SPY</div><div className={`value ${cls(p.spy_return)}`}>{pct(p.spy_return)}</div></div>
+                <div className="tile"><div className="label">IC (10d) learned vs equal prior</div>
+                  <div className="value">{bt.ic_10d.learned == null ? "—" : bt.ic_10d.learned.toFixed(3)}</div>
+                  <div className="delta muted">equal prior {bt.ic_10d.equal_prior == null ? "—" : bt.ic_10d.equal_prior.toFixed(3)} · {bt.ic_10d.days} days</div></div>
+              </div>
+              <div className="scroll" style={{ marginTop: 10 }}>
+                <table>
+                  <thead><tr><th>Agent</th>{Object.keys(bt.model_final).map((h) => <th key={h} className="num">IC {h}d</th>)}{Object.keys(bt.model_final).map((h) => <th key={"w" + h} className="num">w {h}d</th>)}</tr></thead>
+                  <tbody>
+                    {bt.agents.map((a) => (
+                      <tr key={a}>
+                        <td><b>{a}</b></td>
+                        {Object.values(bt.model_final).map((m, i) => <td key={i} className={`num ${(m.agent_ic[a] ?? 0) < 0 ? "down" : ""}`}>{m.agent_ic[a] == null ? "—" : m.agent_ic[a]!.toFixed(3)}</td>)}
+                        {Object.values(bt.model_final).map((m, i) => <td key={"w" + i} className={`num ${(m.w_conf[a] ?? 0) < 0 ? "down" : ""}`}>{m.w_conf[a] == null ? "—" : m.w_conf[a].toFixed(3)}</td>)}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="muted" style={{ fontSize: 11, marginTop: 8 }}>{bt.caveats.map((c, i) => <div key={i}>· {c}</div>)}</div>
+            </>
+          );
+        })()}
+      </div>
+
       <h2>How it works · data → 11 agents → weighted blend → orders → scoring</h2>
       <div className="card">
         <Pipeline />

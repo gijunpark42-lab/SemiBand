@@ -61,9 +61,11 @@ def ensure_server(wait_s=40):
     return False
 
 
-def ask_json(system, user, schema=OPINION_SCHEMA, model=None, timeout=300):
-    """One chat completion with a JSON schema; returns the parsed object."""
+def ask_json(system, user, schema=OPINION_SCHEMA, model=None, timeout=300, tools=""):
+    """One chat completion with a JSON schema; returns the parsed object.
+    tools: comma list of Claude Code built-ins to allow, e.g. "WebSearch" (server-side web search)."""
     body = {
+        "claude_tools": tools,
         "model": model or config.LLM_MODEL,
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
         "response_format": {"type": "json_schema", "json_schema": {"name": "opinion", "schema": schema}},

@@ -29,6 +29,7 @@ LLM_URL = os.getenv("LOCAL_CLAUDE_URL", "http://127.0.0.1:8765/v1")
 LLM_MODEL = "claude-sonnet-5"
 LLM_WORKERS = 2                   # concurrent claude -p calls (server allows 2)
 LLM_MAX_TICKERS = 100             # user 2026-09-10: all agents on the whole universe (returns & accuracy first); lower to save subscription budget
+WEB_SEARCH_TICKERS = 30           # llm_news may run a live web search (Claude's built-in WebSearch) for this many names: holdings + highest prelim |conviction|
 
 # --- universe ---
 BENCHMARK = "SOXX"                # agents are scored on return minus this
@@ -54,7 +55,9 @@ AGENTS = [
 ]
 HORIZONS = (5, 10, 20)            # trading days after which a prediction is scored
 
-# --- learning (multiplicative weights / Hedge) ---
+# --- learning ---
+WARM_START_WEIGHT = 0.5           # backtest rows (state/backtest.sqlite) count this much vs live rows in learner.fit; 0 = off
+# (Hedge below is kept only as a dashboard reference)
 HEDGE_ETA = 0.5                   # step size: w_i *= exp(eta * gain_i)
 WEIGHT_FLOOR = 0.02               # no agent is ever silenced completely (11 agents -> 22% floor mass)
 

@@ -77,7 +77,8 @@ def run_agents(universe, ctx, model, held, use_llm):
     prelim, _ = learner.predict(signals, model)
     ranked = sorted(prelim, key=lambda t: -abs(prelim[t]))
     keep = set(ranked[:config.LLM_MAX_TICKERS]) | (set(held) & set(universe))
-    subset = {t: universe[t] for t in universe if t in keep}
+    order = [t for t in universe if t in held] + [t for t in ranked if t in keep and t not in held]
+    subset = {t: universe[t] for t in order}          # holdings first, then by prelim |conviction|
     for name in llm_agents:
         signals += _run_agent(name, subset, ctx)
     return signals
@@ -224,7 +225,19 @@ def main():
     history.append({"date": today, "dry_run": dry, "weights": weights, "notes": notes, "decisions": decisions})
     history = history[-30:]
 
+    backtest = None
+    bt_path = config.STATE_DIR / "backtest_report.json"
+    if bt_path.exists():
+        try:
+            bt = json.loads(bt_path.read_text(encoding="utf-8"))
+            curve = bt.get("curve") or []
+            step = max(1, len(curve) // 120)
+            bt["curve"] = curve[::step] + ([curve[-1]] if curve and (len(curve) - 1) % step else [])
+            backtest = bt
+        except ValueError:
+            backtest = None
     journal.publish_dashboard({
+        "backtest": backtest,
         "benchmarks": market.benchmarks(),
         "history": history,
         "decisions": decisions,

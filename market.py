@@ -11,11 +11,19 @@ import config
 log = logging.getLogger(__name__)
 
 
-def closes(symbols, lookback_days=config.LOOKBACK_DAYS) -> pd.DataFrame:
+def closes(symbols, lookback_days=config.LOOKBACK_DAYS, cache=True) -> pd.DataFrame:
     """Adjusted daily closes, index = trading dates, columns = symbols.
-    Cached per calendar day under state/ so re-runs are free."""
+    Cached per calendar day under state/ so re-runs are free (cache=False bypasses it,
+    used by the backtest which needs a longer history than the daily cache holds)."""
     config.STATE_DIR.mkdir(exist_ok=True)
     symbols = sorted(set(symbols))
+    if not cache:
+        start = date.today() - timedelta(days=lookback_days)
+        raw = yf.download(symbols, start=start.isoformat(), auto_adjust=True, progress=False, threads=True)
+        df = raw["Close"] if isinstance(raw.columns, pd.MultiIndex) else raw[["Close"]].rename(columns={"Close": symbols[0]})
+        df = df.dropna(how="all")
+        df.index = pd.to_datetime(df.index).tz_localize(None).normalize()
+        return df
     cache = config.STATE_DIR / f"closes_{date.today().isoformat()}.pkl"
     for old in config.STATE_DIR.glob("closes_*.pkl"):
         if old != cache:
@@ -107,17 +115,17 @@ def fundamentals(symbols):
     return {s: data.get(s, {}) for s in symbols}
 
 
-def earnings(symbols):
+def earnings(symbols, limit=8):
     """{symbol: [{date, eps_estimate, reported_eps, surprise_pct}, ...]} newest first."""
     import json
     import yfinance as yf
-    path = _daily_json("earnings")
+    path = _daily_json("earnings" if limit <= 8 else f"earnings{limit}")
     data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
     todo = [s for s in symbols if s not in data]
     for s in todo:
         rows = []
         try:
-            df = yf.Ticker(s).get_earnings_dates(limit=8)
+            df = yf.Ticker(s).get_earnings_dates(limit=limit)
             if df is not None:
                 for ts, r in df.iterrows():
                     def num(v):
@@ -144,4 +152,101 @@ def benchmarks(days=130):
         if t in df.columns:
             series = df[t].dropna()
             out[t] = [[d.strftime("%Y-%m-%d"), round(float(v), 4)] for d, v in series.items()]
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Optional keyed sources (free tiers). Every function degrades to "no data"
+# when the key is missing or the call fails, so nothing depends on them.
+
+def finnhub_news(symbol, days=21, limit=15):
+    """[{title, publisher, when}] newest first from Finnhub company-news; [] without a key."""
+    import json
+    import os
+    import urllib.request
+    key = os.getenv("FINNHUB_API_KEY")
+    if not key:
+        return []
+    end = date.today()
+    start = end - timedelta(days=days)
+    url = (f"https://finnhub.io/api/v1/company-news?symbol={symbol}&from={start.isoformat()}"
+           f"&to={end.isoformat()}&token={key}")
+    try:
+        with urllib.request.urlopen(url, timeout=15) as r:
+            items = json.load(r)
+    except Exception as exc:
+        log.warning("finnhub news %s: %s", symbol, exc)
+        return []
+    out, seen = [], set()
+    for it in sorted(items, key=lambda x: x.get("datetime", 0), reverse=True):
+        title = (it.get("headline") or "").strip()
+        if not title or title.lower() in seen:
+            continue
+        seen.add(title.lower())
+        when = datetime.fromtimestamp(it.get("datetime", 0), tz=timezone.utc).date().isoformat() if it.get("datetime") else None
+        out.append({"title": title, "publisher": it.get("source"), "when": when})
+        if len(out) >= limit:
+            break
+    return out
+
+
+def headlines(symbol, limit=12):
+    """Finnhub first (broader coverage), yfinance as fallback / top-up, de-duplicated."""
+    items = finnhub_news(symbol, limit=limit)
+    if len(items) < limit:
+        seen = {i["title"].lower() for i in items}
+        for it in news(symbol, limit=limit):
+            if it["title"].lower() not in seen:
+                items.append(it)
+                seen.add(it["title"].lower())
+    return items[:limit]
+
+
+def fred_latest(series_id, days=400):
+    """Latest value and the value ~20 observations earlier for a FRED series; None without a key."""
+    import json
+    import os
+    import urllib.request
+    key = os.getenv("FRED_API_KEY")
+    if not key:
+        return None
+    path = _daily_json(f"fred_{series_id}")
+    if path.exists():
+        return json.loads(path.read_text(encoding="utf-8"))
+    start = (date.today() - timedelta(days=days)).isoformat()
+    url = (f"https://api.stlouisfed.org/fred/series/observations?series_id={series_id}&api_key={key}"
+           f"&file_type=json&observation_start={start}")
+    try:
+        with urllib.request.urlopen(url, timeout=15) as r:
+            obs = [o for o in json.load(r).get("observations", []) if o.get("value") not in (None, ".")]
+    except Exception as exc:
+        log.warning("fred %s: %s", series_id, exc)
+        return None
+    if not obs:
+        return None
+    vals = [float(o["value"]) for o in obs]
+    out = {"series": series_id, "date": obs[-1]["date"], "latest": vals[-1],
+           "prev20": vals[-21] if len(vals) > 21 else vals[0]}
+    path.write_text(json.dumps(out), encoding="utf-8")
+    return out
+
+
+def web_news(query, limit=6, timelimit="w"):
+    """Keyless web news search (DuckDuckGo via the ddgs package): [{title, publisher, when, snippet}].
+    Cached per day per query. Empty list on any failure — never blocks a cycle."""
+    import json
+    import hashlib
+    key = hashlib.md5(query.encode("utf-8")).hexdigest()[:12]
+    path = _daily_json(f"webnews_{key}")
+    if path.exists():
+        return json.loads(path.read_text(encoding="utf-8"))
+    out = []
+    try:
+        from ddgs import DDGS
+        for r in DDGS().news(query, timelimit=timelimit, max_results=limit):
+            out.append({"title": (r.get("title") or "").strip(), "publisher": r.get("source"),
+                        "when": (r.get("date") or "")[:10], "snippet": (r.get("body") or "").strip()[:220]})
+    except Exception as exc:
+        log.warning("web_news %s: %s", query, exc)
+    path.write_text(json.dumps(out), encoding="utf-8")
     return out

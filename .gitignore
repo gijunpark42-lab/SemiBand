@@ -11,3 +11,4 @@ web/tsconfig.tsbuildinfo
 
 .vercel
 .env*
+graphify-out/

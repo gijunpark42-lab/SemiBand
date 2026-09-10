@@ -71,7 +71,20 @@ export type CycleRecord = {
   decisions: Decision[];
 };
 
+export type Backtest = {
+  generated: string;
+  period: { start: string; end: string; trading_days: number };
+  agents: string[];
+  portfolio: { total_return: number; soxx_return: number; spy_return: number; ann_vol: number; sharpe: number; max_drawdown: number; avg_gross: number; avg_names: number; turnover_per_day: number; tracking_corr_soxx: number | null };
+  rank_portfolio?: { description: string; total_return: number; excess_vs_soxx: number; sharpe: number };
+  ic_10d: { learned: number | null; equal_prior: number | null; days: number };
+  model_final: Record<string, { n_obs: number; lambda: number; cv_ic: number | null; agent_ic: Record<string, number | null>; w_conf: Record<string, number> }>;
+  curve: { date: string; portfolio: number; rank?: number; soxx: number; spy: number; gross: number; n: number }[];
+  caveats: string[];
+};
+
 export type Dashboard = {
+  backtest?: Backtest | null;
   benchmarks?: Record<string, [string, number][]>;
   decisions?: Decision[];
   history?: CycleRecord[];

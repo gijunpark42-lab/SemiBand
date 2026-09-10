@@ -36,7 +36,7 @@ Outputs used elsewhere:
 """
 import json
 import math
-from datetime import date
+from datetime import date, timedelta
 
 import numpy as np
 
@@ -76,23 +76,48 @@ def features(per_agent: dict, names: list) -> np.ndarray:
     return x
 
 
-def dataset(horizon: int, names: list):
-    """-> (X, y_raw, dates) from scored predictions at this horizon, one row per (date, ticker)."""
-    with ledger.connect() as con:
+def _rows(db_path, horizon, asof):
+    """Scored rows from one ledger file; with asof, only predictions whose outcome was known by then."""
+    import sqlite3
+    if not db_path.exists():
+        return []
+    con = sqlite3.connect(db_path)
+    con.row_factory = sqlite3.Row
+    try:
         rows = con.execute(
             "SELECT p.date, p.ticker, p.agent, p.direction, p.confidence, s.abnormal "
             "FROM predictions p JOIN scores s ON s.prediction_id = p.id AND s.horizon = ?",
             (horizon,)).fetchall()
+    finally:
+        con.close()
+    if asof is not None:
+        cutoff = (asof - timedelta(days=int(math.ceil(horizon * 1.45)) + 1)).isoformat()
+        rows = [r for r in rows if r["date"] <= cutoff]
+    return rows
+
+
+def dataset(horizon: int, names: list, asof=None):
+    """-> (X, y_raw, dates, source_weight) from scored predictions at this horizon, one row per (date, ticker).
+
+    Live rows come from state/ledger.sqlite (weight 1). If state/backtest.sqlite exists and
+    WARM_START_WEIGHT > 0, its point-in-time rows are added at that weight so the model
+    starts from a year of history instead of a flat prior."""
+    sources = [(ledger.DB, 1.0)]
+    bt = config.STATE_DIR / "backtest.sqlite"
+    if bt != ledger.DB and bt.exists() and config.WARM_START_WEIGHT > 0:
+        sources.append((bt, config.WARM_START_WEIGHT))
     groups = {}
-    for r in rows:
-        g = groups.setdefault((r["date"], r["ticker"]), {"agents": {}, "y": r["abnormal"]})
-        g["agents"][r["agent"]] = {"direction": r["direction"], "confidence": r["confidence"]}
+    for db_path, sw in sources:
+        for r in _rows(db_path, horizon, asof):
+            g = groups.setdefault((r["date"], r["ticker"], sw), {"agents": {}, "y": r["abnormal"], "sw": sw})
+            g["agents"][r["agent"]] = {"direction": r["direction"], "confidence": r["confidence"]}
     if not groups:
-        return np.zeros((0, 2 * len(names))), np.zeros(0), []
+        return np.zeros((0, 2 * len(names))), np.zeros(0), [], np.zeros(0)
     keys = sorted(groups)
     X = np.array([features(groups[k]["agents"], names) for k in keys])
     y = np.array([float(np.clip(groups[k]["y"], -WINSOR, WINSOR)) for k in keys])
-    return X, y, [k[0] for k in keys]
+    sw = np.array([groups[k]["sw"] for k in keys])
+    return X, y, [k[0] for k in keys], sw
 
 
 def decay(dates, today):
@@ -136,15 +161,16 @@ def walk_forward_ic(X, y, dates, w0, lam, today, last_k=10):
     return float(np.mean(ics)) if ics else None
 
 
-def fit(today: date | None = None) -> dict:
-    """Refit all horizons from the ledger and save state/model.json. Returns the model."""
+def fit(today: date | None = None, asof: date | None = None) -> dict:
+    """Refit all horizons from the ledger(s) and save MODEL_FILE. Returns the model.
+    asof: only use rows whose outcome was known by that date (walk-forward backtests)."""
     today = today or date.today()
     names = agents()
     n = len(names)
     w0 = prior_weights(n)
     model = {"fitted": today.isoformat(), "agents": names, "horizons": {}}
     for h in config.HORIZONS:
-        X, y_raw, dates = dataset(h, names)
+        X, y_raw, dates, sw = dataset(h, names, asof)
         scale = float(np.std(y_raw)) if len(y_raw) >= 40 else DEFAULT_SCALE[h]
         scale = max(scale, 0.01)
         y = y_raw / scale
@@ -155,7 +181,7 @@ def fit(today: date | None = None) -> dict:
             if scores:
                 lam = max(scores, key=scores.get)
                 cv = scores[lam]
-        d = decay(dates, today) if len(dates) else np.zeros(0)
+        d = decay(dates, today) * sw if len(dates) else np.zeros(0)
         w = ridge(X, y, d, lam, w0)
         agent_ic = {}
         for i, a in enumerate(names):

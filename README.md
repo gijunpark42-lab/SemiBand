@@ -21,10 +21,10 @@ The universe is the US-listed slice of the earnings-ai supply-chain graph (marke
      RSI) · `mean_reversion` (fade 5-day overextension; the opposite temperament of technical) ·
      `events` (earnings within 7 days = risk, reported within 14 days = drift) · `risk` (volatility
      and drawdown brake; speaks only when risk is elevated) · `macro` (SOXX/SPY trend, VIX, 10-year
-     yield → a regime score expressed through each name's beta)
+     yield, FRED curve slope and NFCI → a regime score expressed through each name's beta)
    - Claude agents: `llm_supply` (the supply-chain report: structure, deals, transitions) ·
      `llm_guidance` (the company's own call statements + curated metrics: guidance momentum) ·
-     `llm_news` (three weeks of headlines: catalysts)
+     `llm_news` (three weeks of headlines from Finnhub + yfinance: catalysts)
    - `moderator` does not vote; it writes agreement / disagreement / verdict / watch for every order.
 6. Blend → conviction per ticker → targets (`portfolio.py`: conviction ≥ 0.15, top 15, 10% per name,
    150% gross, within buying power) → orders (`broker.py`).
@@ -59,6 +59,14 @@ default 150 pseudo-observations) is chosen by walk-forward IC once 8+ prediction
 reliability-weighted blend of the three horizon predictions, clipped to [-1, 1]. Weights may go negative
 (a reliably wrong agent becomes a contrarian signal). Hedge (multiplicative weights) is still computed as a
 reference line on the dashboard. Day one is identical to the equal blend by construction.
+
+## Backtest (`backtest.py`)
+
+`python backtest.py --days 250` replays the point-in-time agents (technical, mean_reversion, risk, macro, events,
+and time-filtered supply_chain / neighbors) day by day, scores every opinion against SOXX at 5/10/20 days, refits
+the learner weekly on outcomes known at the time, and simulates the live sizing rules plus a top-15 rank portfolio.
+Output: `state/backtest_report.json` (published to the dashboard) and `state/backtest.sqlite`, which warm-starts the
+live learner at half weight (`WARM_START_WEIGHT`). Not simulated: fundamentals (no point-in-time data) and the Claude agents.
 
 ## Rules
 

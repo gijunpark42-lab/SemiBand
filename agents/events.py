@@ -23,8 +23,8 @@ POST_DAYS = 14
 def run(universe: dict, ctx: dict) -> list[Signal]:
     closes: pd.DataFrame = ctx["closes"]
     bench = closes[config.BENCHMARK]
-    data = market.earnings(list(universe))
-    today = date.today()
+    data = ctx.get("earnings") or market.earnings(list(universe))
+    today = ctx.get("asof") or date.today()
     out = []
     for ticker in universe:
         rows = data.get(ticker) or []

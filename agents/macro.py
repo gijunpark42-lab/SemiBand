@@ -45,11 +45,28 @@ def regime(closes: pd.DataFrame) -> tuple[float, str]:
         elif d < -0.30:
             score += 0.1
             why.append(f"10y {d:.2f}pt/20d")
+    # Optional FRED inputs (free key): yield-curve slope and financial conditions.
+    t10, t2 = market.fred_latest("DGS10"), market.fred_latest("DGS2")
+    if t10 and t2:
+        slope = t10["latest"] - t2["latest"]
+        if slope < 0:
+            score -= 0.1
+            why.append(f"curve inverted {slope:+.2f}")
+    nfci = market.fred_latest("NFCI")
+    if nfci:
+        if nfci["latest"] > 0:
+            score -= 0.2
+            why.append(f"NFCI tight {nfci['latest']:+.2f}")
+        elif nfci["latest"] < -0.4:
+            score += 0.1
+            why.append(f"NFCI loose {nfci['latest']:+.2f}")
     return clip(score, -1, 1), ", ".join(why)
 
 
 def run(universe: dict, ctx: dict) -> list[Signal]:
-    closes: pd.DataFrame = market.closes(list(universe) + [config.BENCHMARK] + EXTRA)
+    closes: pd.DataFrame = ctx["closes"]
+    if any(c not in closes.columns for c in EXTRA):
+        closes = market.closes(list(universe) + [config.BENCHMARK] + EXTRA)
     r, why = regime(closes)
     bench_ret = closes[config.BENCHMARK].pct_change()
     out = []

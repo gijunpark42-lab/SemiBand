@@ -43,7 +43,10 @@ def plan(target_usd, positions, convictions, universe, equity, buying_power):
         conv = convictions.get(s, 0.0)
         if conv < config.MIN_CONVICTION:
             sells.append({"ticker": s, "side": "SELL", "notional": None, "tag": f"exit: conviction {conv:+.2f} below entry bar"})
-        # still above the bar but pushed out of the top N: hold, no churn
+        else:
+            # still above the bar but pushed out of the top N by stronger names: sell, so the book is
+            # always the day's top N (this is what the backtest simulates; "seat protection" tested worse)
+            sells.append({"ticker": s, "side": "SELL", "notional": None, "tag": f"exit: conviction {conv:+.2f} ranked outside the top {config.TOP_N}"})
 
     for s, tgt in target_usd.items():
         diff = tgt - held.get(s, 0.0)

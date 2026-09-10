@@ -44,6 +44,7 @@ import universe as universe_mod
 from agents import macro, mean_reversion, ml_ranker, momentum, risk, sue, technical, events
 from agents.base import Signal, clip
 from agents.supply_chain import _load, _POSITIVE
+from agents.neighbors import _EXPAND
 
 log = logging.getLogger("backtest")
 DB = config.STATE_DIR / "backtest.sqlite"
@@ -73,6 +74,15 @@ class PointInTimeMap:
             rows.sort()
             self.signals[n["id"]] = rows
         self.full_cap = full_cap   # company -> date flagged
+        self.chains = {n["id"]: set(n.get("chains") or []) for n in graph["nodes"]}
+        self.signals_chain = {}    # company -> [(date, text, chain)]
+        for n in graph["nodes"]:
+            rows = []
+            for q in n.get("quarterly_data") or []:
+                d = _label_date(q.get("quarter"))
+                if d:
+                    rows.append((d, (q.get("signal") or "").lower(), q.get("chain")))
+            self.signals_chain[n["id"]] = rows
         self.customers, self.suppliers = {}, {}
         for e in graph["edges"]:
             self.customers.setdefault(e["source"], set()).add(e["target"])
@@ -119,9 +129,19 @@ class PointInTimeMap:
         s = [heat(n) for n in supp]
         c_avg = sum(c) / len(c) if c else 0.0
         s_avg = sum(s) / len(s) if s else 0.0
+        # read-through: customers' dated statements on the chains this company sells into
+        my_chains = self.chains.get(company, set())
+        hits, n_rt = 0, 0
+        for nb in cust:
+            for d, t, ch in self.signals_chain.get(nb, []):
+                if asof - timedelta(days=120) <= d <= asof and ch in my_chains:
+                    n_rt += 1
+                    if any(w in t for w in _POSITIVE) or any(w in t for w in _EXPAND):
+                        hits += 1
+        rt = 0.5 * hits / n_rt if n_rt >= 3 else 0.0   # measured only; tested 2026-09-10 and rejected from the score
         direction = math.tanh(1.4 * c_avg + 0.5 * s_avg - 0.25)
         confidence = clip(0.2 + 0.05 * min(len(cust) + len(supp), 10), 0.2, 0.75)
-        return Signal("neighbors", ticker, direction, confidence, 20, f"pit: customer heat {c_avg:.2f}")
+        return Signal("neighbors", ticker, direction, confidence, 20, f"pit: customer heat {c_avg:.2f}, read-through {rt:+.2f}")
 
 
 def _init_db():

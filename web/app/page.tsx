@@ -67,7 +67,7 @@ export default async function Page() {
         <div className="tile">
           <div className="label">Open P/L</div>
           <div className={`value ${cls(openPl)}`}>{usd(openPl)}</div>
-          <div className="delta muted">{invested ? pct(openPl / (invested - openPl)) : "—"} on cost</div>
+          <div className="delta muted">{invested ? pct(openPl / (invested - openPl)) : "—"} vs entry price (not a fee)</div>
         </div>
         <div className="tile">
           <div className="label">Cash</div>

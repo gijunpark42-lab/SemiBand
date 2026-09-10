@@ -32,7 +32,8 @@ PIT_AGENTS = ["supply_chain", "neighbors", "technical", "mean_reversion", "event
 
 BASE = dict(min_conv=0.10, size_k=0.30, cap=0.10, gross=1.50, band=0.15, top_n=15,
             half_life=90, demean=False, horizons=(5, 10, 20), learn=True, agents_only=None, lam=None,
-            stop_loss=None, cooldown=5)
+            stop_loss=None, cooldown=5, vol_scale=False, rebalance_every=1, swap_margin=None,
+            short_k=0, short_gross=0.0, hedge=None, hedge_size=0.3)
 
 
 def load_signals():
@@ -89,8 +90,49 @@ def simulate(by_date, closes, params, refit_every=5, warmup=30):
                     banned[t] = k + p["cooldown"]
             conv = {t: c for t, c in conv.items() if banned.get(t, -1) < k}
         # sizing
-        longs = sorted(((t, c) for t, c in conv.items() if c >= p["min_conv"]), key=lambda tc: -tc[1])[:p["top_n"]]
-        w = {t: min(c * p["size_k"], p["cap"]) for t, c in longs}
+        if p["rebalance_every"] > 1 and prev_w and (k - warmup) % p["rebalance_every"]:
+            w = dict(prev_w)                          # hold the book on non-rebalance days
+        else:
+            eligible = sorted(((t, c) for t, c in conv.items() if c >= p["min_conv"]), key=lambda tc: -tc[1])
+            longs = eligible[:p["top_n"]]
+            if p["swap_margin"] is not None and prev_w:
+                # TopkDropout-style: a held name still above the bar keeps its seat unless a
+                # newcomer beats it by more than swap_margin (no commission, but spread + slippage)
+                held_ok = [(t, c) for t, c in eligible if t in prev_w]
+                newcomers = [(t, c) for t, c in eligible if t not in prev_w]
+                seats = p["top_n"]
+                chosen = held_ok[:seats]
+                for t, c in newcomers:
+                    if len(chosen) < seats:
+                        chosen.append((t, c))
+                    else:
+                        worst = min(chosen, key=lambda tc: tc[1])
+                        if c > worst[1] + p["swap_margin"]:
+                            chosen.remove(worst)
+                            chosen.append((t, c))
+                longs = chosen
+            w = {t: min(c * p["size_k"], p["cap"]) for t, c in longs}
+            # optional short book: the k lowest-conviction names, sized to short_gross in total
+            if p["short_k"] and p["short_gross"]:
+                shorts = sorted(((t, c) for t, c in conv.items() if c <= -p["min_conv"]), key=lambda tc: tc[1])[:p["short_k"]]
+                tot = sum(abs(c) for _, c in shorts)
+                for t, c in shorts:
+                    w[t] = -p["short_gross"] * abs(c) / tot if tot else 0.0
+            # optional index hedge: a synthetic -1x SOXX position (like PSQ/SOXS-third) when the regime is weak
+            if p["hedge"]:
+                soxx = closes[config.BENCHMARK]
+                weak = (p["hedge"] == "below50" and soxx.iloc[i] < soxx.iloc[max(0, i - 50): i + 1].mean()) or                        (p["hedge"] == "always")
+                if weak:
+                    w["__HEDGE__"] = -p["hedge_size"]
+            if p["vol_scale"] and w:
+                # scale each name by (median vol / its vol): calmer names get more, wild ones less
+                vols = {}
+                for t in w:
+                    r = closes[t].iloc[max(0, i - 40): i + 1].pct_change().dropna()
+                    vols[t] = float(r.std()) if len(r) > 10 else None
+                med = float(np.median([v for v in vols.values() if v])) if any(vols.values()) else None
+                if med:
+                    w = {t: min(x * (med / vols[t] if vols.get(t) else 1.0), p["cap"]) for t, x in w.items()}
         g = sum(w.values())
         if g > p["gross"]:
             w = {t: x * p["gross"] / g for t, x in w.items()}
@@ -99,7 +141,7 @@ def simulate(by_date, closes, params, refit_every=5, warmup=30):
             if t in prev_w and abs(w[t] - prev_w[t]) < p["band"] * w[t]:
                 w[t] = prev_w[t]
         for t in w:
-            if t not in prev_w:
+            if t not in prev_w and t in closes.columns:
                 entry[t] = closes[t].iloc[i]
         for t in list(entry):
             if t not in w:
@@ -107,14 +149,17 @@ def simulate(by_date, closes, params, refit_every=5, warmup=30):
         turnover = sum(abs(w.get(t, 0) - prev_w.get(t, 0)) for t in set(w) | set(prev_w))
         ret = 0.0
         for t, wt in w.items():
-            c0, c1 = closes[t].iloc[i], closes[t].iloc[i + 1]
+            sym = config.BENCHMARK if t == "__HEDGE__" else t
+            c0, c1 = closes[sym].iloc[i], closes[sym].iloc[i + 1]
             if not (pd.isna(c0) or pd.isna(c1)):
                 ret += wt * (float(c1 / c0) - 1)
+            if wt < 0:
+                ret -= abs(wt) * 0.0002        # ~5%/yr borrow / inverse-ETF drag on the short side
         ret -= turnover * config.COST_BPS / 10_000
         equity *= 1 + ret
         turnover_total += turnover
         prev_w = w
-        curve.append({"date": d, "portfolio": equity, "gross": g if g <= p["gross"] else p["gross"], "n": len(w),
+        curve.append({"date": d, "portfolio": equity, "gross": sum(abs(x) for x in w.values()), "n": len(w),
                       "soxx": float(bench.iloc[i + 1] / bench.iloc[pos_of[dates[warmup]]])})
     rets = np.diff(np.log([1.0] + [c["portfolio"] for c in curve]))
     eq = np.array([c["portfolio"] for c in curve])
@@ -152,11 +197,20 @@ def main():
     ap.add_argument("--round2", action="store_true", help="second round: half-life 90 combos and lambda variants")
     ap.add_argument("--round3", action="store_true", help="third round: fixed lambda x sizing")
     ap.add_argument("--round4", action="store_true", help="fourth round: stop-loss rules on the adopted settings")
+    ap.add_argument("--round5", action="store_true", help="fifth round: vol scaling, rebalance cadence, breadth")
+    ap.add_argument("--round6", action="store_true", help="sixth round: min conviction 0.15 combos")
+    ap.add_argument("--round7", action="store_true", help="seventh round: contribution of momentum and SUE agents (use with --tag _v2)")
+    ap.add_argument("--round8", action="store_true", help="eighth round: final sizing combos on the chosen agent set")
+    ap.add_argument("--round9", action="store_true", help="ninth round: short book and index hedge")
+    ap.add_argument("--tag", default="", help="read state/backtest<tag>.sqlite instead of the default")
     args = ap.parse_args()
 
     live_agents, live_h = config.AGENTS, config.HORIZONS
     config.AGENTS = PIT_AGENTS
     import ledger
+    global DB
+    if args.tag:
+        DB = config.STATE_DIR / f"backtest{args.tag}.sqlite"
     ledger.DB = DB
     learner.MODEL_FILE = config.STATE_DIR / "sweep_model.json"
 
@@ -180,6 +234,61 @@ def main():
         for sl in (0.06, 0.08, 0.12, 0.20):
             variants.append((f"stop{int(sl*100)}", dict(base4, stop_loss=sl)))
         variants.append(("stop8_cool10", dict(base4, stop_loss=0.08, cooldown=10)))
+    elif args.round5:
+        base5 = {"lam": 150.0, "size_k": 0.45, "band": 0.30}
+        variants = [("current", dict(base5)),
+                    ("vol_scale", dict(base5, vol_scale=True)),
+                    ("vol_scale_k0.6", dict(base5, vol_scale=True, size_k=0.60)),
+                    ("rebal2", dict(base5, rebalance_every=2)),
+                    ("rebal3", dict(base5, rebalance_every=3)),
+                    ("band0.5", dict(base5, band=0.50)),
+                    ("top10", dict(base5, top_n=10)),
+                    ("top20", dict(base5, top_n=20)),
+                    ("top20_cap0.08", dict(base5, top_n=20, cap=0.08)),
+                    ("minconv0.05", dict(base5, min_conv=0.05)),
+                    ("minconv0.15", dict(base5, min_conv=0.15)),
+                    ("h5_10_only", dict(base5, horizons=(5, 10)))]
+    elif args.round6:
+        base6 = {"lam": 150.0, "size_k": 0.45, "band": 0.30, "min_conv": 0.15}
+        variants = [("current_mc0.10", {"lam": 150.0, "size_k": 0.45, "band": 0.30}),
+                    ("mc0.15", dict(base6)),
+                    ("mc0.15_top20", dict(base6, top_n=20)),
+                    ("mc0.15_rebal3", dict(base6, rebalance_every=3)),
+                    ("mc0.15_rebal2", dict(base6, rebalance_every=2)),
+                    ("mc0.15_band0.5", dict(base6, band=0.50)),
+                    ("mc0.20", dict(base6, min_conv=0.20)),
+                    ("mc0.15_k0.6", dict(base6, size_k=0.60)),
+                    ("mc0.15_top20_rebal3", dict(base6, top_n=20, rebalance_every=3))]
+    elif args.round7:
+        seven = ("supply_chain", "neighbors", "technical", "mean_reversion", "events", "risk", "macro")
+        b = {"lam": 150.0, "size_k": 0.45, "band": 0.30, "min_conv": 0.15}
+        variants = [("nine_agents", dict(b)),
+                    ("seven_agents", dict(b, agents_only=seven)),
+                    ("no_momentum", dict(b, agents_only=seven + ("sue",))),
+                    ("no_sue", dict(b, agents_only=seven + ("momentum",))),
+                    ("nine_top20", dict(b, top_n=20)),
+                    ("nine_mc0.10", dict(b, min_conv=0.10)),
+                    ("momentum_only", dict(b, learn=False, agents_only=("momentum",))),
+                    ("sue_only", dict(b, learn=False, agents_only=("sue",)))]
+    elif args.round8:
+        variants = []
+        for k in (0.45, 0.60):
+            for top in (15, 20):
+                for band in (0.30, 0.50):
+                    variants.append((f"mc0.15_k{k}_top{top}_band{band}", {"lam": 150.0, "min_conv": 0.15, "size_k": k, "top_n": top, "band": band}))
+        variants.append(("mc0.15_k0.6_top20_cap0.12", {"lam": 150.0, "min_conv": 0.15, "size_k": 0.60, "top_n": 20, "cap": 0.12}))
+        for m in (0.0, 0.05, 0.10):
+            variants.append((f"mc0.15_k0.6_top20_swap{m}", {"lam": 150.0, "min_conv": 0.15, "size_k": 0.60, "top_n": 20, "swap_margin": m}))
+    elif args.round9:
+        b = {"lam": 150.0, "min_conv": 0.15, "size_k": 0.60, "top_n": 20}
+        variants = [("long_only", dict(b)),
+                    ("ls_short5_g0.2", dict(b, short_k=5, short_gross=0.20)),
+                    ("ls_short10_g0.3", dict(b, short_k=10, short_gross=0.30)),
+                    ("ls_short10_g0.5", dict(b, short_k=10, short_gross=0.50)),
+                    ("hedge_below50_0.3", dict(b, hedge="below50", hedge_size=0.30)),
+                    ("hedge_below50_0.5", dict(b, hedge="below50", hedge_size=0.50)),
+                    ("hedge_always_0.3", dict(b, hedge="always", hedge_size=0.30)),
+                    ("ls_short5_plus_hedge", dict(b, short_k=5, short_gross=0.20, hedge="below50", hedge_size=0.30))]
     elif args.round3:
         variants = [("lam150_k0.3_cap0.1", {"lam": 150.0}),
                     ("lam150_k0.45_cap0.1", {"lam": 150.0, "size_k": 0.45}),
@@ -194,7 +303,7 @@ def main():
                 ("technical_only", {"learn": False, "agents_only": ("technical",)}),
                 ("no_neighbors", {"agents_only": ("supply_chain", "technical", "mean_reversion", "events", "risk", "macro")}),
                 ("price_agents_only", {"agents_only": ("technical", "mean_reversion", "risk", "macro")})]
-    if not args.quick and not args.round2 and not args.round3 and not args.round4:
+    if not args.quick and not (args.round2 or args.round3 or args.round4 or args.round5 or args.round6 or args.round7 or args.round8 or args.round9):
         for combo in itertools.product(*GRID.values()):
             kv = dict(zip(GRID.keys(), combo))
             if kv == {k: BASE[k] for k in GRID}:
@@ -212,7 +321,8 @@ def main():
     for r in results:
         r["score"] = round(r["sharpe"] + 0.5 * r["excess_vs_soxx"] - 0.5 * r["turnover_per_day"], 3)
     results.sort(key=lambda r: -r["score"])
-    out = OUT if not (args.round2 or args.round3 or args.round4) else config.STATE_DIR / ("backtest_sweep2.json" if args.round2 else "backtest_sweep3.json" if args.round3 else "backtest_sweep4.json")
+    tag = ("2" if args.round2 else "3" if args.round3 else "4" if args.round4 else "5" if args.round5 else "6" if args.round6 else "7" if args.round7 else "8" if args.round8 else "9" if args.round9 else "") + args.tag
+    out = OUT if not tag else config.STATE_DIR / f"backtest_sweep{tag}.json"
     out.write_text(json.dumps({"generated": date.today().isoformat(), "results": results}, indent=2), encoding="utf-8")
     print("\nTOP 5 by score (sharpe + 0.5*excess - 0.5*turnover):")
     for r in results[:5]:

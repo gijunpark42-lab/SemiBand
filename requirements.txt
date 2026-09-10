@@ -6,3 +6,4 @@ yfinance
 requests
 ddgs
 numpy
+lightgbm

@@ -4,7 +4,7 @@ Eleven agents each give an opinion on every stock in the universe. The opinions 
 trust weights, the blend is traded in an Alpaca paper account, and every prediction is scored
 5 / 10 / 20 trading days later against SOXX. Agents that were right gain weight; agents that
 were wrong lose it. LLM work runs through the Claude Max subscription (`claude -p`) — no API key.
-The universe is the US-listed slice of the earnings-ai supply-chain graph (market cap ≤ $400B).
+The universe is the US-listed slice of the earnings-ai supply-chain graph (market cap ≤ $400B; the backtest showed the mega-caps dilute returns).
 
 ## One cycle a day (`cycle.py`, 05:50 PT, orders at the 09:30 ET open)
 

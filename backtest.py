@@ -41,7 +41,7 @@ import learner
 import market
 import portfolio
 import universe as universe_mod
-from agents import macro, mean_reversion, risk, technical, events
+from agents import macro, mean_reversion, ml_ranker, momentum, risk, sue, technical, events
 from agents.base import Signal, clip
 from agents.supply_chain import _load, _POSITIVE
 
@@ -50,6 +50,7 @@ DB = config.STATE_DIR / "backtest.sqlite"
 REPORT = config.STATE_DIR / "backtest_report.json"
 _DATE = re.compile(r"\((\d{2})-(\d{2})-(\d{4})\)")
 PIT_AGENTS = ["supply_chain", "neighbors", "technical", "mean_reversion", "events", "risk", "macro"]
+EXTRA_AGENTS = {"momentum": None, "sue": None, "ml_ranker": None}   # re-testable with --extra momentum,sue,ml_ranker
 
 
 def _label_date(label):
@@ -131,9 +132,22 @@ def _init_db():
     con.close()
 
 
-def run(days=250, refit_every=5, warmup=30):
+def run(days=250, refit_every=5, warmup=30, tag="", extra=(), cap=None):
+    """tag: suffix for the output files (state/backtest<tag>.sqlite / backtest_report<tag>.json)
+    so a long build can run while sweeps read the default files."""
+    global DB, REPORT, PIT_AGENTS
+    extra_mods = [{"momentum": momentum, "sue": sue, "ml_ranker": ml_ranker}[e] for e in extra]
+    PIT_AGENTS = PIT_AGENTS + list(extra)
+    if tag:
+        DB = config.STATE_DIR / f"backtest{tag}.sqlite"
+        REPORT = config.STATE_DIR / f"backtest_report{tag}.json"
     config.STATE_DIR.mkdir(exist_ok=True)
-    universe = universe_mod.load()
+    if cap:
+        config.MAX_MARKET_CAP = cap
+        universe_mod.CACHE = config.STATE_DIR / f"universe_cap{int(cap / 1e9)}B.json"
+        universe = universe_mod.refresh()
+    else:
+        universe = universe_mod.load()
     tickers = list(universe)
     extra = [config.BENCHMARK, "SPY", "^VIX", "^TNX"]
     closes = market.closes(tickers + extra, lookback_days=int(days * 1.6) + 400, cache=False)
@@ -164,7 +178,7 @@ def run(days=250, refit_every=5, warmup=30):
         window = closes.iloc[: i + 1]
         ctx = {"closes": window, "asof": t, "earnings": earnings, "today": t.isoformat()}
         signals = []
-        for a in (technical, mean_reversion, risk, macro):
+        for a in [technical, mean_reversion, risk, macro] + extra_mods:
             try:
                 signals += a.run(universe, ctx)
             except Exception as exc:
@@ -282,7 +296,10 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--days", type=int, default=250)
     p.add_argument("--refit-every", type=int, default=5)
+    p.add_argument("--tag", default="", help="output suffix, e.g. _500")
+    p.add_argument("--extra", default="", help="comma list of optional agents to include: momentum,sue,ml_ranker")
+    p.add_argument("--cap", type=float, default=None, help="override MAX_MARKET_CAP (e.g. 1e13 for no cap)")
     args = p.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    r = run(days=args.days, refit_every=args.refit_every)
+    r = run(days=args.days, refit_every=args.refit_every, tag=args.tag, extra=tuple(x for x in args.extra.split(",") if x), cap=args.cap)
     print(json.dumps({k: v for k, v in r.items() if k != "curve"}, indent=2)[:4000])

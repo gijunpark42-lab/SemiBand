@@ -34,7 +34,7 @@ WEB_SEARCH_TICKERS = 30           # llm_news may run a live web search (Claude's
 # --- universe ---
 BENCHMARK = "SOXX"                # agents are scored on return minus this
 US_EXCHANGES = {"NASDAQ", "NYSE", "NYSE American", "AMEX"}
-MAX_MARKET_CAP = 400e9            # user rule (2026-09-09): trade names under $400B market cap only; no crypto ever
+MAX_MARKET_CAP = 400e9            # backtest 2026-09-10: no cap (112 names) +311%/Sharpe 1.97 vs cap 400B (96 names) +373%/2.28 -> keep the cap; no crypto ever
 LOOKBACK_DAYS = 260               # calendar days of closes fetched for the technical agent
 
 # --- agents in the ensemble (names match agents/<name>.py) ---
@@ -48,6 +48,9 @@ AGENTS = [
     "events",          # earnings in the next week (risk) / just reported (drift)
     "risk",            # volatility and drawdown brake: speaks only when risk is elevated
     "macro",           # market regime (SOXX/SPY trend, VIX, 10y yield) expressed through each name's beta
+    # Tested 2026-09-10 and NOT enabled: "momentum" (12-1m), "sue" (PEAD), "ml_ranker" (LightGBM) — each has a small
+    # positive IC alone but adding them diluted convictions and cut backtest return (+373% -> +310% -> +265%).
+    # The modules stay in agents/ for future re-tests; add a name here to re-enable.
     # Claude, via the local server (top LLM_MAX_TICKERS names only)
     "llm_supply",      # reads the supply-chain report: structure, deals, transitions
     "llm_guidance",    # reads the company's own latest call signals: guidance momentum
@@ -67,10 +70,10 @@ WEIGHT_FLOOR = 0.02               # no agent is ever silenced completely (11 age
 # --- portfolio (long-only, margin allowed up to GROSS_TARGET) ---
 CAPITAL = 1_000_000               # starting equity of the new paper account (2026-09-10); sizing uses live equity
 TOP_N = 15                        # max names held
-MIN_CONVICTION = 0.10             # enter only above this (stacking model: silent agents count as 0, so convictions run lower than the old speaker-mean)
+MIN_CONVICTION = 0.15             # enter only above this (sweep round 6: 0.15 beat 0.10 and 0.20 on return and Sharpe)
 EXIT_CONVICTION = 0.04            # exit when conviction falls below this
 MAX_POSITION_PCT = 0.10           # per-name cap as a share of equity
-SIZE_PER_CONVICTION = 0.45        # position = conviction x this (conviction 0.22 -> 10% = the cap); sweep 2026-09-10: 0.45 beat 0.30 on return at equal Sharpe
+SIZE_PER_CONVICTION = 0.60        # position = conviction x this (conviction 0.17 -> 10% = the cap); sweep round 8: 0.60/top15 +447% Sharpe 2.50 (best return)
 DEMEAN_CONVICTION = False         # subtract the day's cross-sectional mean conviction (pick relative winners, less beta)
 GROSS_TARGET = 1.50               # CEILING on gross exposure (150% of equity = 50% margin); not a target, cash is a position
 COMPARE_TICKERS = ("SOXX", "SPY", "QQQ")   # benchmarks shown against the portfolio on the dashboard

@@ -310,6 +310,33 @@ export default async function Page() {
         )}
       </div>
 
+      <h2>Guardian · hourly headline watch on holdings</h2>
+      <div className="card">
+        {!dash?.guardian || dash.guardian.length === 0 ? (
+          <div className="empty">No intraday checks yet (runs hourly during the session; a Claude call only when a holding has new headlines)</div>
+        ) : (
+          <table>
+            <thead><tr><th>Time (ET)</th><th>Holdings</th><th>With news</th><th>Events</th></tr></thead>
+            <tbody>
+              {dash.guardian.slice().reverse().slice(0, 12).map((g, i) => (
+                <tr key={i}>
+                  <td className="muted">{g.time}</td>
+                  <td className="num">{g.holdings}</td>
+                  <td className="num">{g.checked}</td>
+                  <td className="reason">
+                    {g.events.length === 0 ? <span className="muted">nothing material</span> : g.events.map((e, j) => (
+                      <div key={j}>
+                        <b>{e.ticker}</b> · {e.action}{e.executed ? " (executed)" : ""} · severity {e.severity.toFixed(2)} · {e.reason}
+                      </div>
+                    ))}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
       <h2>Convictions · today&apos;s ranking</h2>
       <div className="card scroll">
         {convictions.length === 0 ? <div className="empty">No convictions published yet</div> : (

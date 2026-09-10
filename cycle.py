@@ -84,6 +84,20 @@ def run_agents(universe, ctx, model, held, use_llm):
     return signals
 
 
+def guardian_blocked(today):
+    """Names the intraday guardian exited within GUARDIAN_COOLDOWN_DAYS (state/guardian_exits.json)."""
+    path = config.STATE_DIR / "guardian_exits.json"
+    if not path.exists():
+        return set()
+    try:
+        rows = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError:
+        return set()
+    from datetime import date, timedelta
+    cutoff = (date.fromisoformat(today) - timedelta(days=config.GUARDIAN_COOLDOWN_DAYS)).isoformat()
+    return {r["ticker"] for r in rows if r.get("date", "") >= cutoff}
+
+
 def reason_line(conv, per_agent):
     parts = [f"conv {conv:+.2f}"]
     for a, s in per_agent.items():
@@ -104,6 +118,8 @@ def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s",
                         handlers=[logging.StreamHandler(sys.stdout),
                                   logging.FileHandler(config.STATE_DIR / "cycle.log", encoding="utf-8")])
+    for noisy in ("primp", "ddgs", "ddgs.ddgs", "httpx", "urllib3"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
     today = datetime.now(ET).date().isoformat()
     notes = []
     log.info("=== cycle %s dry_run=%s llm=%s ===", today, dry, not args.no_llm)
@@ -163,31 +179,44 @@ def main():
     equity, cash = float(acct.equity), float(acct.cash)
     buying_power = float(acct.buying_power)
     positions = broker.positions()
-    target_usd = portfolio.targets(convictions, equity)
+    blocked = guardian_blocked(today)
+    if blocked:
+        notes.append("guardian cooldown (no rebuy): " + ", ".join(sorted(blocked)))
+        convictions_for_sizing = {t: c for t, c in convictions.items() if t not in blocked}
+    else:
+        convictions_for_sizing = convictions
+    target_usd = portfolio.targets(convictions_for_sizing, equity)
     orders = portfolio.plan(target_usd, positions, convictions, universe, equity, buying_power)
     log.info("equity $%.0f cash $%.0f buying power $%.0f positions %d targets %d orders %d",
              equity, cash, buying_power, len(positions), len(target_usd), len(orders))
 
-    done = []
+    # Execution: exits in full now; buys and trims spread over EXECUTION_SLICES slices
+    # (first slice now, the rest every EXECUTION_INTERVAL_MIN minutes after the
+    # dashboard is published) so we do not pay the whole opening spread at once.
+    slices = 1 if dry else max(1, config.EXECUTION_SLICES)
+    done, later = [], []
     for o in orders:
         t = o["ticker"]
         reason = reason_line(convictions.get(t, 0.0), breakdown.get(t, {})) + f" | {o['tag']}"
         coid = f"{config.ORDER_PREFIX}{today}-{t}-{o['side'].lower()}"
         try:
             if o["side"] == "BUY":
-                broker.buy(t, o["notional"], coid, dry_run=dry)
+                broker.buy(t, round(o["notional"] / slices, 2), coid + "-1", dry_run=dry)
                 size = o["notional"]
             elif o["notional"] is None:
                 broker.close(t, dry_run=dry)
                 size = float(positions[t].market_value) if t in positions else None
             else:
-                broker.sell(t, o["notional"], coid, dry_run=dry)
+                broker.sell(t, round(o["notional"] / slices, 2), coid + "-1", dry_run=dry)
                 size = o["notional"]
         except Exception as exc:
             log.error("order %s %s failed: %s", o["side"], t, exc)
             notes.append(f"order {o['side']} {t} failed: {exc}")
             continue
-        journal.record(t, o["side"], reason, last_close.get(t), notional=size, dry_run=dry)
+        if o["notional"] is not None and slices > 1:
+            later.append((t, o["side"], round(o["notional"] / slices, 2), coid))
+        journal.record(t, o["side"], reason + (f" | {slices} slices over {(slices - 1) * config.EXECUTION_INTERVAL_MIN} min" if slices > 1 else ""),
+                       last_close.get(t), notional=size, dry_run=dry)
         ledger.add_order(today, t, o["side"], size, reason, coid, dry)
         est_cost = round((size or 0.0) * config.COST_BPS / 10_000, 2)
         done.append({"ticker": t, "side": o["side"], "notional": size, "reason": reason, "est_cost_usd": est_cost})
@@ -261,6 +290,16 @@ def main():
         "orders": done,
         "notes": notes,
     })
+    for k in range(2, slices + 1):
+        if not later:
+            break
+        log.info("execution slice %d/%d in %d min", k, slices, config.EXECUTION_INTERVAL_MIN)
+        time.sleep(config.EXECUTION_INTERVAL_MIN * 60)
+        for t, side, part, coid in later:
+            try:
+                (broker.buy if side == "BUY" else broker.sell)(t, part, f"{coid}-{k}", dry_run=dry)
+            except Exception as exc:
+                log.error("slice %d %s %s failed: %s", k, side, t, exc)
     log.info("done: %d orders; top: %s", len(done),
              ", ".join(f"{t} {c:+.2f}" for t, c in ranked[:8]))
     return 0

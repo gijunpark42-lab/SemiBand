@@ -31,7 +31,8 @@ OUT = config.STATE_DIR / "backtest_sweep.json"
 PIT_AGENTS = ["supply_chain", "neighbors", "technical", "mean_reversion", "events", "risk", "macro"]
 
 BASE = dict(min_conv=0.10, size_k=0.30, cap=0.10, gross=1.50, band=0.15, top_n=15,
-            half_life=90, demean=False, horizons=(5, 10, 20), learn=True, agents_only=None, lam=None)
+            half_life=90, demean=False, horizons=(5, 10, 20), learn=True, agents_only=None, lam=None,
+            stop_loss=None, cooldown=5)
 
 
 def load_signals():
@@ -56,6 +57,7 @@ def simulate(by_date, closes, params, refit_every=5, warmup=30):
     pos_of = {d.date().isoformat(): i for i, d in enumerate(idx)}
     bench = closes[config.BENCHMARK]
     equity, prev_w, turnover_total, curve, ics = 1.0, {}, 0.0, [], []
+    entry, banned = {}, {}
     model = None
     for k, d in enumerate(dates):
         if k < warmup or d not in pos_of:
@@ -78,6 +80,14 @@ def simulate(by_date, closes, params, refit_every=5, warmup=30):
                 y[t] = float(c1 / c0 - 1) - float(b1 / b0 - 1)
         if len(y) >= 10:
             ics.append(learner.ic(np.array([conv[t] for t in y]), np.array(list(y.values()))))
+        # stop-loss (evaluated on closes): drop a name that fell stop_loss below its entry, sit out `cooldown` days
+        if p["stop_loss"]:
+            for t in list(prev_w):
+                e = entry.get(t)
+                c_now = closes[t].iloc[i]
+                if e and not pd.isna(c_now) and c_now / e - 1 < -p["stop_loss"]:
+                    banned[t] = k + p["cooldown"]
+            conv = {t: c for t, c in conv.items() if banned.get(t, -1) < k}
         # sizing
         longs = sorted(((t, c) for t, c in conv.items() if c >= p["min_conv"]), key=lambda tc: -tc[1])[:p["top_n"]]
         w = {t: min(c * p["size_k"], p["cap"]) for t, c in longs}
@@ -88,6 +98,12 @@ def simulate(by_date, closes, params, refit_every=5, warmup=30):
         for t in list(w):
             if t in prev_w and abs(w[t] - prev_w[t]) < p["band"] * w[t]:
                 w[t] = prev_w[t]
+        for t in w:
+            if t not in prev_w:
+                entry[t] = closes[t].iloc[i]
+        for t in list(entry):
+            if t not in w:
+                entry.pop(t, None)
         turnover = sum(abs(w.get(t, 0) - prev_w.get(t, 0)) for t in set(w) | set(prev_w))
         ret = 0.0
         for t, wt in w.items():
@@ -135,6 +151,7 @@ def main():
     ap.add_argument("--quick", action="store_true", help="only the base case and a few variants")
     ap.add_argument("--round2", action="store_true", help="second round: half-life 90 combos and lambda variants")
     ap.add_argument("--round3", action="store_true", help="third round: fixed lambda x sizing")
+    ap.add_argument("--round4", action="store_true", help="fourth round: stop-loss rules on the adopted settings")
     args = ap.parse_args()
 
     live_agents, live_h = config.AGENTS, config.HORIZONS
@@ -157,7 +174,13 @@ def main():
         variants.append(("hl90_lam50_k0.45", {"lam": 50.0, "size_k": 0.45}))
         variants.append(("hl120", {"half_life": 120}))
         variants.append(("hl180", {"half_life": 180}))
-    if args.round3:
+    elif args.round4:
+        base4 = {"lam": 150.0, "size_k": 0.45, "band": 0.30}
+        variants = [("current", dict(base4))]
+        for sl in (0.06, 0.08, 0.12, 0.20):
+            variants.append((f"stop{int(sl*100)}", dict(base4, stop_loss=sl)))
+        variants.append(("stop8_cool10", dict(base4, stop_loss=0.08, cooldown=10)))
+    elif args.round3:
         variants = [("lam150_k0.3_cap0.1", {"lam": 150.0}),
                     ("lam150_k0.45_cap0.1", {"lam": 150.0, "size_k": 0.45}),
                     ("lam150_k0.45_cap0.15", {"lam": 150.0, "size_k": 0.45, "cap": 0.15}),
@@ -171,7 +194,7 @@ def main():
                 ("technical_only", {"learn": False, "agents_only": ("technical",)}),
                 ("no_neighbors", {"agents_only": ("supply_chain", "technical", "mean_reversion", "events", "risk", "macro")}),
                 ("price_agents_only", {"agents_only": ("technical", "mean_reversion", "risk", "macro")})]
-    if not args.quick and not args.round2 and not args.round3:
+    if not args.quick and not args.round2 and not args.round3 and not args.round4:
         for combo in itertools.product(*GRID.values()):
             kv = dict(zip(GRID.keys(), combo))
             if kv == {k: BASE[k] for k in GRID}:
@@ -189,7 +212,7 @@ def main():
     for r in results:
         r["score"] = round(r["sharpe"] + 0.5 * r["excess_vs_soxx"] - 0.5 * r["turnover_per_day"], 3)
     results.sort(key=lambda r: -r["score"])
-    out = OUT if not (args.round2 or args.round3) else config.STATE_DIR / ("backtest_sweep2.json" if args.round2 else "backtest_sweep3.json")
+    out = OUT if not (args.round2 or args.round3 or args.round4) else config.STATE_DIR / ("backtest_sweep2.json" if args.round2 else "backtest_sweep3.json" if args.round3 else "backtest_sweep4.json")
     out.write_text(json.dumps({"generated": date.today().isoformat(), "results": results}, indent=2), encoding="utf-8")
     print("\nTOP 5 by score (sharpe + 0.5*excess - 0.5*turnover):")
     for r in results[:5]:

@@ -68,6 +68,18 @@ the learner weekly on outcomes known at the time, and simulates the live sizing 
 Output: `state/backtest_report.json` (published to the dashboard) and `state/backtest.sqlite`, which warm-starts the
 live learner at half weight (`WARM_START_WEIGHT`). Not simulated: fundamentals (no point-in-time data) and the Claude agents.
 
+## Execution and the intraday guardian
+
+- Orders: exits go out in full at the open; buys and trims are split into `EXECUTION_SLICES` (4) market orders
+  15 minutes apart (09:30, 09:45, 10:00, 10:15 ET) to avoid paying the whole opening spread at once.
+- `guardian.py` runs hourly during the session (Task Scheduler "SemiBand-Guardian", 07:35–13:05 PT). For each
+  holding it pulls today's headlines (Finnhub + DuckDuckGo), and only when there are NEW titles asks Claude whether
+  they describe a material adverse event. It exits only on action=exit with severity ≥ `GUARDIAN_EXIT_SEVERITY`
+  (0.7), records the exit in `state/guardian_exits.json`, and the daily cycle will not rebuy that name for
+  `GUARDIAN_COOLDOWN_DAYS` (3). It never buys. Checks appear on the dashboard under Guardian.
+- Backtests showed price-based stop-losses (6–20% below entry) reduced both return and Sharpe, so there is no
+  price stop; the guardian reacts to news, not to price.
+
 ## Rules
 
 - Never write into earnings-ai (`chains/`, `graph/`, `company_metrics.json`). Read only.

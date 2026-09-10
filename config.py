@@ -81,3 +81,11 @@ REBALANCE_BAND = 0.30             # only resize a held name when the target move
 COST_BPS = 5                      # assumed round-trip cost per order in basis points (slippage + fees), used for the ledger and shown to agents
 
 ORDER_PREFIX = "sb2-"             # client_order_id prefix: how we tell our orders from foreign ones
+
+# --- execution: spread each day's buys/trims over the first hour instead of one market order at the bell ---
+EXECUTION_SLICES = 4              # 4 slices -> 09:30, 09:45, 10:00, 10:15 ET (exits go out in full at the first slice)
+EXECUTION_INTERVAL_MIN = 15
+
+# --- intraday guardian (guardian.py, hourly during the session) ---
+GUARDIAN_EXIT_SEVERITY = 0.7      # exit a holding only when Claude rates a NEW headline as material and this severe
+GUARDIAN_COOLDOWN_DAYS = 3        # the daily cycle will not rebuy a name the guardian exited within this many days

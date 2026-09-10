@@ -83,7 +83,13 @@ export type Backtest = {
   caveats: string[];
 };
 
+export type GuardianCheck = {
+  time: string; holdings: number; checked: number;
+  events: { time: string; ticker: string; new_headlines: number; material: boolean; severity: number; action: string; reason: string; executed: boolean }[];
+};
+
 export type Dashboard = {
+  guardian?: GuardianCheck[];
   backtest?: Backtest | null;
   benchmarks?: Record<string, [string, number][]>;
   decisions?: Decision[];

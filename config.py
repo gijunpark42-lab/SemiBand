@@ -57,6 +57,9 @@ HORIZONS = (5, 10, 20)            # trading days after which a prediction is sco
 
 # --- learning ---
 WARM_START_WEIGHT = 0.5           # backtest rows (state/backtest.sqlite) count this much vs live rows in learner.fit; 0 = off
+LEARNER_HALF_LIFE_DAYS = 90       # time decay of scored rows (sweep 2026-09-10: 90 beat 45 and 20 on Sharpe and return)
+LEARNER_PRIOR_STRENGTH = 150.0    # lambda when walk-forward CV cannot run yet
+LEARNER_LAMBDA_GRID = (150.0,)    # fixed: walk-forward CV kept picking 1000 (too timid); sweep: fixed 150 -> Sharpe 2.2-2.3 vs 1.7
 # (Hedge below is kept only as a dashboard reference)
 HEDGE_ETA = 0.5                   # step size: w_i *= exp(eta * gain_i)
 WEIGHT_FLOOR = 0.02               # no agent is ever silenced completely (11 agents -> 22% floor mass)
@@ -67,11 +70,12 @@ TOP_N = 15                        # max names held
 MIN_CONVICTION = 0.10             # enter only above this (stacking model: silent agents count as 0, so convictions run lower than the old speaker-mean)
 EXIT_CONVICTION = 0.04            # exit when conviction falls below this
 MAX_POSITION_PCT = 0.10           # per-name cap as a share of equity
-SIZE_PER_CONVICTION = 0.30        # position = conviction x this (conviction 0.33 -> 10% = the cap); weak convictions stay small
+SIZE_PER_CONVICTION = 0.45        # position = conviction x this (conviction 0.22 -> 10% = the cap); sweep 2026-09-10: 0.45 beat 0.30 on return at equal Sharpe
+DEMEAN_CONVICTION = False         # subtract the day's cross-sectional mean conviction (pick relative winners, less beta)
 GROSS_TARGET = 1.50               # CEILING on gross exposure (150% of equity = 50% margin); not a target, cash is a position
 COMPARE_TICKERS = ("SOXX", "SPY", "QQQ")   # benchmarks shown against the portfolio on the dashboard
 MIN_ORDER_USD = 250               # ignore rebalancing dust below this
-REBALANCE_BAND = 0.15             # only resize a held name when the target moved by more than 15% of it (limits churn)
+REBALANCE_BAND = 0.30             # only resize a held name when the target moved by more than 30% of it (sweep: same Sharpe, less churn)
 
 # --- trading costs (Alpaca: $0 commission on US stocks; sells pay tiny SEC/FINRA fees; market orders pay the spread) ---
 COST_BPS = 5                      # assumed round-trip cost per order in basis points (slippage + fees), used for the ledger and shown to agents

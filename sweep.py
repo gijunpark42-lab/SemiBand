@@ -31,7 +31,7 @@ OUT = config.STATE_DIR / "backtest_sweep.json"
 PIT_AGENTS = ["supply_chain", "neighbors", "technical", "mean_reversion", "events", "risk", "macro"]
 
 BASE = dict(min_conv=0.10, size_k=0.30, cap=0.10, gross=1.50, band=0.15, top_n=15,
-            half_life=45, demean=False, horizons=(5, 10, 20), learn=True)
+            half_life=90, demean=False, horizons=(5, 10, 20), learn=True, agents_only=None, lam=None)
 
 
 def load_signals():
@@ -48,6 +48,8 @@ def load_signals():
 def simulate(by_date, closes, params, refit_every=5, warmup=30):
     p = dict(BASE, **params)
     learner.HALF_LIFE_DAYS = p["half_life"]
+    learner.LAMBDA_GRID = (p["lam"],) if p["lam"] else tuple(config.LEARNER_LAMBDA_GRID)
+    learner.PRIOR_STRENGTH = p["lam"] or config.LEARNER_PRIOR_STRENGTH
     config.HORIZONS = tuple(p["horizons"])
     dates = sorted(by_date)
     idx = closes.index
@@ -63,7 +65,8 @@ def simulate(by_date, closes, params, refit_every=5, warmup=30):
             break
         if p["learn"] and (model is None or k % refit_every == 0):
             model = learner.fit(date.fromisoformat(d), asof=date.fromisoformat(d))
-        conv, _ = learner.predict(by_date[d], model if p["learn"] else None)
+        sigs = by_date[d] if not p["agents_only"] else [s for s in by_date[d] if s.agent in p["agents_only"]]
+        conv, _ = learner.predict(sigs, model if p["learn"] else None)
         if p["demean"]:
             m = float(np.mean(list(conv.values())))
             conv = {t: c - m for t, c in conv.items()}
@@ -130,6 +133,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--quick", action="store_true", help="only the base case and a few variants")
+    ap.add_argument("--round2", action="store_true", help="second round: half-life 90 combos and lambda variants")
+    ap.add_argument("--round3", action="store_true", help="third round: fixed lambda x sizing")
     args = ap.parse_args()
 
     live_agents, live_h = config.AGENTS, config.HORIZONS
@@ -143,9 +148,30 @@ def main():
     closes = market.closes(tickers + [config.BENCHMARK, "SPY"], lookback_days=800, cache=False)
     closes = closes[closes[config.BENCHMARK].notna()]
 
-    variants = [("base", {}), ("no_learning", {"learn": False}), ("half_life_90", {"half_life": 90}),
-                ("half_life_20", {"half_life": 20}), ("h10_20_only", {"horizons": (10, 20)}), ("h20_only", {"horizons": (20,)})]
-    if not args.quick:
+    if args.round2:
+        variants = [("hl90_base", {})]
+        for lam in (20.0, 50.0, 150.0, 400.0):
+            variants.append((f"hl90_lam{int(lam)}", {"lam": lam}))
+        for k, cap, band in ((0.45, 0.10, 0.15), (0.45, 0.10, 0.30), (0.45, 0.15, 0.15), (0.30, 0.15, 0.15), (0.30, 0.10, 0.30)):
+            variants.append((f"hl90_k{k}_cap{cap}_band{band}", {"size_k": k, "cap": cap, "band": band}))
+        variants.append(("hl90_lam50_k0.45", {"lam": 50.0, "size_k": 0.45}))
+        variants.append(("hl120", {"half_life": 120}))
+        variants.append(("hl180", {"half_life": 180}))
+    if args.round3:
+        variants = [("lam150_k0.3_cap0.1", {"lam": 150.0}),
+                    ("lam150_k0.45_cap0.1", {"lam": 150.0, "size_k": 0.45}),
+                    ("lam150_k0.45_cap0.15", {"lam": 150.0, "size_k": 0.45, "cap": 0.15}),
+                    ("lam150_k0.45_cap0.1_band0.3", {"lam": 150.0, "size_k": 0.45, "band": 0.30}),
+                    ("lam150_k0.6_cap0.1", {"lam": 150.0, "size_k": 0.60}),
+                    ("lam100_k0.45_cap0.1", {"lam": 100.0, "size_k": 0.45}),
+                    ("lam250_k0.45_cap0.1", {"lam": 250.0, "size_k": 0.45})]
+    else:
+        variants = [("base", {}), ("no_learning", {"learn": False}), ("half_life_90", {"half_life": 90}),
+                ("half_life_20", {"half_life": 20}), ("h10_20_only", {"horizons": (10, 20)}), ("h20_only", {"horizons": (20,)}),
+                ("technical_only", {"learn": False, "agents_only": ("technical",)}),
+                ("no_neighbors", {"agents_only": ("supply_chain", "technical", "mean_reversion", "events", "risk", "macro")}),
+                ("price_agents_only", {"agents_only": ("technical", "mean_reversion", "risk", "macro")})]
+    if not args.quick and not args.round2 and not args.round3:
         for combo in itertools.product(*GRID.values()):
             kv = dict(zip(GRID.keys(), combo))
             if kv == {k: BASE[k] for k in GRID}:
@@ -163,7 +189,8 @@ def main():
     for r in results:
         r["score"] = round(r["sharpe"] + 0.5 * r["excess_vs_soxx"] - 0.5 * r["turnover_per_day"], 3)
     results.sort(key=lambda r: -r["score"])
-    OUT.write_text(json.dumps({"generated": date.today().isoformat(), "results": results}, indent=2), encoding="utf-8")
+    out = OUT if not (args.round2 or args.round3) else config.STATE_DIR / ("backtest_sweep2.json" if args.round2 else "backtest_sweep3.json")
+    out.write_text(json.dumps({"generated": date.today().isoformat(), "results": results}, indent=2), encoding="utf-8")
     print("\nTOP 5 by score (sharpe + 0.5*excess - 0.5*turnover):")
     for r in results[:5]:
         print(f"  {r['score']:6.3f} {r['name']}")

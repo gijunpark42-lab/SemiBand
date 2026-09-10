@@ -148,6 +148,10 @@ def main():
     signals = run_agents(universe, ctx, model, positions, use_llm=not args.no_llm)
     ledger.add_predictions(today, signals, last_close)
     convictions, breakdown = learner.predict(signals, model)
+    if config.DEMEAN_CONVICTION and convictions:
+        mean_conv = sum(convictions.values()) / len(convictions)
+        convictions = {t: c - mean_conv for t, c in convictions.items()}
+        notes.append(f"convictions demeaned by {mean_conv:+.3f}")
 
     if not dry and not wait_for_open(max_minutes=120):
         log.info("market did not open (holiday?) — predictions recorded, no orders")

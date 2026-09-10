@@ -44,9 +44,9 @@ import config
 import ledger
 
 MODEL_FILE = config.STATE_DIR / "model.json"
-HALF_LIFE_DAYS = 45            # calendar days; an observation 45 days old counts half
-PRIOR_STRENGTH = 150.0         # lambda: pseudo-observations behind the equal-weight prior
-LAMBDA_GRID = (50.0, 150.0, 400.0, 1000.0)
+HALF_LIFE_DAYS = config.LEARNER_HALF_LIFE_DAYS      # calendar days; an observation that old counts half
+PRIOR_STRENGTH = config.LEARNER_PRIOR_STRENGTH      # lambda: pseudo-observations behind the equal-weight prior
+LAMBDA_GRID = tuple(config.LEARNER_LAMBDA_GRID)
 CV_MIN_DATES = 8               # walk-forward CV needs this many distinct prediction dates
 WINSOR = 0.15                  # clip realised abnormal returns at +/-15%
 DEFAULT_SCALE = {5: 0.02, 10: 0.03, 20: 0.045}   # typical |abnormal| per horizon until measured
@@ -144,15 +144,19 @@ def ic(pred, y):
     return float(np.corrcoef(rp, ry)[0, 1])
 
 
-def walk_forward_ic(X, y, dates, w0, lam, today, last_k=10):
-    """Mean IC over the last_k dates, each predicted from strictly earlier dates only."""
+def walk_forward_ic(X, y, dates, w0, lam, today, horizon, last_k=10):
+    """Mean IC over the last_k dates, each predicted from a model that only saw rows whose
+    outcome was already known on that date (prediction date + horizon), so overlapping
+    return windows cannot leak the answer into the training set."""
     uniq = sorted(set(dates))
     if len(uniq) < CV_MIN_DATES:
         return None
     dates_arr = np.array(dates)
+    gap = int(math.ceil(horizon * 1.45)) + 1
     ics = []
     for dt in uniq[-last_k:]:
-        train = dates_arr < dt
+        cutoff = (date.fromisoformat(dt) - timedelta(days=gap)).isoformat()
+        train = dates_arr <= cutoff
         test = dates_arr == dt
         if train.sum() < 20 or test.sum() < 5:
             continue
@@ -176,7 +180,7 @@ def fit(today: date | None = None, asof: date | None = None) -> dict:
         y = y_raw / scale
         lam, cv = PRIOR_STRENGTH, None
         if len(set(dates)) >= CV_MIN_DATES:
-            scores = {l: walk_forward_ic(X, y, dates, w0, l, today) for l in LAMBDA_GRID}
+            scores = {l: walk_forward_ic(X, y, dates, w0, l, today, h) for l in LAMBDA_GRID}
             scores = {l: s for l, s in scores.items() if s is not None}
             if scores:
                 lam = max(scores, key=scores.get)

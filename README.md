@@ -50,11 +50,15 @@ Scheduled task (weekdays 05:50 PT):
 schtasks /Create /F /SC WEEKLY /D MON,TUE,WED,THU,FRI /ST 05:50 /TN SemiBand-Cycle /TR "cmd /c cd /d C:\Users\calif\Desktop\Trading && set PYTHONUTF8=1 && C:\Users\calif\AppData\Local\Python\bin\python.exe cycle.py >> state\run_daily.log 2>&1"
 ```
 
-## Learning rule (Hedge)
+## Learning rule (Bayesian ridge stacking, `learner.py`)
 
-Per scoring round, agent i's gain = mean over its newly scored predictions of
-`direction × confidence × abnormal_return × 20`, clipped to [-1, 1].
-`w_i ← w_i · exp(0.5 · gain_i)`, renormalised, floor 2%. All eleven start equal.
+Per horizon h in {5, 10, 20}: target y = abnormal return / scale_h; features x = [direction_i x confidence_i] +
+[direction_i] for every agent (0 when silent); posterior mean w = (X'DX + lambda I)^-1 (X'Dy + lambda w0) with an
+exponential time decay D (half-life 45 days) and prior mean w0 = the equal-weight blend. lambda (prior strength,
+default 150 pseudo-observations) is chosen by walk-forward IC once 8+ prediction dates exist. Conviction =
+reliability-weighted blend of the three horizon predictions, clipped to [-1, 1]. Weights may go negative
+(a reliably wrong agent becomes a contrarian signal). Hedge (multiplicative weights) is still computed as a
+reference line on the dashboard. Day one is identical to the equal blend by construction.
 
 ## Rules
 

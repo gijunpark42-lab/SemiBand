@@ -1,18 +1,22 @@
-"""Score matured predictions against realized returns and update agent weights.
+"""Score matured predictions against realized returns, then refit the learner.
 
 For a prediction made on date D with horizon h: entry = close of D, exit =
 close h trading days later, abnormal = stock return minus the benchmark's.
-An agent's gain for the round is the mean over its newly scored predictions of
-    direction * confidence * abnormal * 20     (clipped to [-1, 1])
-so a full-conviction call that beats SOXX by 5% earns +1, the opposite -1.
+
+Two learners run on the scored rows:
+  * learner.fit  - Bayesian ridge stacking (the weights actually used), see learner.py
+  * Hedge        - multiplicative weights kept as a simple reference line on the
+                   dashboard: gain = mean(direction * confidence * abnormal * 20), clipped
 """
 import logging
 from collections import defaultdict
+from datetime import date
 
 import pandas as pd
 
 import config
 import ensemble
+import learner
 import ledger
 from agents.base import clip
 
@@ -20,9 +24,10 @@ log = logging.getLogger(__name__)
 
 
 def run(closes: pd.DataFrame, today: str):
-    weights = ledger.latest_weights() or ensemble.initial_weights()
+    """-> (effective weights for display, {agent: n newly scored}, model, hedge weights)."""
+    hedge = ledger.latest_hedge_weights() or ensemble.initial_weights()
     for a in config.AGENTS:                     # a newly added agent starts at the floor
-        weights.setdefault(a, config.WEIGHT_FLOOR)
+        hedge.setdefault(a, config.WEIGHT_FLOOR)
     idx = closes.index
     bench = closes[config.BENCHMARK]
     gains = defaultdict(list)
@@ -50,8 +55,14 @@ def run(closes: pd.DataFrame, today: str):
 
     if gains:
         mean_gains = {a: sum(g) / len(g) for a, g in gains.items()}
-        weights = ensemble.hedge_update(weights, mean_gains)
-        log.info("scored %d predictions; gains %s; weights %s", scored,
-                 {a: round(g, 3) for a, g in mean_gains.items()}, weights)
+        hedge = ensemble.hedge_update(hedge, mean_gains)
+        log.info("scored %d predictions; hedge gains %s -> %s", scored,
+                 {a: round(g, 3) for a, g in mean_gains.items()}, hedge)
+    ledger.save_hedge_weights(today, hedge)
+
+    model = learner.fit(date.fromisoformat(today))
+    weights = model["effective_weights"]
+    log.info("stacking model: %s", {h: {k: v[k] for k in ("n_obs", "lambda", "cv_ic")}
+                                     for h, v in model["horizons"].items()})
     ledger.save_weights(today, weights)
-    return weights, {a: len(g) for a, g in gains.items()}
+    return weights, {a: len(g) for a, g in gains.items()}, model, hedge

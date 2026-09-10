@@ -27,10 +27,10 @@ const AGENTS: (Box & { from: number[] })[] = [
   { x: 270, y: 342, w: 170, h: 26, title: "llm_news", sub: "Claude · catalysts", tone: "llm", from: [4] },
 ];
 
-const ENSEMBLE: Box = { x: 520, y: 118, w: 190, h: 90, title: "Weighted blend (Hedge)", sub: "Σ weight × direction × confidence ÷ Σ weight = conviction", tone: "core" };
+const ENSEMBLE: Box = { x: 520, y: 118, w: 190, h: 90, title: "Stacking model (Bayesian ridge)", sub: "conviction = learned weights · (direction × confidence); prior = equal blend", tone: "core" };
 const PORTFOLIO: Box = { x: 770, y: 90, w: 214, h: 60, title: "Portfolio", sub: "conviction ≥ 0.15 · top 15 · 10% per name · 150% gross", tone: "core" };
 const BROKER: Box = { x: 770, y: 176, w: 214, h: 60, title: "Alpaca paper orders", sub: "at the 09:30 ET open · moderator writes the minutes", tone: "core" };
-const SCORE: Box = { x: 520, y: 300, w: 464, h: 60, title: "Score → update weights", sub: "abnormal return vs SOXX after 5 · 10 · 20 trading days · right agents up, wrong agents down (floor 2%)", tone: "core" };
+const SCORE: Box = { x: 520, y: 300, w: 464, h: 60, title: "Score → refit the stacking model", sub: "abnormal return vs SOXX after 5 · 10 · 20 trading days · ridge posterior with time decay · λ picked by walk-forward IC", tone: "core" };
 
 function fill(tone?: Box["tone"]) {
   if (tone === "llm") return "color-mix(in srgb, var(--line) 18%, var(--surface))";

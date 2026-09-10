@@ -93,7 +93,7 @@ export default async function Page() {
         <Pipeline />
         <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
           Analysis starts at 05:50 PT every trading day and orders go out right after the 09:30 ET open. Agents do not talk to each other; each hands in its own opinion (direction -1..+1, confidence 0..1).
-          Weights start equal and shift toward whoever was right every time a prediction is scored against SOXX at 5, 10 and 20 trading days. The minutes of every order are under Decisions.
+          Weights start as an equal blend and are refit every day by Bayesian ridge stacking on the scored predictions (abnormal return vs SOXX at 5, 10 and 20 trading days); an agent that is reliably wrong ends up with a negative weight and is used as a contrarian signal. The minutes of every order are under Decisions.
         </div>
         <div className="scroll" style={{ marginTop: 12 }}>
           <table>
@@ -121,14 +121,26 @@ export default async function Page() {
           <>
             <div className="muted" style={{ marginBottom: 10, fontSize: 12 }}>
               cycle {dash.date}{dash.dry_run ? " · dry run" : ""} · universe {dash.universe_size ?? "?"} tickers ·
-              weights update by multiplicative-weights (Hedge) as predictions mature at 5 / 10 / 20 days
+              weights = Bayesian ridge stacking refit daily on scored predictions (prior: equal blend; negative = used as a contrarian signal) ·
+              shown as share of total |weight|
+              {dash.model && (
+                <span> · model: {Object.entries(dash.model).map(([h, m]) => `${h}d ${m.n_obs} rows${m.cv_ic != null ? `, IC ${m.cv_ic.toFixed(2)}` : ""}`).join(" · ")}</span>
+              )}
             </div>
             <div className="tiles">
               {weights.map(([agent, w]) => (
                 <div className="tile" key={agent}>
                   <div className="label">{agent}</div>
-                  <div className="value">{(w * 100).toFixed(1)}%</div>
+                  <div className={`value ${w < 0 ? "down" : ""}`}>{w < 0 ? "-" : ""}{(Math.abs(w) * 100).toFixed(1)}%</div>
                   <div className="delta muted">
+                    {dash.weights_hedge && dash.weights_hedge[agent] != null && (
+                      <span style={{ marginRight: 8 }}>Hedge ref {(dash.weights_hedge[agent] * 100).toFixed(0)}%</span>
+                    )}
+                    {dash.model && Object.entries(dash.model).some(([, m]) => m.agent_ic?.[agent] != null) && (
+                      <span style={{ marginRight: 8 }}>
+                        IC {Object.entries(dash.model).map(([h, m]) => `${h}d ${m.agent_ic?.[agent] == null ? "-" : m.agent_ic[agent]!.toFixed(2)}`).join(" / ")}
+                      </span>
+                    )}
                     {(dash.scoreboard ?? []).filter((s) => s.agent === agent).map((s) => (
                       <span key={s.horizon} style={{ marginRight: 8 }}>
                         {s.horizon}d: {s.n} scored{s.hit_rate != null ? `, ${(s.hit_rate * 100).toFixed(0)}% hit` : ""}

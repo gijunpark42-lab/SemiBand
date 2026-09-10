@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS scores(
     ret REAL, bench_ret REAL, abnormal REAL, hit INTEGER,
     PRIMARY KEY(prediction_id, horizon));
 CREATE TABLE IF NOT EXISTS weights(date TEXT, agent TEXT, weight REAL, PRIMARY KEY(date, agent));
+CREATE TABLE IF NOT EXISTS hedge_weights(date TEXT, agent TEXT, weight REAL, PRIMARY KEY(date, agent));
 CREATE TABLE IF NOT EXISTS cycles(
     date TEXT PRIMARY KEY, equity REAL, cash REAL, n_positions INTEGER, n_orders INTEGER, note TEXT);
 CREATE TABLE IF NOT EXISTS orders(
@@ -71,6 +72,21 @@ def latest_weights():
             return None
         return {r["agent"]: r["weight"] for r in
                 con.execute("SELECT agent, weight FROM weights WHERE date = ?", (row["d"],))}
+
+
+def save_hedge_weights(date, weights):
+    with connect() as con:
+        con.executemany("INSERT OR REPLACE INTO hedge_weights VALUES (?,?,?)",
+                        [(date, a, w) for a, w in weights.items()])
+
+
+def latest_hedge_weights():
+    with connect() as con:
+        row = con.execute("SELECT MAX(date) AS d FROM hedge_weights").fetchone()
+        if not row or not row["d"]:
+            return None
+        return {r["agent"]: r["weight"] for r in
+                con.execute("SELECT agent, weight FROM hedge_weights WHERE date = ?", (row["d"],))}
 
 
 def weights_history():

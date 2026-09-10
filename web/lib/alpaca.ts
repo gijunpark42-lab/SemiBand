@@ -82,6 +82,8 @@ export type Dashboard = {
   cash?: number;
   universe_size?: number;
   weights: Record<string, number>;
+  weights_hedge?: Record<string, number>;
+  model?: Record<string, { n_obs: number; n_dates: number; lambda: number; scale: number; cv_ic: number | null; reliability: number; agent_ic: Record<string, number | null> }>;
   weights_history?: { date: string; agent: string; weight: number }[];
   scoreboard?: { agent: string; horizon: number; n: number; hit_rate: number | null; mean_abnormal_signed: number | null }[];
   convictions?: { ticker: string; conviction: number; target_usd: number | null; agents: Record<string, AgentView> }[];

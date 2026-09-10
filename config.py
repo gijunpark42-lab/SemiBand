@@ -61,10 +61,10 @@ WEIGHT_FLOOR = 0.02               # no agent is ever silenced completely (11 age
 # --- portfolio (long-only, margin allowed up to GROSS_TARGET) ---
 CAPITAL = 1_000_000               # starting equity of the new paper account (2026-09-10); sizing uses live equity
 TOP_N = 15                        # max names held
-MIN_CONVICTION = 0.15             # enter only above this
-EXIT_CONVICTION = 0.05            # exit when conviction falls below this
+MIN_CONVICTION = 0.10             # enter only above this (stacking model: silent agents count as 0, so convictions run lower than the old speaker-mean)
+EXIT_CONVICTION = 0.04            # exit when conviction falls below this
 MAX_POSITION_PCT = 0.10           # per-name cap as a share of equity
-SIZE_PER_CONVICTION = 0.20        # position = conviction x this (conviction 0.5 -> 10% = the cap); weak convictions stay small
+SIZE_PER_CONVICTION = 0.30        # position = conviction x this (conviction 0.33 -> 10% = the cap); weak convictions stay small
 GROSS_TARGET = 1.50               # CEILING on gross exposure (150% of equity = 50% margin); not a target, cash is a position
 COMPARE_TICKERS = ("SOXX", "SPY", "QQQ")   # benchmarks shown against the portfolio on the dashboard
 MIN_ORDER_USD = 250               # ignore rebalancing dust below this

@@ -9,7 +9,7 @@ the open, orders go out right after 09:30 ET. Safe to run by hand with --dry-run
     python cycle.py --tickers NVDA,AMD   restrict the universe (testing)
 
 Steps: fresh-start liquidation if state/liquidate_pending exists -> foreign-order
-guard -> universe -> closes -> score matured predictions + update weights -> run
+guard -> universe -> closes -> score matured predictions + refit the stacking model -> run
 agents -> combine -> wait for the open -> targets -> orders -> moderator minutes
 -> journal + dashboard.
 """
@@ -26,6 +26,7 @@ import broker
 import config
 import ensemble
 import journal
+import learner
 import ledger
 import liquidate
 import market
@@ -62,7 +63,7 @@ def _run_agent(name, universe, ctx):
     return out
 
 
-def run_agents(universe, ctx, weights, held, use_llm):
+def run_agents(universe, ctx, model, held, use_llm):
     """Free agents see the whole universe; LLM agents (one claude -p call per
     ticker each) only the names the free agents rank highest plus what we hold,
     capped by config.LLM_MAX_TICKERS. This keeps a cycle to ~1/3 of the calls."""
@@ -73,7 +74,7 @@ def run_agents(universe, ctx, weights, held, use_llm):
         signals += _run_agent(name, universe, ctx)
     if not use_llm or not llm_agents:
         return signals
-    prelim, _ = ensemble.combine(signals, weights)
+    prelim, _ = learner.predict(signals, model)
     ranked = sorted(prelim, key=lambda t: -abs(prelim[t]))
     keep = set(ranked[:config.LLM_MAX_TICKERS]) | (set(held) & set(universe))
     subset = {t: universe[t] for t in universe if t in keep}
@@ -135,17 +136,17 @@ def main():
     closes = market.closes(list(universe) + [config.BENCHMARK])
     last_close = {t: float(closes[t].dropna().iloc[-1]) for t in universe if t in closes.columns and closes[t].dropna().size}
 
-    weights, scored = score.run(closes, today)
+    weights, scored, model, weights_hedge = score.run(closes, today)
     if scored:
         notes.append("scored " + ", ".join(f"{a} {n}" for a, n in scored.items()))
-    log.info("weights: %s", weights)
+    log.info("effective weights: %s", weights)
 
     positions = broker.positions()
 
     ctx = {"closes": closes, "today": today}
-    signals = run_agents(universe, ctx, weights, positions, use_llm=not args.no_llm)
+    signals = run_agents(universe, ctx, model, positions, use_llm=not args.no_llm)
     ledger.add_predictions(today, signals, last_close)
-    convictions, breakdown = ensemble.combine(signals, weights)
+    convictions, breakdown = learner.predict(signals, model)
 
     if not dry and not wait_for_open(max_minutes=120):
         log.info("market did not open (holiday?) — predictions recorded, no orders")
@@ -197,16 +198,14 @@ def main():
     for d in done:
         t = d["ticker"]
         per_agent = breakdown.get(t, {})
-        den = sum(weights.get(a, 0) for a in per_agent) or 1.0
         decisions.append({
             "ticker": t, "side": d["side"], "notional": d["notional"], "est_cost_usd": d["est_cost_usd"],
             "conviction": round(convictions.get(t, 0.0), 3),
             "target_usd": target_usd.get(t),
             "held_before_usd": float(positions[t].market_value) if t in positions else 0.0,
-            "agents": {a: {**s, "weight": round(weights.get(a, 0), 3),
-                           "contribution": round(weights.get(a, 0) * s["direction"] * s["confidence"] / den, 3)}
-                       for a, s in per_agent.items()},
-            "rule": (f"conviction = sum(weight x direction x confidence) / sum(weight) over agents that spoke; "
+            "agents": {a: {**s, "weight": round(weights.get(a, 0), 3)} for a, s in per_agent.items()},
+            "rule": (f"conviction = Bayesian ridge stacking of the agents' direction x confidence (prior = equal blend; "
+                     f"weights refit daily from scored predictions, may go negative = contrarian); "
                      f"enter >= {config.MIN_CONVICTION}, exit < {config.MIN_CONVICTION}, top {config.TOP_N}; "
                      f"size = conviction x {config.SIZE_PER_CONVICTION:.0%} of equity (so weak convictions stay small and cash is fine), "
                      f"cap {config.MAX_POSITION_PCT:.0%} of equity, {config.GROSS_TARGET:.0%} gross, within buying power; "
@@ -235,6 +234,9 @@ def main():
         "cash": cash,
         "universe_size": len(universe),
         "weights": weights,
+        "weights_hedge": weights_hedge,
+        "model": {h: {k: v.get(k) for k in ("n_obs", "n_dates", "lambda", "scale", "cv_ic", "reliability", "agent_ic")}
+                  for h, v in model["horizons"].items()},
         "weights_history": ledger.weights_history(),
         "scoreboard": ledger.scoreboard(),
         "convictions": [{"ticker": t, "conviction": round(c, 3), "target_usd": target_usd.get(t),

@@ -5,8 +5,8 @@ dashboard.json  the ensemble's state after each cycle: agent weights, scoreboard
                 today's convictions per ticker, notes
 
 Both are written locally under state/ and, when BLOB_READ_WRITE_TOKEN is set in
-.env, uploaded to the private Vercel Blob store at fixed pathnames so web/ can
-read them. Upload failures are logged and never block trading.
+.env, uploaded to the private Vercel Blob store under semiband-v2/ (the old VM bots
+still write the root trades.json, so our files live apart) so web/ can read them. Upload failures are logged and never block trading.
 """
 import json
 import logging
@@ -41,7 +41,7 @@ def record(symbol, side, reason, price, notional=None, qty=None, dry_run=False):
     rows = rows[-MAX_ROWS:]
     body = json.dumps(rows, indent=2)
     TRADES_FILE.write_text(body, encoding="utf-8")
-    _upload("trades.json", body)
+    _upload("semiband-v2/trades.json", body)
 
 
 def publish_dashboard(payload: dict):
@@ -49,7 +49,7 @@ def publish_dashboard(payload: dict):
     payload = dict(payload, generated=datetime.now(timezone.utc).isoformat(timespec="seconds"))
     body = json.dumps(payload, indent=2, ensure_ascii=False)
     DASHBOARD_FILE.write_text(body, encoding="utf-8")
-    _upload("dashboard.json", body)
+    _upload("semiband-v2/dashboard.json", body)
 
 
 def _upload(pathname, body):

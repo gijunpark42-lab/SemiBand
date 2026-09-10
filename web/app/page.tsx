@@ -1,4 +1,5 @@
 import EquityChart from "@/components/EquityChart";
+import Pipeline, { ROLES } from "@/components/Pipeline";
 import { getAccount, getDashboard, getHistory, getPositions, getTrades } from "@/lib/alpaca";
 
 export const dynamic = "force-dynamic";
@@ -75,6 +76,31 @@ export default async function Page() {
 
       <h2>Equity · last 3 months</h2>
       <div className="card"><EquityChart points={points} /></div>
+
+      <h2>How it works · data → 10 agents → weighted blend → orders → scoring</h2>
+      <div className="card">
+        <Pipeline />
+        <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+          Analysis starts at 05:50 PT every trading day and orders go out right after the 09:30 ET open. Agents do not talk to each other; each hands in its own opinion (direction -1..+1, confidence 0..1).
+          Weights start at 10% each and shift toward whoever was right every time a prediction is scored against SOXX at 5, 10 and 20 trading days. The minutes of every order are under Decisions.
+        </div>
+        <div className="scroll" style={{ marginTop: 12 }}>
+          <table>
+            <thead><tr><th>Agent</th><th>Role</th><th>What it sees</th><th>When it speaks</th><th>Cost</th></tr></thead>
+            <tbody>
+              {ROLES.map((r) => (
+                <tr key={r.agent}>
+                  <td><b>{r.agent}</b></td>
+                  <td>{r.role}</td>
+                  <td className="reason">{r.sees}</td>
+                  <td className="reason" style={{ minWidth: 140 }}>{r.speaks}</td>
+                  <td className="muted">{r.cost}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
 
       <h2>Agents · who the ensemble trusts</h2>
       <div className="card">
@@ -199,10 +225,10 @@ export default async function Page() {
                   </div>
                   {d.discussion && (
                     <div style={{ marginTop: 8, fontSize: 13, lineHeight: 1.5 }}>
-                      <div><b>합의</b> · {d.discussion.agreement}</div>
-                      <div><b>반대</b> · {d.discussion.disagreement}</div>
-                      <div><b>결론</b> · {d.discussion.verdict}</div>
-                      <div className="muted"><b>지켜볼 것</b> · {d.discussion.watch}</div>
+                      <div><b>Agreement</b> · {d.discussion.agreement}</div>
+                      <div><b>Disagreement</b> · {d.discussion.disagreement}</div>
+                      <div><b>Verdict</b> · {d.discussion.verdict}</div>
+                      <div className="muted"><b>Watch</b> · {d.discussion.watch}</div>
                     </div>
                   )}
                   <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>{d.rule}</div>

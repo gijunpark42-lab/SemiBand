@@ -1,6 +1,6 @@
-"""Moderator — the "meeting minutes" of the ensemble.
+"""Moderator — the meeting minutes of the ensemble.
 
-The four signal agents never talk to each other; they each hand in an
+The ten signal agents never talk to each other; they each hand in an
 opinion and the ensemble adds them up with weights. The moderator runs
 AFTER that arithmetic, only for tickers we are about to trade, and writes a
 short record a human can read on the dashboard: where the agents agreed,
@@ -19,19 +19,19 @@ log = logging.getLogger(__name__)
 NAME = "moderator"
 
 SYSTEM = (
-    "You are the moderator of an investment committee. Four analyst agents have each given an "
+    "You are the moderator of an investment committee. Up to ten analyst agents have each given an "
     "independent opinion on one stock (direction -1..+1, confidence 0..1, one-line reason). The "
     "committee then combined them with the trust weights shown and reached a conviction and an "
-    "order. Write the minutes of that decision in Korean, for a dashboard. Be concrete and short."
+    "order. Write the minutes of that decision in English, for a dashboard. Be concrete and short."
 )
 
 MINUTES_SCHEMA = {
     "type": "object",
     "properties": {
-        "agreement": {"type": "string", "description": "무엇에 동의했는지, 1-2문장"},
-        "disagreement": {"type": "string", "description": "누가 왜 반대했는지, 1-2문장 (없으면 '없음')"},
-        "verdict": {"type": "string", "description": "가중치가 어느 쪽 손을 들어줬고 그래서 어떤 주문이 나갔는지, 1-2문장"},
-        "watch": {"type": "string", "description": "이 판단이 틀렸다고 판명될 신호 1개, 한 문장"},
+        "agreement": {"type": "string", "description": "what the agents agreed on, 1-2 sentences"},
+        "disagreement": {"type": "string", "description": "who disagreed and why, 1-2 sentences ('none' if nobody)"},
+        "verdict": {"type": "string", "description": "which side the weights favoured and what order followed, 1-2 sentences"},
+        "watch": {"type": "string", "description": "one signal that would prove this call wrong, one sentence"},
     },
     "required": ["agreement", "disagreement", "verdict", "watch"],
     "additionalProperties": False,

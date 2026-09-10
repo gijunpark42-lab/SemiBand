@@ -57,7 +57,7 @@ def _one(build, ticker, company, price_line):
     if report.startswith("SUPPLY_CHAIN_UNAVAILABLE"):
         return None
     user = (f"Ticker: {ticker} ({company})\n{price_line}\n\n"
-            f"{report[:REPORT_CHARS]}\n\nGive your opinion as JSON.")
+            f"{report[:REPORT_CHARS]}\n\nTrading is commission-free but each order costs about 5 bps in slippage, and there is no obligation to trade: a direction near 0 with low confidence is a valid answer. Give your opinion as JSON.")
     try:
         o = llm.ask_json(SYSTEM, user)
     except Exception as exc:  # one bad call must not kill the cycle

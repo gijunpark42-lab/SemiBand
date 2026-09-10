@@ -1,26 +1,30 @@
 """Convictions -> target dollar positions -> orders. Long-only, margin allowed.
 
-Sizing: candidates above MIN_CONVICTION, top TOP_N, dollars in proportion to
-conviction, capped per name, GROSS_TARGET of equity in total (1.5 = 50%
-margin). Anything the cap removes is not redistributed — simple and easy to
-reason about on the dashboard. Buys are limited by the broker's buying power
-and by the gross target, never beyond either.
+Sizing: candidates above MIN_CONVICTION, top TOP_N, each sized by its own
+conviction (conviction x SIZE_PER_CONVICTION of equity, capped per name).
+GROSS_TARGET (1.5 = 50% margin) is a ceiling, never a goal — there is no
+obligation to hold 15 names or to be fully invested. Buys are limited by the
+broker's buying power and by the gross ceiling, never beyond either.
 """
 import config
 
 
 def targets(convictions, equity):
-    """{ticker: target USD}."""
+    """{ticker: target USD}.
+
+    Each name is sized by its own conviction (conviction x SIZE_PER_CONVICTION of
+    equity, capped at MAX_POSITION_PCT), so a weak day produces a small book and
+    cash stays a position. GROSS_TARGET is a ceiling, not a goal: if the sized
+    book exceeds it, everything is scaled down proportionally."""
     longs = sorted(((t, c) for t, c in convictions.items() if c >= config.MIN_CONVICTION),
                    key=lambda tc: -tc[1])[:config.TOP_N]
     if not longs:
         return {}
-    total = sum(c for _, c in longs)
-    out = {}
-    for t, c in longs:
-        w = min(c / total * config.GROSS_TARGET, config.MAX_POSITION_PCT)
-        out[t] = round(w * equity, 2)
-    return out
+    weights = {t: min(c * config.SIZE_PER_CONVICTION, config.MAX_POSITION_PCT) for t, c in longs}
+    gross = sum(weights.values())
+    if gross > config.GROSS_TARGET:
+        weights = {t: w * config.GROSS_TARGET / gross for t, w in weights.items()}
+    return {t: round(w * equity, 2) for t, w in weights.items() if w * equity >= config.MIN_ORDER_USD}
 
 
 def plan(target_usd, positions, convictions, universe, equity, buying_power):
@@ -43,6 +47,8 @@ def plan(target_usd, positions, convictions, universe, equity, buying_power):
 
     for s, tgt in target_usd.items():
         diff = tgt - held.get(s, 0.0)
+        if s in held and abs(diff) < config.REBALANCE_BAND * tgt:
+            continue                      # inside the band: hold, do not churn
         if diff >= config.MIN_ORDER_USD:
             buys.append({"ticker": s, "side": "BUY", "notional": round(diff, 2), "tag": "target"})
         elif diff <= -config.MIN_ORDER_USD:

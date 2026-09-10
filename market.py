@@ -129,3 +129,14 @@ def earnings(symbols):
     if todo:
         path.write_text(json.dumps(data), encoding="utf-8")
     return {s: data.get(s, []) for s in symbols}
+
+
+def benchmarks(days=130):
+    """{ticker: [[YYYY-MM-DD, close], ...]} for the comparison tickers, for the dashboard."""
+    df = closes(list(config.COMPARE_TICKERS), lookback_days=days)
+    out = {}
+    for t in config.COMPARE_TICKERS:
+        if t in df.columns:
+            series = df[t].dropna()
+            out[t] = [[d.strftime("%Y-%m-%d"), round(float(v), 4)] for d, v in series.items()]
+    return out

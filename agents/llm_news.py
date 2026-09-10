@@ -25,7 +25,7 @@ def _one(ticker, company):
     if not items:
         return None
     lines = "\n".join(f"- [{i['when'] or '?'}] {i['title']} ({i['publisher'] or '?'})" for i in items)
-    user = f"Ticker: {ticker} ({company})\nHeadlines, newest first:\n{lines}\n\nGive your opinion as JSON."
+    user = f"Ticker: {ticker} ({company})\nHeadlines, newest first:\n{lines}\n\nTrading is commission-free but each order costs about 5 bps in slippage, and there is no obligation to trade: a direction near 0 with low confidence is a valid answer. Give your opinion as JSON."
     try:
         o = llm.ask_json(SYSTEM, user)
     except Exception as exc:

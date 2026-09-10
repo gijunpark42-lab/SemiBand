@@ -43,14 +43,18 @@ def _one(decision):
     for a, v in decision["agents"].items():
         lines.append(f"- {a} (weight {v['weight']:.2f}): direction {v['direction']:+.2f}, "
                      f"confidence {v['confidence']:.2f} — {v['reason']}")
-    user = (f"Stock: {decision['ticker']}\n"
-            f"Agent opinions:\n" + "\n".join(lines) + "\n"
-            f"Combined conviction: {decision['conviction']:+.3f} "
-            f"(rule: {decision['rule']})\n"
-            f"Order: {decision['side']} "
-            + (f"${decision['notional']:,.0f}" if decision.get("notional") else "entire position")
-            + (f", target ${decision['target_usd']:,.0f}" if decision.get("target_usd") else "")
-            + "\n\nWrite the minutes as JSON.")
+    size = f"${decision['notional']:,.0f}" if decision.get("notional") else "entire position"
+    target = f", target ${decision['target_usd']:,.0f}" if decision.get("target_usd") else ""
+    cost = decision.get("est_cost_usd", 0) or 0
+    user = (
+        f"Stock: {decision['ticker']}\n"
+        f"Agent opinions:\n" + "\n".join(lines) + "\n"
+        f"Combined conviction: {decision['conviction']:+.3f} (rule: {decision['rule']})\n"
+        f"Order: {decision['side']} {size}{target}\n"
+        f"Trading cost: commission $0, assumed {config.COST_BPS} bps slippage/fees (about ${cost:,.0f} on this order). "
+        "Cash is a position: the committee is never obliged to trade or to be fully invested.\n\n"
+        "Write the minutes as JSON."
+    )
     try:
         return llm.ask_json(SYSTEM, user, schema=MINUTES_SCHEMA)
     except Exception as exc:

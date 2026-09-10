@@ -1,16 +1,17 @@
-"""One daily cycle of the self-weighting ensemble. Meant to run just after the
-US open on every trading day (run_daily.cmd via Task Scheduler), but safe to
-run by hand at any time with --dry-run.
+"""One daily cycle of the self-weighting ensemble. Scheduled at 05:50 PT on
+trading days (Task Scheduler "SemiBand-Cycle"): signals are computed before
+the open, orders go out right after 09:30 ET. Safe to run by hand with --dry-run.
 
     python cycle.py                 the real thing (waits for the open, sends paper orders)
     python cycle.py --dry-run       no orders, no waiting; still writes predictions + dashboard
-    python cycle.py --no-llm        only the free agents (supply_chain, technical)
+    python cycle.py --no-llm        only the seven free rule agents
     python cycle.py --force         trade even if foreign (non-sb2) orders were seen in 24h
     python cycle.py --tickers NVDA,AMD   restrict the universe (testing)
 
-Steps: wait for open -> fresh-start liquidation if state/liquidate_pending exists
--> foreign-order guard -> universe -> closes -> score matured predictions +
-update weights -> run agents -> combine -> targets -> orders -> journal + dashboard.
+Steps: fresh-start liquidation if state/liquidate_pending exists -> foreign-order
+guard -> universe -> closes -> score matured predictions + update weights -> run
+agents -> combine -> wait for the open -> targets -> orders -> moderator minutes
+-> journal + dashboard.
 """
 import argparse
 import importlib
@@ -182,8 +183,12 @@ def main():
             continue
         journal.record(t, o["side"], reason, last_close.get(t), notional=size, dry_run=dry)
         ledger.add_order(today, t, o["side"], size, reason, coid, dry)
-        done.append({"ticker": t, "side": o["side"], "notional": size, "reason": reason})
+        est_cost = round((size or 0.0) * config.COST_BPS / 10_000, 2)
+        done.append({"ticker": t, "side": o["side"], "notional": size, "reason": reason, "est_cost_usd": est_cost})
 
+    if done:
+        notes.append(f"estimated trading cost this cycle ${sum(d['est_cost_usd'] for d in done):,.0f} "
+                     f"({config.COST_BPS} bps per order; commission $0)")
     ledger.add_cycle(today, equity, cash, len(positions), len(done), "; ".join(notes))
     ranked = sorted(convictions.items(), key=lambda kv: -abs(kv[1]))
 
@@ -194,7 +199,7 @@ def main():
         per_agent = breakdown.get(t, {})
         den = sum(weights.get(a, 0) for a in per_agent) or 1.0
         decisions.append({
-            "ticker": t, "side": d["side"], "notional": d["notional"],
+            "ticker": t, "side": d["side"], "notional": d["notional"], "est_cost_usd": d["est_cost_usd"],
             "conviction": round(convictions.get(t, 0.0), 3),
             "target_usd": target_usd.get(t),
             "held_before_usd": float(positions[t].market_value) if t in positions else 0.0,
@@ -202,8 +207,11 @@ def main():
                            "contribution": round(weights.get(a, 0) * s["direction"] * s["confidence"] / den, 3)}
                        for a, s in per_agent.items()},
             "rule": (f"conviction = sum(weight x direction x confidence) / sum(weight) over agents that spoke; "
-                     f"enter >= {config.MIN_CONVICTION}, exit < {config.MIN_CONVICTION}, top {config.TOP_N}, "
-                     f"cap {config.MAX_POSITION_PCT:.0%} of equity, {config.GROSS_TARGET:.0%} gross, cash-limited"),
+                     f"enter >= {config.MIN_CONVICTION}, exit < {config.MIN_CONVICTION}, top {config.TOP_N}; "
+                     f"size = conviction x {config.SIZE_PER_CONVICTION:.0%} of equity (so weak convictions stay small and cash is fine), "
+                     f"cap {config.MAX_POSITION_PCT:.0%} of equity, {config.GROSS_TARGET:.0%} gross, within buying power; "
+                     f"held names resized only when the target moves > {config.REBALANCE_BAND:.0%}; "
+                     f"cost assumed {config.COST_BPS} bps per order"),
         })
     if decisions and not args.no_llm:
         moderator.run(decisions)          # meeting minutes per traded ticker (explains, never changes)
@@ -218,6 +226,7 @@ def main():
     history = history[-30:]
 
     journal.publish_dashboard({
+        "benchmarks": market.benchmarks(),
         "history": history,
         "decisions": decisions,
         "date": today,

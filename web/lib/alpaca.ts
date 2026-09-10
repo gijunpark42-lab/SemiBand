@@ -72,6 +72,7 @@ export type CycleRecord = {
 };
 
 export type Dashboard = {
+  benchmarks?: Record<string, [string, number][]>;
   decisions?: Decision[];
   history?: CycleRecord[];
   generated: string;

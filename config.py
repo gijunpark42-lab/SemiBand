@@ -63,7 +63,13 @@ TOP_N = 15                        # max names held
 MIN_CONVICTION = 0.15             # enter only above this
 EXIT_CONVICTION = 0.05            # exit when conviction falls below this
 MAX_POSITION_PCT = 0.10           # per-name cap as a share of equity
-GROSS_TARGET = 1.50               # user 2026-09-10: use margin up to 50% (150% of equity long) when there are enough candidates
+SIZE_PER_CONVICTION = 0.20        # position = conviction x this (conviction 0.5 -> 10% = the cap); weak convictions stay small
+GROSS_TARGET = 1.50               # CEILING on gross exposure (150% of equity = 50% margin); not a target, cash is a position
+COMPARE_TICKERS = ("SOXX", "SPY", "QQQ")   # benchmarks shown against the portfolio on the dashboard
 MIN_ORDER_USD = 250               # ignore rebalancing dust below this
+REBALANCE_BAND = 0.15             # only resize a held name when the target moved by more than 15% of it (limits churn)
+
+# --- trading costs (Alpaca: $0 commission on US stocks; sells pay tiny SEC/FINRA fees; market orders pay the spread) ---
+COST_BPS = 5                      # assumed round-trip cost per order in basis points (slippage + fees), used for the ledger and shown to agents
 
 ORDER_PREFIX = "sb2-"             # client_order_id prefix: how we tell our orders from foreign ones

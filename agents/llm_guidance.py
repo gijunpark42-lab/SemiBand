@@ -68,7 +68,7 @@ def _one(ticker, company, node, price_line):
                                      if k != "asof" and v and v != "—") + "\n")
     user = (f"Ticker: {ticker} ({company})\n{price_line}\n{curated_block}\n"
             f"Company's own recent call/filing statements, newest first:\n" + "\n".join(lines)
-            + "\n\nGive your opinion as JSON.")
+            + "\n\nTrading is commission-free but each order costs about 5 bps in slippage, and there is no obligation to trade: a direction near 0 with low confidence is a valid answer. Give your opinion as JSON.")
     try:
         o = llm.ask_json(SYSTEM, user)
     except Exception as exc:

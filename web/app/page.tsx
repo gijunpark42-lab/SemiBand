@@ -1,4 +1,5 @@
 import EquityChart from "@/components/EquityChart";
+import Performance from "@/components/Performance";
 import Pipeline, { ROLES } from "@/components/Pipeline";
 import { getAccount, getDashboard, getHistory, getPositions, getTrades } from "@/lib/alpaca";
 
@@ -76,6 +77,16 @@ export default async function Page() {
 
       <h2>Equity · last 3 months</h2>
       <div className="card"><EquityChart points={points} /></div>
+
+      <h2>Performance · portfolio vs SOXX / SPY / QQQ since the study started</h2>
+      <div className="card">
+        {dash?.benchmarks && (dash.history ?? []).length > 0 ? (
+          <Performance equity={points} benchmarks={dash.benchmarks}
+            startDate={(dash.history ?? []).map((h) => h.date).sort()[0]} />
+        ) : (
+          <div className="empty">Benchmarks appear after the first cycle publishes</div>
+        )}
+      </div>
 
       <h2>How it works · data → 10 agents → weighted blend → orders → scoring</h2>
       <div className="card">

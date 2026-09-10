@@ -1,6 +1,6 @@
 # SemiBand v2 — self-weighting agent ensemble (Alpaca paper)
 
-Ten agents each give an opinion on every stock in the universe. The opinions are blended with
+Eleven agents each give an opinion on every stock in the universe. The opinions are blended with
 trust weights, the blend is traded in an Alpaca paper account, and every prediction is scored
 5 / 10 / 20 trading days later against SOXX. Agents that were right gain weight; agents that
 were wrong lose it. LLM work runs through the Claude Max subscription (`claude -p`) — no API key.
@@ -20,7 +20,8 @@ The universe is the US-listed slice of the earnings-ai supply-chain graph (marke
      `fundamentals` (growth, margins, valuation, target) · `technical` (20/60-day momentum, trend,
      RSI) · `mean_reversion` (fade 5-day overextension; the opposite temperament of technical) ·
      `events` (earnings within 7 days = risk, reported within 14 days = drift) · `risk` (volatility
-     and drawdown brake; speaks only when risk is elevated)
+     and drawdown brake; speaks only when risk is elevated) · `macro` (SOXX/SPY trend, VIX, 10-year
+     yield → a regime score expressed through each name's beta)
    - Claude agents: `llm_supply` (the supply-chain report: structure, deals, transitions) ·
      `llm_guidance` (the company's own call statements + curated metrics: guidance momentum) ·
      `llm_news` (three weeks of headlines: catalysts)
@@ -53,7 +54,7 @@ schtasks /Create /F /SC WEEKLY /D MON,TUE,WED,THU,FRI /ST 05:50 /TN SemiBand-Cyc
 
 Per scoring round, agent i's gain = mean over its newly scored predictions of
 `direction × confidence × abnormal_return × 20`, clipped to [-1, 1].
-`w_i ← w_i · exp(0.5 · gain_i)`, renormalised, floor 2%. All ten start at 10%.
+`w_i ← w_i · exp(0.5 · gain_i)`, renormalised, floor 2%. All eleven start equal.
 
 ## Rules
 

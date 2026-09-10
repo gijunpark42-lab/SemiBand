@@ -46,6 +46,7 @@ AGENTS = [
     "mean_reversion",  # 5-day overextension: fades what technical chases
     "events",          # earnings in the next week (risk) / just reported (drift)
     "risk",            # volatility and drawdown brake: speaks only when risk is elevated
+    "macro",           # market regime (SOXX/SPY trend, VIX, 10y yield) expressed through each name's beta
     # Claude, via the local server (top LLM_MAX_TICKERS names only)
     "llm_supply",      # reads the supply-chain report: structure, deals, transitions
     "llm_guidance",    # reads the company's own latest call signals: guidance momentum
@@ -55,7 +56,7 @@ HORIZONS = (5, 10, 20)            # trading days after which a prediction is sco
 
 # --- learning (multiplicative weights / Hedge) ---
 HEDGE_ETA = 0.5                   # step size: w_i *= exp(eta * gain_i)
-WEIGHT_FLOOR = 0.02               # no agent is ever silenced completely (10 agents -> 20% floor mass)
+WEIGHT_FLOOR = 0.02               # no agent is ever silenced completely (11 agents -> 22% floor mass)
 
 # --- portfolio (long-only, margin allowed up to GROSS_TARGET) ---
 CAPITAL = 1_000_000               # starting equity of the new paper account (2026-09-10); sizing uses live equity

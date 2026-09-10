@@ -88,12 +88,12 @@ export default async function Page() {
         )}
       </div>
 
-      <h2>How it works · data → 10 agents → weighted blend → orders → scoring</h2>
+      <h2>How it works · data → 11 agents → weighted blend → orders → scoring</h2>
       <div className="card">
         <Pipeline />
         <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
           Analysis starts at 05:50 PT every trading day and orders go out right after the 09:30 ET open. Agents do not talk to each other; each hands in its own opinion (direction -1..+1, confidence 0..1).
-          Weights start at 10% each and shift toward whoever was right every time a prediction is scored against SOXX at 5, 10 and 20 trading days. The minutes of every order are under Decisions.
+          Weights start equal and shift toward whoever was right every time a prediction is scored against SOXX at 5, 10 and 20 trading days. The minutes of every order are under Decisions.
         </div>
         <div className="scroll" style={{ marginTop: 12 }}>
           <table>

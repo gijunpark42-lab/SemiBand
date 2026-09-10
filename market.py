@@ -17,17 +17,22 @@ def closes(symbols, lookback_days=config.LOOKBACK_DAYS) -> pd.DataFrame:
     config.STATE_DIR.mkdir(exist_ok=True)
     symbols = sorted(set(symbols))
     cache = config.STATE_DIR / f"closes_{date.today().isoformat()}.pkl"
-    if cache.exists():
-        df = pickle.loads(cache.read_bytes())
-        if set(symbols) <= set(df.columns):
-            return df[symbols]
+    for old in config.STATE_DIR.glob("closes_*.pkl"):
+        if old != cache:
+            old.unlink(missing_ok=True)
+    cached = pickle.loads(cache.read_bytes()) if cache.exists() else None
+    missing = symbols if cached is None else [s for s in symbols if s not in cached.columns]
+    if not missing:
+        return cached[symbols]
     start = date.today() - timedelta(days=lookback_days)
-    raw = yf.download(symbols, start=start.isoformat(), auto_adjust=True, progress=False, threads=True)
-    df = raw["Close"] if isinstance(raw.columns, pd.MultiIndex) else raw[["Close"]].rename(columns={"Close": symbols[0]})
+    raw = yf.download(missing, start=start.isoformat(), auto_adjust=True, progress=False, threads=True)
+    df = raw["Close"] if isinstance(raw.columns, pd.MultiIndex) else raw[["Close"]].rename(columns={"Close": missing[0]})
     df = df.dropna(how="all")
     df.index = pd.to_datetime(df.index).tz_localize(None).normalize()
+    if cached is not None:
+        df = cached.join(df, how="outer")          # merge new columns into the day's cache
     cache.write_bytes(pickle.dumps(df))
-    return df
+    return df[symbols]
 
 
 def news(symbol, limit=10, max_age_days=21):

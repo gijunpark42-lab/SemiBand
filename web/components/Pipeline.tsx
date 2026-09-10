@@ -1,9 +1,9 @@
-// How the ensemble works: data → 10 agents → weighted conviction → portfolio → orders → scoring → weights.
+// How the ensemble works: data → 11 agents → weighted conviction → portfolio → orders → scoring → weights.
 // Pure SVG, server-rendered, colours from the page's CSS variables so it follows light/dark.
 
 type Box = { x: number; y: number; w: number; h: number; title: string; sub?: string; tone?: "src" | "rule" | "llm" | "core" };
 
-const W = 1000, H = 400;
+const W = 1000, H = 380;
 
 const SOURCES: Box[] = [
   { x: 16, y: 26, w: 190, h: 40, title: "earnings-ai supply-chain map", sub: "graph/merged_graph.json · exposure.json", tone: "src" },
@@ -21,9 +21,10 @@ const AGENTS: (Box & { from: number[] })[] = [
   { x: 270, y: 142, w: 170, h: 26, title: "mean_reversion", sub: "fade 5-day overextension", tone: "rule", from: [2] },
   { x: 270, y: 174, w: 170, h: 26, title: "events", sub: "pre-earnings risk / post drift", tone: "rule", from: [3, 2] },
   { x: 270, y: 206, w: 170, h: 26, title: "risk", sub: "volatility · drawdown brake", tone: "rule", from: [2] },
-  { x: 270, y: 246, w: 170, h: 26, title: "llm_supply", sub: "Claude · supply-chain report", tone: "llm", from: [0] },
-  { x: 270, y: 278, w: 170, h: 26, title: "llm_guidance", sub: "Claude · the company's own calls", tone: "llm", from: [0, 1] },
-  { x: 270, y: 310, w: 170, h: 26, title: "llm_news", sub: "Claude · catalysts", tone: "llm", from: [4] },
+  { x: 270, y: 238, w: 170, h: 26, title: "macro", sub: "regime × beta (VIX, rates, trend)", tone: "rule", from: [2] },
+  { x: 270, y: 278, w: 170, h: 26, title: "llm_supply", sub: "Claude · supply-chain report", tone: "llm", from: [0] },
+  { x: 270, y: 310, w: 170, h: 26, title: "llm_guidance", sub: "Claude · the company's own calls", tone: "llm", from: [0, 1] },
+  { x: 270, y: 342, w: 170, h: 26, title: "llm_news", sub: "Claude · catalysts", tone: "llm", from: [4] },
 ];
 
 const ENSEMBLE: Box = { x: 520, y: 118, w: 190, h: 90, title: "Weighted blend (Hedge)", sub: "Σ weight × direction × confidence ÷ Σ weight = conviction", tone: "core" };
@@ -94,8 +95,8 @@ export default function Pipeline() {
 
       {/* group labels */}
       <text x={16} y={16} fontSize={10.5} fill="var(--ink-3)" fontWeight={600}>Data (all free)</text>
-      <text x={270} y={8} fontSize={10.5} fill="var(--ink-3)" fontWeight={600}>7 rule agents</text>
-      <text x={270} y={240} fontSize={10.5} fill="var(--ink-3)" fontWeight={600}>3 Claude agents (subscription)</text>
+      <text x={270} y={8} fontSize={10.5} fill="var(--ink-3)" fontWeight={600}>8 rule agents</text>
+      <text x={270} y={272} fontSize={10.5} fill="var(--ink-3)" fontWeight={600}>3 Claude agents (subscription)</text>
 
       {SOURCES.map((b) => <BoxEl key={b.title} b={b} />)}
       {AGENTS.map((b) => <BoxEl key={b.title} b={b} />)}
@@ -115,6 +116,7 @@ export const ROLES: { agent: string; role: string; sees: string; speaks: string;
   { agent: "mean_reversion", role: "Fading", sees: "5-day overextension vs SOXX, 20-day z-score. The opposite temperament of technical", speaks: "Every name", cost: "free" },
   { agent: "events", role: "Earnings calendar", sees: "Earnings within 7 days = event risk / reported within 14 days = drift in the direction of the surprise", speaks: "Only when either applies", cost: "free" },
   { agent: "risk", role: "The brake", sees: "20-day volatility ≥ 1.4× the universe median, or a 60-day drawdown 15 pts deeper than SOXX", speaks: "Only when risk is elevated, always negative", cost: "free" },
+  { agent: "macro", role: "Market regime", sees: "SOXX vs 50-day, SPY vs 200-day, VIX level, 20-day move in the 10-year yield → one regime score, expressed through each name's 60-day beta to SOXX", speaks: "Every name; high-beta names get the sign of the regime, low-beta the opposite", cost: "free" },
   { agent: "llm_supply", role: "Supply-chain analyst", sees: "The per-name supply-chain report (suppliers, customers, deals, transitions) and whether the price already reflects it", speaks: "Every name", cost: "Claude" },
   { agent: "llm_guidance", role: "Guidance analyst", sees: "The company's 12 latest call statements plus the curated metrics: guidance raised or cut, backlog, margin direction", speaks: "Names with statements in the last 180 days", cost: "Claude" },
   { agent: "llm_news", role: "Catalyst watch", sees: "Three weeks of headlines", speaks: "Names with headlines", cost: "Claude" },

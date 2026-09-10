@@ -1,53 +1,64 @@
-"""Trade journal: why the bot bought or sold, for the dashboard.
+"""Trade journal + dashboard feed for the web app.
 
-Every fill-intent (also in DRY_RUN) is appended to trades.json locally and,
-when BLOB_READ_WRITE_TOKEN is set in .env, the whole file is re-uploaded to
-Vercel Blob at a fixed pathname so the web app (web/) can read it. The store
-is private: the web app reads it with the same token, nobody else can. Upload
-failures are logged and never block trading.
+trades.json     every order intent (also in DRY_RUN): symbol, side, price, size, reason
+dashboard.json  the ensemble's state after each cycle: agent weights, scoreboard,
+                today's convictions per ticker, notes
+
+Both are written locally under state/ and, when BLOB_READ_WRITE_TOKEN is set in
+.env, uploaded to the private Vercel Blob store at fixed pathnames so web/ can
+read them. Upload failures are logged and never block trading.
 """
 import json
 import logging
 import os
 from datetime import datetime, timezone
-from pathlib import Path
 
 import requests
 
-import config  # noqa: F401  (loads .env so BLOB_READ_WRITE_TOKEN is visible)
+import config  # loads .env
 
 log = logging.getLogger("journal")
 
-FILE = Path(__file__).with_name("trades.json")
-BLOB_URL = "https://blob.vercel-storage.com/trades.json"
+TRADES_FILE = config.STATE_DIR / "trades.json"
+DASHBOARD_FILE = config.STATE_DIR / "dashboard.json"
+BLOB_BASE = "https://blob.vercel-storage.com/"
 MAX_ROWS = 500
 
 
 def record(symbol, side, reason, price, notional=None, qty=None, dry_run=False):
-    rows = json.loads(FILE.read_text(encoding="utf-8")) if FILE.exists() else []
+    config.STATE_DIR.mkdir(exist_ok=True)
+    rows = json.loads(TRADES_FILE.read_text(encoding="utf-8")) if TRADES_FILE.exists() else []
     rows.append({
         "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "symbol": symbol,
         "side": side,              # "BUY" | "SELL"
         "reason": reason,
-        "price": round(float(price), 4),
+        "price": None if price is None else round(float(price), 4),
         "notional": None if notional is None else round(float(notional), 2),
         "qty": None if qty is None else float(qty),
         "dry_run": dry_run,
     })
     rows = rows[-MAX_ROWS:]
     body = json.dumps(rows, indent=2)
-    FILE.write_text(body, encoding="utf-8")
-    _upload(body)
+    TRADES_FILE.write_text(body, encoding="utf-8")
+    _upload("trades.json", body)
 
 
-def _upload(body):
+def publish_dashboard(payload: dict):
+    config.STATE_DIR.mkdir(exist_ok=True)
+    payload = dict(payload, generated=datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    body = json.dumps(payload, indent=2, ensure_ascii=False)
+    DASHBOARD_FILE.write_text(body, encoding="utf-8")
+    _upload("dashboard.json", body)
+
+
+def _upload(pathname, body):
     token = os.getenv("BLOB_READ_WRITE_TOKEN")
     if not token:
         return
     try:
         resp = requests.put(
-            BLOB_URL,
+            BLOB_BASE + pathname,
             data=body.encode("utf-8"),
             headers={
                 "authorization": f"Bearer {token}",
@@ -62,4 +73,4 @@ def _upload(body):
         )
         resp.raise_for_status()
     except Exception as exc:
-        log.warning("trades.json upload failed: %s", exc)
+        log.warning("%s upload failed: %s", pathname, exc)

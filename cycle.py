@@ -1,0 +1,242 @@
+"""One daily cycle of the self-weighting ensemble. Meant to run just after the
+US open on every trading day (run_daily.cmd via Task Scheduler), but safe to
+run by hand at any time with --dry-run.
+
+    python cycle.py                 the real thing (waits for the open, sends paper orders)
+    python cycle.py --dry-run       no orders, no waiting; still writes predictions + dashboard
+    python cycle.py --no-llm        only the free agents (supply_chain, technical)
+    python cycle.py --force         trade even if foreign (non-sb2) orders were seen in 24h
+    python cycle.py --tickers NVDA,AMD   restrict the universe (testing)
+
+Steps: wait for open -> fresh-start liquidation if state/liquidate_pending exists
+-> foreign-order guard -> universe -> closes -> score matured predictions +
+update weights -> run agents -> combine -> targets -> orders -> journal + dashboard.
+"""
+import argparse
+import importlib
+import json
+import logging
+import sys
+import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+import broker
+import config
+import ensemble
+import journal
+import ledger
+import liquidate
+import market
+import portfolio
+import score
+import universe as universe_mod
+from agents import moderator
+
+ET = ZoneInfo("America/New_York")
+LIQUIDATE_MARKER = config.STATE_DIR / "liquidate_pending"
+log = logging.getLogger("cycle")
+
+
+def wait_for_open(max_minutes=45):
+    deadline = time.time() + max_minutes * 60
+    while time.time() < deadline:
+        c = broker.clock()
+        if c.is_open:
+            return True
+        log.info("market closed; next open %s — waiting", c.next_open)
+        time.sleep(30)
+    return False
+
+
+def _run_agent(name, universe, ctx):
+    mod = importlib.import_module(f"agents.{name}")
+    t0 = time.time()
+    try:
+        out = mod.run(universe, ctx)
+    except Exception as exc:  # one broken agent must not stop the others
+        log.exception("agent %s failed: %s", name, exc)
+        out = []
+    log.info("agent %-13s %3d signals in %4.0fs (%d tickers)", name, len(out), time.time() - t0, len(universe))
+    return out
+
+
+def run_agents(universe, ctx, weights, held, use_llm):
+    """Free agents see the whole universe; LLM agents (one claude -p call per
+    ticker each) only the names the free agents rank highest plus what we hold,
+    capped by config.LLM_MAX_TICKERS. This keeps a cycle to ~1/3 of the calls."""
+    free = [a for a in config.AGENTS if not a.startswith("llm_")]
+    llm_agents = [a for a in config.AGENTS if a.startswith("llm_")]
+    signals = []
+    for name in free:
+        signals += _run_agent(name, universe, ctx)
+    if not use_llm or not llm_agents:
+        return signals
+    prelim, _ = ensemble.combine(signals, weights)
+    ranked = sorted(prelim, key=lambda t: -abs(prelim[t]))
+    keep = set(ranked[:config.LLM_MAX_TICKERS]) | (set(held) & set(universe))
+    subset = {t: universe[t] for t in universe if t in keep}
+    for name in llm_agents:
+        signals += _run_agent(name, subset, ctx)
+    return signals
+
+
+def reason_line(conv, per_agent):
+    parts = [f"conv {conv:+.2f}"]
+    for a, s in per_agent.items():
+        parts.append(f"{a} {s['direction']:+.2f}x{s['confidence']:.2f}")
+    return " | ".join(parts)
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--no-llm", action="store_true")
+    p.add_argument("--force", action="store_true")
+    p.add_argument("--tickers", default="")
+    args = p.parse_args()
+    dry = args.dry_run or config.DRY_RUN
+
+    config.STATE_DIR.mkdir(exist_ok=True)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+                        handlers=[logging.StreamHandler(sys.stdout),
+                                  logging.FileHandler(config.STATE_DIR / "cycle.log", encoding="utf-8")])
+    today = datetime.now(ET).date().isoformat()
+    notes = []
+    log.info("=== cycle %s dry_run=%s llm=%s ===", today, dry, not args.no_llm)
+
+    # Signals are computed before the open (yesterday's closes, today's news and
+    # fundamentals are all available); the wait for the open happens right
+    # before orders go out, so orders hit the tape at 09:30 ET, not 40 min later.
+    if LIQUIDATE_MARKER.exists():
+        n = liquidate.run(dry_run=dry)
+        notes.append(f"fresh start: liquidated {n} positions")
+        if not dry:
+            LIQUIDATE_MARKER.unlink()
+
+    foreign = broker.foreign_orders(24)
+    if foreign:
+        syms = sorted({o.symbol for o in foreign})
+        msg = f"{len(foreign)} foreign orders in 24h ({', '.join(syms[:8])}) — another bot is trading this account"
+        log.warning(msg)
+        notes.append(msg)
+        if not args.force and not dry:
+            journal.publish_dashboard({"date": today, "notes": notes + ["cycle aborted: stop the other bot or run with --force"],
+                                       "weights": ledger.latest_weights() or ensemble.initial_weights()})
+            return 2
+
+    universe = universe_mod.load()
+    if args.tickers:
+        keep = {t.strip().upper() for t in args.tickers.split(",")}
+        universe = {t: c for t, c in universe.items() if t in keep}
+    log.info("universe: %d tickers", len(universe))
+
+    closes = market.closes(list(universe) + [config.BENCHMARK])
+    last_close = {t: float(closes[t].dropna().iloc[-1]) for t in universe if t in closes.columns and closes[t].dropna().size}
+
+    weights, scored = score.run(closes, today)
+    if scored:
+        notes.append("scored " + ", ".join(f"{a} {n}" for a, n in scored.items()))
+    log.info("weights: %s", weights)
+
+    positions = broker.positions()
+
+    ctx = {"closes": closes, "today": today}
+    signals = run_agents(universe, ctx, weights, positions, use_llm=not args.no_llm)
+    ledger.add_predictions(today, signals, last_close)
+    convictions, breakdown = ensemble.combine(signals, weights)
+
+    if not dry and not wait_for_open(max_minutes=120):
+        log.info("market did not open (holiday?) — predictions recorded, no orders")
+        journal.publish_dashboard({"date": today, "weights": weights,
+                                   "notes": notes + ["market did not open: predictions recorded, no orders"]})
+        return 0
+
+    acct = broker.account()          # fresh numbers at the open
+    equity, cash = float(acct.equity), float(acct.cash)
+    buying_power = float(acct.buying_power)
+    positions = broker.positions()
+    target_usd = portfolio.targets(convictions, equity)
+    orders = portfolio.plan(target_usd, positions, convictions, universe, equity, buying_power)
+    log.info("equity $%.0f cash $%.0f buying power $%.0f positions %d targets %d orders %d",
+             equity, cash, buying_power, len(positions), len(target_usd), len(orders))
+
+    done = []
+    for o in orders:
+        t = o["ticker"]
+        reason = reason_line(convictions.get(t, 0.0), breakdown.get(t, {})) + f" | {o['tag']}"
+        coid = f"{config.ORDER_PREFIX}{today}-{t}-{o['side'].lower()}"
+        try:
+            if o["side"] == "BUY":
+                broker.buy(t, o["notional"], coid, dry_run=dry)
+                size = o["notional"]
+            elif o["notional"] is None:
+                broker.close(t, dry_run=dry)
+                size = float(positions[t].market_value) if t in positions else None
+            else:
+                broker.sell(t, o["notional"], coid, dry_run=dry)
+                size = o["notional"]
+        except Exception as exc:
+            log.error("order %s %s failed: %s", o["side"], t, exc)
+            notes.append(f"order {o['side']} {t} failed: {exc}")
+            continue
+        journal.record(t, o["side"], reason, last_close.get(t), notional=size, dry_run=dry)
+        ledger.add_order(today, t, o["side"], size, reason, coid, dry)
+        done.append({"ticker": t, "side": o["side"], "notional": size, "reason": reason})
+
+    ledger.add_cycle(today, equity, cash, len(positions), len(done), "; ".join(notes))
+    ranked = sorted(convictions.items(), key=lambda kv: -abs(kv[1]))
+
+    # Decision records: for every order, exactly how the number was reached.
+    decisions = []
+    for d in done:
+        t = d["ticker"]
+        per_agent = breakdown.get(t, {})
+        den = sum(weights.get(a, 0) for a in per_agent) or 1.0
+        decisions.append({
+            "ticker": t, "side": d["side"], "notional": d["notional"],
+            "conviction": round(convictions.get(t, 0.0), 3),
+            "target_usd": target_usd.get(t),
+            "held_before_usd": float(positions[t].market_value) if t in positions else 0.0,
+            "agents": {a: {**s, "weight": round(weights.get(a, 0), 3),
+                           "contribution": round(weights.get(a, 0) * s["direction"] * s["confidence"] / den, 3)}
+                       for a, s in per_agent.items()},
+            "rule": (f"conviction = sum(weight x direction x confidence) / sum(weight) over agents that spoke; "
+                     f"enter >= {config.MIN_CONVICTION}, exit < {config.MIN_CONVICTION}, top {config.TOP_N}, "
+                     f"cap {config.MAX_POSITION_PCT:.0%} of equity, {config.GROSS_TARGET:.0%} gross, cash-limited"),
+        })
+    if decisions and not args.no_llm:
+        moderator.run(decisions)          # meeting minutes per traded ticker (explains, never changes)
+    history = []
+    if journal.DASHBOARD_FILE.exists():
+        try:
+            history = json.loads(journal.DASHBOARD_FILE.read_text(encoding="utf-8")).get("history") or []
+        except ValueError:
+            history = []
+    history = [h for h in history if h.get("date") != today]
+    history.append({"date": today, "dry_run": dry, "weights": weights, "notes": notes, "decisions": decisions})
+    history = history[-30:]
+
+    journal.publish_dashboard({
+        "history": history,
+        "decisions": decisions,
+        "date": today,
+        "dry_run": dry,
+        "equity": equity,
+        "cash": cash,
+        "universe_size": len(universe),
+        "weights": weights,
+        "weights_history": ledger.weights_history(),
+        "scoreboard": ledger.scoreboard(),
+        "convictions": [{"ticker": t, "conviction": round(c, 3), "target_usd": target_usd.get(t),
+                         "agents": breakdown.get(t, {})} for t, c in ranked[:60]],
+        "orders": done,
+        "notes": notes,
+    })
+    log.info("done: %d orders; top: %s", len(done),
+             ", ".join(f"{t} {c:+.2f}" for t, c in ranked[:8]))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

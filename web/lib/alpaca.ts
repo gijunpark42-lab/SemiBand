@@ -1,4 +1,4 @@
-// Server-only reads from the Alpaca paper account and the bot's trade journal.
+// Server-only reads from the Alpaca paper account and the bot's journal / dashboard feed.
 const BASE = "https://paper-api.alpaca.markets";
 
 function headers() {
@@ -42,10 +42,50 @@ export type Trade = {
   symbol: string;
   side: "BUY" | "SELL";
   reason: string | null;
-  price: number;
+  price: number | null;
   notional: number | null;
   qty: number | null;
   dry_run: boolean;
+};
+
+export type AgentView = { direction: number; confidence: number; horizon: number; reason: string };
+export type AgentDecision = AgentView & { weight: number; contribution: number };
+
+export type Decision = {
+  ticker: string;
+  side: string;
+  notional: number | null;
+  conviction: number;
+  target_usd: number | null;
+  held_before_usd: number;
+  agents: Record<string, AgentDecision>;
+  rule: string;
+  discussion?: { agreement: string; disagreement: string; verdict: string; watch: string };
+};
+
+export type CycleRecord = {
+  date: string;
+  dry_run?: boolean;
+  weights: Record<string, number>;
+  notes?: string[];
+  decisions: Decision[];
+};
+
+export type Dashboard = {
+  decisions?: Decision[];
+  history?: CycleRecord[];
+  generated: string;
+  date: string;
+  dry_run?: boolean;
+  equity?: number;
+  cash?: number;
+  universe_size?: number;
+  weights: Record<string, number>;
+  weights_history?: { date: string; agent: string; weight: number }[];
+  scoreboard?: { agent: string; horizon: number; n: number; hit_rate: number | null; mean_abnormal_signed: number | null }[];
+  convictions?: { ticker: string; conviction: number; target_usd: number | null; agents: Record<string, AgentView> }[];
+  orders?: { ticker: string; side: string; notional: number | null; reason: string }[];
+  notes?: string[];
 };
 
 export const getAccount = () => get<Account>("/v2/account");
@@ -53,9 +93,8 @@ export const getPositions = () => get<Position[]>("/v2/positions");
 export const getHistory = () =>
   get<History>("/v2/account/portfolio/history?period=3M&timeframe=1D");
 
-export async function getTrades(): Promise<Trade[] | null> {
-  // trades.json lives in a private Blob store: read it with the store token.
-  const url = process.env.TRADES_URL;
+async function blob<T>(url: string | undefined): Promise<T | null> {
+  // Files live in a private Blob store: read them with the store token.
   const token = process.env.BLOB_READ_WRITE_TOKEN;
   if (!url || !token) return null;
   const res = await fetch(`${url}?cache=0`, {
@@ -63,6 +102,16 @@ export async function getTrades(): Promise<Trade[] | null> {
     cache: "no-store",
   });
   if (!res.ok) return null;
-  const rows: Trade[] = await res.json();
-  return rows.slice().reverse(); // newest first
+  return res.json();
+}
+
+export async function getTrades(): Promise<Trade[] | null> {
+  const rows = await blob<Trade[]>(process.env.TRADES_URL);
+  return rows ? rows.slice().reverse() : null; // newest first
+}
+
+export async function getDashboard(): Promise<Dashboard | null> {
+  // dashboard.json sits next to trades.json in the same store.
+  const url = process.env.DASHBOARD_URL ?? process.env.TRADES_URL?.replace(/trades\.json$/, "dashboard.json");
+  return blob<Dashboard>(url);
 }

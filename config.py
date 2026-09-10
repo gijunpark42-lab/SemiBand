@@ -1,122 +1,69 @@
-"""Central settings. Edit the values below; secrets stay in .env."""
+"""Central settings for SemiBand v2 — the self-weighting agent ensemble.
+
+Secrets stay in .env (ALPACA_API_KEY, ALPACA_SECRET_KEY, BLOB_READ_WRITE_TOKEN).
+Everything below is a deliberate knob; change it here, not inside the modules.
+"""
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
+ROOT = Path(__file__).resolve().parent
+load_dotenv(ROOT / ".env")
 
 API_KEY = os.getenv("ALPACA_API_KEY")
 SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
 if not API_KEY or not SECRET_KEY:
     raise RuntimeError("Missing ALPACA_API_KEY / ALPACA_SECRET_KEY in .env")
 
-PAPER = True                     # never flip this without a deliberate decision
+PAPER = True                      # never flip this without a deliberate decision
+DRY_RUN = False                   # True = log intended orders, send nothing
 
-# --- what to trade ---
-WATCHLIST = [
-    # large cap
-    "NVDA", "AMD", "INTC", "AVGO", "QCOM", "TXN", "MU", "ADI", "ARM", "TSM",
-    "ASML", "STM", "MRVL", "NXPI", "MCHP", "ON", "MPWR", "GFS",
-    # equipment
-    "AMAT", "LRCX", "KLAC", "TER", "ENTG", "ACLS", "AEIS", "ICHR", "UCTT",
-    "COHU", "FORM", "NVMI", "CAMT", "VECO", "AMKR",
-    # small / mid cap
-    "SWKS", "QRVO", "WOLF", "ALGM", "SITM", "LSCC", "RMBS", "CRUS", "SLAB",
-    "POWI", "AOSL", "DIOD", "SYNA", "IMOS", "AXTI", "SNDK", "SMCI",
-    "ALAB", "CRDO", "MTSI",
-    # sector ETFs
-    "SMH", "SOXX", "SOXL",
-]
+# --- where things live ---
+STATE_DIR = ROOT / "state"        # ledger.sqlite, weights, caches, logs, dashboard.json
+EARNINGS_AI_DIR = Path(os.getenv("EARNINGS_AI_DIR", "C:/Users/calif/Desktop/earnings-ai"))
+TRADINGAGENTS_DIR = Path(os.getenv("TRADINGAGENTS_DIR", "C:/Users/calif/dev/TradingAgents"))
+
+# --- LLM: the local Claude server (Claude Max subscription, no API key) ---
+LLM_URL = os.getenv("LOCAL_CLAUDE_URL", "http://127.0.0.1:8765/v1")
+LLM_MODEL = "claude-sonnet-5"
+LLM_WORKERS = 2                   # concurrent claude -p calls (server allows 2)
+LLM_MAX_TICKERS = 100             # user 2026-09-10: all agents on the whole universe (returns & accuracy first); lower to save subscription budget
 
 # --- universe ---
-# earnings-ai holds the company list; tickers.py extracts the US-listed
-# slice for the news stream. Separate from WATCHLIST, which is what trades.
-EARNINGS_AI_DIR = "C:/Users/calif/OneDrive/Desktop/earnings-ai"
+BENCHMARK = "SOXX"                # agents are scored on return minus this
+US_EXCHANGES = {"NASDAQ", "NYSE", "NYSE American", "AMEX"}
+MAX_MARKET_CAP = 400e9            # user rule (2026-09-09): trade names under $400B market cap only; no crypto ever
+LOOKBACK_DAYS = 260               # calendar days of closes fetched for the technical agent
 
-# The universe (tickers.json) grouped by sector. Every subscribable ticker
-# appears in exactly one group; ambiguous names sit where the AI/data-center
-# angle puts them (AMD -> GPU, STM -> power semis, AVGO/MRVL -> AI 가속기).
-SECTORS = {
-    "photonics": [
-        "AAOI", "AEHR", "AXTI", "CIEN", "COHR", "FN", "FORM", "GFS",
-        "GLW", "LITE", "MRVL", "MTSI", "NOK", "SMTC", "TSEM", "VIAV",
-    ],
-    "memory": [
-        "MU", "RMBS", "SIMO", "SNDK", "STX", "WDC",
-    ],
-    "cpu": [
-        "AMD", "ARM", "INTC", "QCOM",
-    ],
-    "gpu": [  # includes AI accelerators (custom ASIC)
-        "AVGO", "NVDA",
-    ],
-    "hyperscaler": [
-        "AMZN", "GOOGL", "META", "MSFT", "ORCL",
-        # neocloud / AI data centers
-        "APLD", "CORZ", "CRWV", "IREN", "NBIS",
-    ],
-    "power_semi": [
-        "MPWR", "NVTS", "ON", "POWI", "STM", "VICR", "VSH", "WOLF",
-    ],
-    "pcb": [
-        "TTMI",
-        # connectors
-        "APH", "TEL",
-    ],
-    "power_equipment": [
-        "BE", "EME", "ETN", "FLNC", "GEV", "NVT", "VRT",
-        # cooling / HVAC
-        "JCI", "MOD", "TT",
-    ],
-    "utilities": [  # power generation
-        "CEG", "EXC", "VST",
-    ],
-    "networking": [  # copper networking / interconnect
-        "ALAB", "ANET", "CRDO",
-    ],
-    "server_hardware": [
-        "CSCO", "DELL", "HPE", "SMCI",
-        # EMS (contract manufacturing)
-        "CLS", "FLEX", "JBL",
-    ],
-    "packaging": [  # OSAT / advanced packaging
-        "AMKR", "ASX",
-    ],
-    "other": [
-        # equipment
-        "AMAT", "ASML", "CAMT", "COHU", "ENTG", "KEYS", "KLAC", "KLIC",
-        "LRCX", "MKSI", "NVMI", "ONTO", "TER", "VECO",
-        # foundry
-        "TSM",
-        # EDA
-        "CDNS", "SNPS",
-        # analog
-        "ADI", "TXN",
-        # everything else
-        "AAPL", "ADBE", "LIN", "LUMN", "MMM", "SHEL", "SOLS", "UBER",
-    ],
-}
+# --- agents in the ensemble (names match agents/<name>.py) ---
+AGENTS = [
+    # free, deterministic (read data, no LLM)
+    "supply_chain",    # the map: generation transitions, sold-out capacity, freshness of own guidance
+    "neighbors",       # the map, one hop out: are its customers/suppliers hot right now
+    "fundamentals",    # growth, margins, valuation, analyst target (yfinance)
+    "technical",       # 20/60-day momentum vs SOXX, trend, RSI
+    "mean_reversion",  # 5-day overextension: fades what technical chases
+    "events",          # earnings in the next week (risk) / just reported (drift)
+    "risk",            # volatility and drawdown brake: speaks only when risk is elevated
+    # Claude, via the local server (top LLM_MAX_TICKERS names only)
+    "llm_supply",      # reads the supply-chain report: structure, deals, transitions
+    "llm_guidance",    # reads the company's own latest call signals: guidance momentum
+    "llm_news",        # reads three weeks of headlines: catalysts
+]
+HORIZONS = (5, 10, 20)            # trading days after which a prediction is scored
 
-# --- data ---
-LOOKBACK_DAYS = 200              # completed daily bars handed to the strategy
+# --- learning (multiplicative weights / Hedge) ---
+HEDGE_ETA = 0.5                   # step size: w_i *= exp(eta * gain_i)
+WEIGHT_FLOOR = 0.02               # no agent is ever silenced completely (10 agents -> 20% floor mass)
 
-# --- strategy: P/S band ---
-PS_BUY_PCT = 20                  # buy when today's P/S is in the bottom 20% of its history
-PS_SELL_PCT = 80                 # sell when it is in the top 20%
-PS_MIN_HISTORY = 60              # bars of valid P/S needed; Yahoo gives ~5 quarters,
-                                 # so a full-TTM band is only ~3-6 months long
-MAX_NEW_ENTRIES = 3              # per cycle, the cheapest BUY candidates by P/S percentile
+# --- portfolio (long-only, margin allowed up to GROSS_TARGET) ---
+CAPITAL = 1_000_000               # starting equity of the new paper account (2026-09-10); sizing uses live equity
+TOP_N = 15                        # max names held
+MIN_CONVICTION = 0.15             # enter only above this
+EXIT_CONVICTION = 0.05            # exit when conviction falls below this
+MAX_POSITION_PCT = 0.10           # per-name cap as a share of equity
+GROSS_TARGET = 1.50               # user 2026-09-10: use margin up to 50% (150% of equity long) when there are enough candidates
+MIN_ORDER_USD = 250               # ignore rebalancing dust below this
 
-# --- strategy: guidance exit (earnings_stream.py -> guidance.json) ---
-GUIDANCE_FILE = "guidance.json"
-EPS_VS_SALES_RATIO = 2           # exit if EPS guide cut is >= this x the sales guide raise
-GUIDANCE_COOLDOWN_DAYS = 75      # no re-entry after a guidance exit until roughly the next print
-
-# --- execution ---
-DRY_RUN = False                  # True = log intended orders, send nothing
-POSITION_PCT = 0.10              # each new entry = this share of account equity
-MAX_TOTAL_EXPOSURE_USD = 100_000 # total long exposure cap; equity = no leverage.
-                                 # overnight margin is only 2x ($200k), not the
-                                 # 4x intraday figure, so holding past the close
-                                 # above this is what triggers a margin call.
-POLL_SECONDS = 60                # price-monitoring interval while market is open
+ORDER_PREFIX = "sb2-"             # client_order_id prefix: how we tell our orders from foreign ones

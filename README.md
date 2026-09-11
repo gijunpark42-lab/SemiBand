@@ -2,7 +2,7 @@
 
 Eleven agents each give an opinion on every stock in the universe. The opinions are blended with
 trust weights, the blend is traded in an Alpaca paper account, and every prediction is scored
-5 / 10 / 20 trading days later against SOXX. Agents that were right gain weight; agents that
+10 / 20 trading days later against SOXX (the 5-day horizon was dropped in v2.3: it scored noise). Agents that were right gain weight; agents that
 were wrong lose it. LLM work runs through the Claude Max subscription (`claude -p`) — no API key.
 The universe is the US-listed slice of the earnings-ai supply-chain graph (market cap ≤ $400B; the backtest showed the mega-caps dilute returns).
 
@@ -26,7 +26,7 @@ The universe is the US-listed slice of the earnings-ai supply-chain graph (marke
      `llm_guidance` (the company's own call statements + curated metrics: guidance momentum) ·
      `llm_news` (three weeks of headlines from Finnhub + yfinance: catalysts)
    - `moderator` does not vote; it writes agreement / disagreement / verdict / watch for every order.
-6. Blend → conviction per ticker → targets (`portfolio.py`: conviction ≥ 0.15, top 15, 10% per name,
+6. Blend → conviction per ticker → targets (`portfolio.py`: conviction ≥ 0.10, top 15, 15% per name,
    150% gross ceiling, scaled down when the book's trailing 20-day vol exceeds `VOL_TARGET`, within buying power) → orders (`broker.py`).
 7. Journal (`state/trades.json`) and dashboard (`state/dashboard.json`) are uploaded to Vercel Blob
    under `semiband-v2/`; `web/` renders them.
@@ -52,7 +52,7 @@ schtasks /Create /F /SC WEEKLY /D MON,TUE,WED,THU,FRI /ST 05:50 /TN SemiBand-Cyc
 
 ## Learning rule (Bayesian ridge stacking, `learner.py`)
 
-Per horizon h in {5, 10, 20}: target y = abnormal return / scale_h; features x = [direction_i x confidence_i] +
+Per horizon h in {10, 20} (5 was dropped in v2.3): target y = abnormal return / scale_h; features x = [direction_i x confidence_i] +
 [direction_i] for every agent (0 when silent); posterior mean w = (X'DX + lambda I)^-1 (X'Dy + lambda w0) with an
 exponential time decay D (half-life 90 days) and prior mean w0 = the equal-weight blend. lambda is fixed at 150
 pseudo-observations (the 2026-09-10 sweep showed walk-forward lambda selection was too timid). Conviction =
@@ -63,7 +63,7 @@ reference line on the dashboard. Day one is identical to the equal blend by cons
 ## Backtest (`backtest.py`)
 
 `python backtest.py --days 250` replays the point-in-time agents (technical, mean_reversion, risk, macro, events,
-and time-filtered supply_chain / neighbors) day by day, scores every opinion against SOXX at 5/10/20 days, refits
+and time-filtered supply_chain / neighbors) day by day, scores every opinion against SOXX at 10/20 days, refits
 the learner every day (like the live cycle) on outcomes known at the time, and simulates the live sizing rules plus a top-15 rank portfolio.
 Output: `state/backtest_report.json` (published to the dashboard) and `state/backtest.sqlite`, which warm-starts the
 live learner at half weight (`WARM_START_WEIGHT`). Not simulated: fundamentals (no point-in-time data) and the Claude agents.
@@ -80,7 +80,9 @@ live learner at half weight (`WARM_START_WEIGHT`). Not simulated: fundamentals (
 - Rule of thumb: the 2025-09 → 2026-08 window is where every sizing knob was chosen, so its numbers are in-sample.
   Judge changes on `--days 500` (the earlier year is out-of-sample), with `--exec open`, and only adopt a knob when
   the out-of-sample numbers improve too. `sweep.py --exec open --oos-end 2025-09-24` reports both windows per variant.
-- `RESEARCH.md` is the log of every idea tried (rounds 1-11), its numbers and the verdict. Read it before testing anything.
+- `RESEARCH.md` is the log of every idea tried (rounds 1-11 and the generational search), its numbers and the verdict. Read it before testing anything.
+- `sweep.py --workers 10 --search 3 --pop 10 --exec open --oos-end 2025-09-24 --tag _v22` evaluates 10 variants in parallel per generation and
+  mutates the best; every trial lands in `state/backtest_search<tag>.json` and on the website's Backtest tab.
 - Portfolio vol targeting (`VOL_TARGET`, round 10): the book is scaled down when its own trailing 20-day realised vol exceeds
   50% annualised; live, the realised vol comes from the Alpaca portfolio history, so it is off until the new account has 20 days.
 

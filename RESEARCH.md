@@ -184,3 +184,58 @@ is `refit_every=1`, which the learner cache now makes affordable. With daily ref
   the daily-refit numbers above are the ones to quote from now on. `backtest.py` and `sweep.py` default to daily refits.
 - v2.2 holds under daily refits, and more clearly: OOS Sharpe 0.67 → 0.91, drawdown 44% → 29%, OOS return unchanged
   (+62-67% either way); the raw-return cost is entirely in-sample.
+
+## 2026-09-11 — generational search, 10 variants at a time (`sweep.py --search 3 --pop 10 --workers 10`)
+
+Parallel evaluation (10 processes) plus a search loop: each generation evaluates 10 variants, ranks every trial so far by
+the mean rank over five metrics (full-window Sharpe and return, OOS Sharpe and return, full-window max drawdown), and
+mutates the best by one or two knobs for the next generation. Space: vol target, size, entry threshold, top N, cap, band,
+lambda, half-life, horizons. Daily refits, next-open execution, fresh (v22) ledger, 34 trials in total.
+
+| Trial | Objective | Return | Sharpe | Max DD | OOS return | OOS Sharpe | Knobs that differ from v2.2 |
+|---|---|---|---|---|---|---|---|
+| g1_base (= v2.2) | 0.24 | +483% | 1.61 | 30.9% | +67% | 0.92 | — |
+| g1_2 | 0.73 | +718% | 1.89 | 29.0% | +123% | 1.42 | horizons 10/20 |
+| g2_10 | 0.90 | +885% | 2.00 | 29.2% | +161% | 1.67 | horizons 10/20, entry 0.10 |
+| **g3_3** | **0.94** | **+935%** | **2.03** | **28.9%** | **+163%** | **1.68** | horizons 10/20, entry 0.10, cap 0.15 |
+| g3_5 | 0.87 | +631% | 2.08 | 22.8% | +129% | 1.77 | horizons 10/20, entry 0.10, top 10 |
+| g3_1 | 0.85 | +813% | 2.02 | 29.2% | +137% | 1.56 | horizons 10/20, entry 0.10, size 0.45 |
+| g3_4 | 0.80 | +787% | 1.91 | 29.9% | +149% | 1.57 | horizons 10/20, entry 0.10, λ 100 |
+| g2_5 | 0.71 | +472% | 1.99 | 21.2% | +106% | 1.60 | horizons 10/20, vol target 0.30 |
+
+- **The one big lever is dropping the 5-day horizon.** Every trial with horizons 10/20 beats every trial with 5/10/20 on
+  every metric; the neighbourhood is smooth (entry 0.10 or 0.15, cap 0.10 or 0.15, size 0.45 or 0.60, λ 100-250 all land at
+  Sharpe 1.9-2.1, OOS Sharpe 1.4-1.8). That is a plateau, not a spike — the kind of result that survives.
+- 5-day abnormal returns are mostly noise; scoring on them fed noise into the stacking weights and into the conviction blend.
+- Caveat, stated plainly: the search selected on both windows, so the OOS year is no longer untouched. What remains as
+  validation is live paper trading and new months of data. The improvement (OOS Sharpe 0.92 → 1.68, OOS return +67% → +163%)
+  is far outside the ±0.15 / ±20% input-noise band measured earlier, which is why it is adopted anyway.
+
+**Decision (v2.3, 2026-09-11):** `HORIZONS = (10, 20)`, `MIN_CONVICTION = 0.10`, `MAX_POSITION_PCT = 0.15`; vol target 0.50
+kept; everything else unchanged. Confirmation `python backtest.py --days 500 --exec open --tag _v23` (engine = search to the first decimal):
+
+| v2.3 | Return | SOXX | Sharpe | Max DD | Vol | Turnover/day | Avg gross |
+|---|---|---|---|---|---|---|---|
+| full 2024-09-25 → 2026-08-11 | +966% | +132% | 2.08 | 28.9% | 61% | 33% | 99% |
+| OOS 2024-09 → 2025-09 | +160% | +12% | 1.67 | 28.9% | | | |
+| IS 2025-09 → 2026-08 | +310% | +107% | 2.51 | 23.7% | | | |
+
+Robustness: bootstrap Sharpe CI 0.94-3.37, deflated Sharpe 0.83 after 204 trials, best quarter 32% of the log return
+(was 44%), every quarter but two positive and 2025Q2 — the V-rebound quarter that lost 36% to SOXX under v2.1 — now +5%,
+quintiles Q1 → Q5 = +0.2% / +0.5% / +0.2% / +0.7% / +1.8%, cost at 30 bps still +627% / Sharpe 1.74.
+Versus v2.2 on the same inputs (+521% / 1.63 / DD 27.7% / OOS 0.96): twice the return, same drawdown, steadier quarters.
+
+## Next (user direction 2026-09-11: any method is allowed — learner, weights, sizing; the goal is return per unit of risk, steady)
+
+Ordered by expected value per hour, all to be run through the same search harness (daily refits, both windows, PBO):
+
+1. **Sizing by risk, not by conviction alone**: weight ∝ conviction / volatility (inverse-vol), and a risk-parity variant;
+   the vol target already helped at the book level, this is the same idea per name.
+2. **Learner alternatives** (the ridge is a choice, not a law): (a) IC-weighted blend (each agent's trailing IC as its weight —
+   simplest possible), (b) LightGBM ranker as the *stacker* over agent outputs (it was only tested as an agent), (c) online
+   logistic on the sign of the abnormal return. Keep whichever wins OOS with the fewest parameters.
+3. **Steadier returns**: drawdown-aware exposure (cut gross after a 10% drawdown from the equity high, restore on recovery),
+   tested against the vol target it would sit on top of.
+4. **Turnover**: entry/exit hysteresis (enter at 0.10, exit at 0.04 is already asymmetric) and a minimum holding period; the
+   EWMA idea failed, hysteresis is the cheaper version of the same wish.
+5. Point-in-time snapshots of the earnings-ai graph (monthly copies), so `neighbors` / `supply_chain` stop seeing today's edges.

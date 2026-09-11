@@ -284,3 +284,36 @@ scores.scored_date; a backtest adds one date per day instead of re-featuring eve
 per fit, the day loop reads prices from numpy views and writes scores in one executemany, and `risk` / `macro`
 slice precomputed full-history return series as of the day (same pandas operations on the same values; the live
 agents keep the original path when no history is passed). Same 60-day loop: 173 s (yesterday morning) → 76 s → 39 s.
+
+## 2026-09-11 — round 12: the "Next" list, tested (150-name ledger `_u150b`, daily refits, next-open, OOS split)
+
+`python sweep.py --round12 --tag _u150b --exec open --oos-end 2025-09-24 --workers 10` (15 variants, 11 min). PBO 0.56.
+
+| Variant | Return | Sharpe | Max DD | Turnover/day | OOS return | OOS Sharpe | OOS DD | Verdict |
+|---|---|---|---|---|---|---|---|---|
+| **v2.3** (base) | +758% | 1.81 | 28.7% | 41% | +215% | 1.94 | 28.7% | reference |
+| inverse-vol sizing, ref = cross-section median | +774% | 1.84 | 28.3% | 44% | +213% | 1.94 | 28.3% | inside the noise band — not adopted |
+| inverse-vol, ref 0.40 / 0.60 | +563% / +715% | 1.81 / 1.90 | 28.5% / 28.8% | 39% / 42% | +151% / +184% | 1.68 / 1.84 | | rejected — OOS worse |
+| per-name vol scaling (round-5 knob, re-test) | +770% | 1.85 | 28.6% | 44% | +198% | 1.88 | | inside the noise band |
+| drawdown brake 10% → ×0.5 (release 5%) | +359% | 1.59 | 24.8% | 35% | +129% | 1.71 | 24.8% | rejected — the vol target already does this job, the brake only costs return |
+| drawdown brake 15% → ×0.5 | +577% | 1.82 | 25.4% | 36% | +160% | 1.90 | 25.4% | rejected — same Sharpe, −24% return, OOS worse |
+| drawdown brake 10% → ×0.3 / 20% → ×0.5 | +231% / +416% | 1.53 / 1.57 | 22.2% / 33.6% | | +94% / +105% | 1.62 / 1.45 | | rejected |
+| exit hysteresis 0.05 / 0.07 | +728% / +771% | 1.77 / 1.81 | 27.8% / 28.3% | 40% / 40% | +202% / +210% | 1.85 / 1.91 | | inside the noise band |
+| minimum hold 3 / 5 days | +695% / +617% | 1.74 / 1.66 | 28.1% / 30.3% | 33% / 29% | +207% / +168% | 1.90 / 1.68 | | rejected — less turnover but worse everywhere else |
+| exit 0.05 + hold 3 | +668% | 1.71 | 30.3% | 33% | +192% | 1.80 | | rejected |
+| IC-weighted blend instead of the ridge | +270% | 1.14 | 51.6% | 50% | +48% | 0.70 | 51.6% | **rejected clearly** — the ridge stacker's negative weights and confidence terms matter; the simple blend is far worse |
+
+**Decision:** nothing adopted. v2.3 stays as is. After the vol target and the 10/20 horizons, per-name risk sizing,
+drawdown brakes, hysteresis and holding periods all land inside the ±20% / ±0.15 noise band or below it, and the
+learner should stay the Bayesian ridge. That is a plateau, and the right response to a plateau is to stop turning knobs
+on this data and let live paper results and new months decide.
+
+Still open: LightGBM stacker (only worth it once there are more than two years of rows), `llm_guidance` quarterly
+partial backtest (~800 Claude calls), graph snapshots accumulating for a point-in-time neighbors/supply_chain test.
+
+## 2026-09-11 — LLM agents on Fable 5.1 at max effort (user decision)
+
+`config.LLM_MODEL = "claude-fable-5-1"`; the local Claude server maps it to the full model id at `--effort max`.
+Test call (llm_guidance, NVDA + AMD): 52-58 s per call, ~$0.32 of subscription budget each, opinions well formed.
+At ~300 calls a day and 2 concurrent workers that is ~2 h 20 min per cycle, so the 05:50 PT start would place orders
+well after the open — the cycle start needs to move to ~03:30 PT (or the worker count up) to keep the open.

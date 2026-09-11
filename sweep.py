@@ -46,7 +46,11 @@ BASE = dict(min_conv=0.10, size_k=0.30, cap=0.10, gross=1.50, band=0.15, top_n=1
             vol_target=None,      # portfolio-level: scale the book down when trailing 20-day realised vol exceeds this (annualised)
             ewma_halflife=None,   # smooth each name's conviction with this half-life (days) before sizing: less churn
             exec="close",         # 'open' = buy at the next open, mark open-to-open (the live rule)
-            oos_end=None)         # date: rows before it are reported as out-of-sample, from it as in-sample (the tuning window)
+            oos_end=None,         # date: rows before it are reported as out-of-sample, from it as in-sample (the tuning window)
+            inv_vol=None,         # per-name risk sizing: weight x clip(ref / 20d vol, 0.5, 2); ref = 'median' (cross-section) or a number (annualised)
+            dd_brake=None,        # (trigger, factor, release): book x factor once the sim equity is trigger below its high, until it is back within release
+            exit_conv=None,       # hysteresis: a HELD name stays eligible down to this conviction (entry still needs min_conv)
+            min_hold=0)           # a name entered fewer than this many days ago is not dropped unless its conviction turns negative
 
 
 def load_signals():
@@ -81,6 +85,7 @@ def simulate(by_date, closes, params, refit_every=1, warmup=30, opens=None):
         px, shift = closes, 0
     equity, prev_w, turnover_total, curve, ics = 1.0, {}, 0.0, [], []
     entry, banned, smooth = {}, {}, {}
+    entry_day, peak, braked = {}, 1.0, False
     quint = [[] for _ in range(5)]                    # 10-day abnormal return by conviction quintile (signal monotonicity)
     model = None
     for k, d in enumerate(dates):
@@ -91,6 +96,15 @@ def simulate(by_date, closes, params, refit_every=1, warmup=30, opens=None):
             break
         if p["learn"] and (model is None or k % refit_every == 0):
             model = learner.fit(date.fromisoformat(d), asof=date.fromisoformat(d))
+            if p["learn"] == "ic":
+                # IC-weighted blend: w_conf_i = max(IC_i, 0) normalised to sum 1 per horizon, no direction-only terms,
+                # horizons blended equally. Zero fitted parameters beyond the per-agent IC itself.
+                for h, v in model["horizons"].items():
+                    pos = {a: max(v["agent_ic"].get(a) or 0.0, 0.0) for a in model["agents"]}
+                    tot = sum(pos.values())
+                    v["w_conf"] = {a: (pos[a] / tot if tot else 1.0 / len(pos)) for a in pos}
+                    v["w_dir"] = {a: 0.0 for a in pos}
+                    v["reliability"] = 1.0
         sigs = by_date[d] if not p["agents_only"] else [s for s in by_date[d] if s.agent in p["agents_only"]]
         conv, _ = learner.predict(sigs, model if p["learn"] else None)
         if p["demean"]:
@@ -125,8 +139,15 @@ def simulate(by_date, closes, params, refit_every=1, warmup=30, opens=None):
         if p["rebalance_every"] > 1 and prev_w and (k - warmup) % p["rebalance_every"]:
             w = dict(prev_w)                          # hold the book on non-rebalance days
         else:
-            eligible = sorted(((t, c) for t, c in conv.items() if c >= p["min_conv"]), key=lambda tc: -tc[1])
+            floor = p["exit_conv"] if p["exit_conv"] is not None else p["min_conv"]
+            eligible = sorted(((t, c) for t, c in conv.items()
+                               if c >= p["min_conv"] or (t in prev_w and c >= floor)), key=lambda tc: -tc[1])
             longs = eligible[:p["top_n"]]
+            if p["min_hold"]:
+                chosen = {t for t, _ in longs}
+                for t in prev_w:                       # young positions are kept even when they fell out of the ranking
+                    if t not in chosen and k - entry_day.get(t, k) < p["min_hold"] and conv.get(t, -1) >= 0:
+                        longs.append((t, conv[t]))
             if p["swap_margin"] is not None and prev_w:
                 # TopkDropout-style: a held name still above the bar keeps its seat unless a
                 # newcomer beats it by more than swap_margin (no commission, but spread + slippage)
@@ -143,7 +164,17 @@ def simulate(by_date, closes, params, refit_every=1, warmup=30, opens=None):
                             chosen.remove(worst)
                             chosen.append((t, c))
                 longs = chosen
-            w = {t: min(c * p["size_k"], p["cap"]) for t, c in longs}
+            if p["inv_vol"]:
+                vols = {}
+                for t, _ in longs:
+                    r = closes[t].iloc[max(0, i - 20): i + 1].pct_change().dropna()
+                    vols[t] = float(r.std() * math.sqrt(252)) if len(r) >= 10 else None
+                known = [v for v in vols.values() if v]
+                ref = (float(np.median(known)) if p["inv_vol"] == "median" else float(p["inv_vol"])) if known else None
+                mult = {t: (min(max(ref / vols[t], 0.5), 2.0) if (ref and vols.get(t)) else 1.0) for t, _ in longs}
+                w = {t: min(c * p["size_k"] * mult[t], p["cap"]) for t, c in longs}
+            else:
+                w = {t: min(c * p["size_k"], p["cap"]) for t, c in longs}
             # optional short book: the k lowest-conviction names, sized to short_gross in total
             if p["short_k"] and p["short_gross"]:
                 shorts = sorted(((t, c) for t, c in conv.items() if c <= -p["min_conv"]), key=lambda tc: tc[1])[:p["short_k"]]
@@ -173,6 +204,14 @@ def simulate(by_date, closes, params, refit_every=1, warmup=30, opens=None):
             realised = float(np.std([c["ret"] for c in curve[-20:]])) * math.sqrt(252)
             if realised > p["vol_target"]:
                 w = {t: x * p["vol_target"] / realised for t, x in w.items()}
+        # drawdown brake: once the book is `trigger` below its own high, run at `factor` of size until it is back within `release`
+        if p["dd_brake"]:
+            trigger, factor, release = p["dd_brake"]
+            peak = max(peak, equity)
+            dd_now = 1 - equity / peak
+            braked = (dd_now >= trigger) if not braked else (dd_now > release)
+            if braked:
+                w = {t: x * factor for t, x in w.items()}
         # rebalance band: keep the old weight when the target moved less than band x target
         for t in list(w):
             if t in prev_w and abs(w[t] - prev_w[t]) < p["band"] * w[t]:
@@ -180,6 +219,7 @@ def simulate(by_date, closes, params, refit_every=1, warmup=30, opens=None):
         for t in w:
             if t not in prev_w and t in closes.columns:
                 entry[t] = closes[t].iloc[i]
+                entry_day[t] = k
         for t in list(entry):
             if t not in w:
                 entry.pop(t, None)
@@ -354,6 +394,7 @@ def main():
     ap.add_argument("--round9", action="store_true", help="ninth round: short book and index hedge")
     ap.add_argument("--round10", action="store_true", help="tenth round (2026-09-11): vol targeting, EWMA smoothing, no-learning, drop-one agents; run on _open500 with --exec open --oos-end 2025-09-24")
     ap.add_argument("--round11", action="store_true", help="eleventh round (2026-09-11): round-10 winners combined (vol target x no-events x horizons 10/20 x cap)")
+    ap.add_argument("--round12", action="store_true", help="twelfth round (2026-09-11): inverse-vol sizing, drawdown brake, exit hysteresis, min hold, IC-weighted blend (150-name ledger _u150b)")
     ap.add_argument("--tag", default="", help="read state/backtest<tag>.sqlite instead of the default")
     ap.add_argument("--exec", dest="exec_mode", choices=("close", "open"), default="close", help="open = next-open execution (the live rule)")
     ap.add_argument("--oos-end", default=None, help="ISO date: report rows before it as out-of-sample, from it as in-sample")
@@ -435,6 +476,24 @@ def main():
                     ("h10_20", dict(v21, horizons=(10, 20)))]
         for a in PIT_AGENTS:
             variants.append((f"drop_{a}", dict(v21, agents_only=tuple(x for x in PIT_AGENTS if x != a))))
+    elif args.round12:
+        # the "Next" list of 2026-09-11 on the 150-name ledger: risk sizing, drawdown brake, hysteresis, minimum hold, IC blend
+        v23 = {"lam": 150.0, "min_conv": 0.10, "size_k": 0.60, "top_n": 15, "cap": 0.15, "band": 0.30, "vol_target": 0.50, "horizons": (10, 20)}
+        variants = [("v23", dict(v23)),
+                    ("invvol_median", dict(v23, inv_vol="median")),
+                    ("invvol_0.40", dict(v23, inv_vol=0.40)),
+                    ("invvol_0.60", dict(v23, inv_vol=0.60)),
+                    ("volscale_r5", dict(v23, vol_scale=True)),
+                    ("ddbrake_10_50_5", dict(v23, dd_brake=(0.10, 0.5, 0.05))),
+                    ("ddbrake_15_50_5", dict(v23, dd_brake=(0.15, 0.5, 0.05))),
+                    ("ddbrake_10_30_5", dict(v23, dd_brake=(0.10, 0.3, 0.05))),
+                    ("ddbrake_20_50_10", dict(v23, dd_brake=(0.20, 0.5, 0.10))),
+                    ("exit_0.05", dict(v23, exit_conv=0.05)),
+                    ("exit_0.07", dict(v23, exit_conv=0.07)),
+                    ("hold3", dict(v23, min_hold=3)),
+                    ("hold5", dict(v23, min_hold=5)),
+                    ("exit_0.05_hold3", dict(v23, exit_conv=0.05, min_hold=3)),
+                    ("ic_blend", dict(v23, learn="ic"))]
     elif args.round11:
         # round 10's single-knob winners (each better in BOTH windows), combined: do they still hold together?
         v21 = {"lam": 150.0, "min_conv": 0.15, "size_k": 0.60, "top_n": 15, "band": 0.30}
@@ -533,13 +592,13 @@ def main():
                 ("technical_only", {"learn": False, "agents_only": ("technical",)}),
                 ("no_neighbors", {"agents_only": ("supply_chain", "technical", "mean_reversion", "events", "risk", "macro")}),
                 ("price_agents_only", {"agents_only": ("technical", "mean_reversion", "risk", "macro")})]
-    if not args.quick and not (args.round2 or args.round3 or args.round4 or args.round5 or args.round6 or args.round7 or args.round8 or args.round9 or args.round10 or args.round11):
+    if not args.quick and not (args.round2 or args.round3 or args.round4 or args.round5 or args.round6 or args.round7 or args.round8 or args.round9 or args.round10 or args.round11 or args.round12):
         for combo in itertools.product(*GRID.values()):
             kv = dict(zip(GRID.keys(), combo))
             if kv == {k: BASE[k] for k in GRID}:
                 continue
             variants.append(("+".join(f"{k}={v}" for k, v in kv.items()), kv))
-    tag = ("2" if args.round2 else "3" if args.round3 else "4" if args.round4 else "5" if args.round5 else "6" if args.round6 else "7" if args.round7 else "8" if args.round8 else "9" if args.round9 else "10" if args.round10 else "11" if args.round11 else "") + args.tag
+    tag = ("2" if args.round2 else "3" if args.round3 else "4" if args.round4 else "5" if args.round5 else "6" if args.round6 else "7" if args.round7 else "8" if args.round8 else "9" if args.round9 else "10" if args.round10 else "11" if args.round11 else "12" if args.round12 else "") + args.tag
     run_info = {"kind": "sweep", "tag": tag, "total": len(variants), "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     t0 = time.time()
     results = evaluate(variants, common, args.workers, run_info, pool=pool, data=data)

@@ -1,5 +1,5 @@
 """Re-publish state/dashboard.json to the Blob store, refreshing the backtest
-section from state/backtest_report.json. Use after re-running the backtest so
+section from state/backtest_report.json, and upload RESEARCH.md for the /backtest page. Use after re-running the backtest so
 the website shows the new report without waiting for the next cycle (which
 would also add predictions to the live ledger if run by hand).
 
@@ -22,6 +22,9 @@ def main():
         dash["backtest"] = bt
     dash.pop("generated", None)
     journal.publish_dashboard(dash)
+    research = config.ROOT / "RESEARCH.md"
+    if research.exists():                      # the website's /backtest page renders it under "Decisions"
+        journal._upload("semiband-v2/research.md", research.read_text(encoding="utf-8"))
     print("published: backtest", "yes" if path.exists() else "no", "| keys", sorted(dash.keys()))
 
 

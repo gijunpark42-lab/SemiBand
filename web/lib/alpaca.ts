@@ -183,3 +183,12 @@ export async function getBacktestProgress(): Promise<BacktestProgress | null> {
   const url = process.env.BACKTEST_PROGRESS_URL ?? (origin && `${origin}/semiband-v2/backtest_progress.json`);
   return blob<BacktestProgress>(url);
 }
+
+// RESEARCH.md (the research log: every idea tried, numbers, verdicts), uploaded by publish_dashboard.py.
+export async function getResearch(): Promise<string | null> {
+  const token = process.env.BLOB_READ_WRITE_TOKEN;
+  const origin = process.env.TRADES_URL ? new URL(process.env.TRADES_URL).origin : undefined;
+  if (!origin || !token) return null;
+  const res = await fetch(`${origin}/semiband-v2/research.md?cache=0`, { headers: { authorization: `Bearer ${token}` }, cache: "no-store" });
+  return res.ok ? res.text() : null;
+}

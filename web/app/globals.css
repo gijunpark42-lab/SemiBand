@@ -86,3 +86,18 @@ table.heat td.cell.empty { color: var(--ink-3); text-align: center; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip { padding: 2px 10px; border-radius: 999px; background: var(--bg); border: 1px solid var(--border); font-size: 12px; font-weight: 600; }
 .quint { display: flex; gap: 8px; margin-top: 6px; font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* --- tabs + research log --- */
+.tabs { display: flex; gap: 4px; margin-bottom: 14px; border-bottom: 1px solid var(--border); }
+.tabs a { padding: 8px 14px; color: var(--ink-2); text-decoration: none; font-size: 13px; font-weight: 600; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.tabs a:hover { color: var(--ink); }
+.tabs a.active { color: var(--line); border-bottom-color: var(--line); }
+.md h3 { font-size: 15px; margin: 4px 0 8px; }
+.md h4 { font-size: 13px; margin: 22px 0 8px; color: var(--ink); }
+.md p { margin: 6px 0; color: var(--ink-2); font-size: 13px; }
+.md ul { margin: 6px 0 6px 18px; padding: 0; color: var(--ink-2); font-size: 13px; }
+.md li { margin: 3px 0; }
+.md code { font-size: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; }
+.md table { font-size: 12px; margin: 6px 0; }
+.md td { white-space: normal; min-width: 60px; color: var(--ink-2); }
+.md td:first-child { color: var(--ink); }

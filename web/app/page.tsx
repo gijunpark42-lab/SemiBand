@@ -50,7 +50,7 @@ export default async function Page() {
 
   return (
     <main>
-      <nav className="topnav"><Link href="/backtest">backtest live →</Link></nav>
+      <nav className="tabs"><Link href="/" className="active">Dashboard</Link><Link href="/backtest">Backtest</Link></nav>
       <h1>SemiBand · paper</h1>
       <p className="sub">Self-weighting agent ensemble on the earnings-ai supply-chain universe · Alpaca paper ·{" "}
         {new Date().toLocaleString("en-US", { timeZone: "America/New_York" })} ET</p>

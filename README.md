@@ -70,9 +70,10 @@ live learner at half weight (`WARM_START_WEIGHT`). Not simulated: fundamentals (
 
 - `--exec open` trades at the NEXT open and marks open-to-open, which is what the live cycle actually gets; the default
   `close` mode trades at the close the signals were computed on and is optimistic (it books the overnight move).
-- Every refit the run writes `state/backtest_progress.json` and uploads it as `semiband-v2/backtest_progress.json`;
-  the website's `/backtest` page polls it every 5 s (progress bar, ETA, equity curve, monthly heatmap, agent IC
-  heatmap, current book). `sweep.py` publishes to the same file (variants done, table so far, PBO at the end).
+- Every 5 traded days the run writes `state/backtest_progress.json`; `watch_backtest.cmd` (= `cd web && npm run dev`, then
+  http://localhost:3000/backtest) shows it live on this machine with no Vercel traffic. The Blob copy the website reads is
+  uploaded per `config.PROGRESS_UPLOAD` — default `final`: only the finished result, so the Vercel quota is not spent on
+  progress. `sweep.py` publishes the same way (table so far locally, final table + PBO to the site).
 - `robustness.py` is attached to every report: block-bootstrap Sharpe CI, deflated Sharpe for the number of sweep
   trials on record (`state/backtest_sweep*.json`), monthly/quarterly tables, cost sensitivity (0/5/15/30 bps),
   rolling 60-day Sharpe, and the share of the return that came from the single best quarter. `sweep.py` stores each

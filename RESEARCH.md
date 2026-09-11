@@ -269,3 +269,8 @@ A profile whose OOS year is at least as good as its tuning year is the healthier
 (it is also the user's decision). Two cautions: names added to the graph in 2026 were chosen knowing they matter
 in 2026 (a mild look-ahead in universe construction that only fresh snapshots will remove), and 2026Q3 (partial) is
 −12.8% on this universe vs −3.9% on the old one — watch the live scoreboard.
+
+(2026-09-11, user) Universe stays wide: the small-cap-only result reflects the 2024-26 market rewarding semiconductor
+small caps; with the graph data covering the whole US-listed chain, breadth is the safer bet going forward. Next steps are
+listed under "Next" above; progress uploads to Vercel are now final-only (`PROGRESS_UPLOAD`), watch runs locally with
+`watch_backtest.cmd`.

@@ -6,7 +6,9 @@ import { useEffect, useMemo, useState } from "react";
 import Heatmap from "@/components/Heatmap";
 import type { BacktestProgress, SweepResult } from "@/lib/alpaca";
 
-const POLL_RUNNING_MS = 5000, POLL_IDLE_MS = 30000;
+// Local viewer polls the file every 3 s; the website polls its API every 60 s while a run is on, 5 min when idle (Vercel quota).
+const DEV = process.env.NODE_ENV !== "production";
+const POLL_RUNNING_MS = DEV ? 3000 : 60000, POLL_IDLE_MS = DEV ? 10000 : 300000;
 const pct = (v: number, d = 1) => `${v >= 0 ? "+" : ""}${(v * 100).toFixed(d)}%`;
 const cls = (v: number) => (v >= 0 ? "up" : "down");
 const dur = (s?: number) => s == null ? "—" : s < 90 ? `${Math.round(s)}s` : s < 5400 ? `${Math.round(s / 60)} min` : `${(s / 3600).toFixed(1)} h`;

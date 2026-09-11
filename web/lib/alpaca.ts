@@ -177,8 +177,23 @@ export type BacktestProgress = {
   pbo?: { pbo: number; combinations: number; median_oos_rank: number } | null;
 };
 
+// Local viewer (`npm run dev` / watch_backtest.cmd): read the research machine's files directly, no Blob traffic.
+const LOCAL = process.env.NODE_ENV !== "production" || !!process.env.LOCAL_STATE_DIR;
+async function localFile(rel: string): Promise<string | null> {
+  try {
+    const fs = await import("fs/promises");
+    const path = await import("path");
+    const root = process.env.LOCAL_STATE_DIR ?? path.join(process.cwd(), "..");
+    return await fs.readFile(path.join(root, rel), "utf-8");
+  } catch { return null; }
+}
+
 export async function getBacktestProgress(): Promise<BacktestProgress | null> {
-  // backtest.py always uploads to semiband-v2/backtest_progress.json in the store TRADES_URL points at.
+  if (LOCAL) {
+    const txt = await localFile("state/backtest_progress.json");
+    if (txt) return JSON.parse(txt);
+  }
+  // backtest.py uploads to semiband-v2/backtest_progress.json in the store TRADES_URL points at (see config.PROGRESS_UPLOAD).
   const origin = process.env.TRADES_URL ? new URL(process.env.TRADES_URL).origin : undefined;
   const url = process.env.BACKTEST_PROGRESS_URL ?? (origin && `${origin}/semiband-v2/backtest_progress.json`);
   return blob<BacktestProgress>(url);
@@ -186,6 +201,10 @@ export async function getBacktestProgress(): Promise<BacktestProgress | null> {
 
 // RESEARCH.md (the research log: every idea tried, numbers, verdicts), uploaded by publish_dashboard.py.
 export async function getResearch(): Promise<string | null> {
+  if (LOCAL) {
+    const txt = await localFile("RESEARCH.md");
+    if (txt) return txt;
+  }
   const token = process.env.BLOB_READ_WRITE_TOKEN;
   const origin = process.env.TRADES_URL ? new URL(process.env.TRADES_URL).origin : undefined;
   if (!origin || !token) return null;

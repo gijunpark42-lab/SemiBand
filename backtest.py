@@ -176,14 +176,17 @@ def thin(curve, n=CURVE_POINTS):
 
 
 def publish_progress(payload):
-    """state/backtest_progress.json + the Blob copy the website polls. Never raises."""
+    """Always writes state/backtest_progress.json (the local viewer polls it); uploads the Blob copy the website
+    reads according to config.PROGRESS_UPLOAD: 'always', 'final' (done/failed only) or 'never'. Never raises."""
     if not PUBLISH:
         return
     try:
         payload = dict(payload, updated=datetime.now(timezone.utc).isoformat(timespec="seconds"))
         body = json.dumps(payload, ensure_ascii=False)
         PROGRESS.write_text(body, encoding="utf-8")
-        journal._upload(PROGRESS_BLOB, body)
+        mode = config.PROGRESS_UPLOAD
+        if mode == "always" or (mode == "final" and payload.get("status") in ("done", "failed")):
+            journal._upload(PROGRESS_BLOB, body)
     except Exception as exc:
         log.warning("progress publish failed: %s", exc)
 

@@ -92,6 +92,9 @@ REBALANCE_BAND = 0.30             # only resize a held name when the target move
 # --- trading costs (Alpaca: $0 commission on US stocks; sells pay tiny SEC/FINRA fees; market orders pay the spread) ---
 COST_BPS = 5                      # assumed round-trip cost per order in basis points (slippage + fees), used for the ledger and shown to agents
 
+PROGRESS_UPLOAD = "final"         # backtest/sweep progress to the Blob store: 'always' (live website view, costs Blob writes + reads),
+                                  # 'final' (only the finished result; watch runs locally with watch_backtest.cmd), 'never'
+
 ORDER_PREFIX = "sb2-"             # client_order_id prefix: how we tell our orders from foreign ones
 
 # --- execution: spread each day's buys/trims over the first hour instead of one market order at the bell ---

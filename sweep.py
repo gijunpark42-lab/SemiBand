@@ -53,7 +53,8 @@ BASE = dict(min_conv=0.10, size_k=0.30, cap=0.10, gross=1.50, band=0.15, top_n=1
             min_hold=0,           # a name entered fewer than this many days ago is not dropped unless its conviction turns negative
             dir_terms=True,       # False: learner without the direction-only features (fewer parameters)
             cost_model="flat",    # 'flat' = config.COST_BPS on every unit of turnover; 'cap' = 5 / 10 / 20 bps by market cap (>50B / 5-50B / <5B)
-            event_hold=None)      # set of ISO dates on which the book is held as is (no rebalance): macro-release rule
+            event_hold=None,      # set of ISO dates on which the book is held as is (no rebalance): macro-release rule
+            nonneg=False)         # learner weights constrained >= 0 (no contrarian use of any agent)
 
 
 def load_signals():
@@ -91,6 +92,7 @@ def simulate(by_date, closes, params, refit_every=1, warmup=30, opens=None):
     learner.PRIOR_STRENGTH = p["lam"] or config.LEARNER_PRIOR_STRENGTH
     config.HORIZONS = tuple(p["horizons"])
     learner.DIR_TERMS = bool(p["dir_terms"])
+    learner.NONNEG = bool(p["nonneg"])
     learner._CACHE.clear()                         # features depend on DIR_TERMS
     # agents_only = the roster itself (prior 1/n over those agents), exactly what dropping the agent from config.AGENTS does live
     config.AGENTS = list(p["agents_only"]) if p["agents_only"] else list(PIT_AGENTS)
@@ -417,6 +419,7 @@ def main():
     ap.add_argument("--round9", action="store_true", help="ninth round: short book and index hedge")
     ap.add_argument("--round10", action="store_true", help="tenth round (2026-09-11): vol targeting, EWMA smoothing, no-learning, drop-one agents; run on _open500 with --exec open --oos-end 2025-09-24")
     ap.add_argument("--round11", action="store_true", help="eleventh round (2026-09-11): round-10 winners combined (vol target x no-events x horizons 10/20 x cap)")
+    ap.add_argument("--round16", action="store_true", help="sixteenth round (2026-09-11): non-negative learner weights vs the signed ridge (ledger _u150b)")
     ap.add_argument("--round15", action="store_true", help="fifteenth round (2026-09-11): rule roster with / without the point-in-time llm_guidance (ledger _llmg from llm_backtest.py)")
     ap.add_argument("--round14", action="store_true", help="fourteenth round (2026-09-11): cap-tiered costs, low-turnover variants, v2.3 knobs on 150 names, CPI-day hold (ledger _u150b)")
     ap.add_argument("--round13", action="store_true", help="thirteenth round (2026-09-11): horizons 10/20/40, 20/40, 20, 40 and the learner without direction-only terms (ledger _h40)")
@@ -502,6 +505,12 @@ def main():
                     ("h10_20", dict(v21, horizons=(10, 20)))]
         for a in PIT_AGENTS:
             variants.append((f"drop_{a}", dict(v21, agents_only=tuple(x for x in PIT_AGENTS if x != a))))
+    elif args.round16:
+        # non-negative weights: same ridge objective with w >= 0 (no contrarian use of an agent) — interpretable, less collinearity risk
+        v23 = {"lam": 150.0, "min_conv": 0.10, "size_k": 0.60, "top_n": 15, "cap": 0.15, "band": 0.30, "vol_target": 0.50, "horizons": (10, 20)}
+        variants = [("v23_ridge", dict(v23)),
+                    ("v23_nonneg", dict(v23, nonneg=True)),
+                    ("v23_nonneg_nodir", dict(v23, nonneg=True, dir_terms=False))]
     elif args.round15:
         # does a point-in-time llm_guidance (Sonnet, low effort; see llm_backtest.py) add to the rule roster?
         v23 = {"lam": 150.0, "min_conv": 0.10, "size_k": 0.60, "top_n": 15, "cap": 0.15, "band": 0.30, "vol_target": 0.50, "horizons": (10, 20)}
@@ -654,13 +663,13 @@ def main():
                 ("technical_only", {"learn": False, "agents_only": ("technical",)}),
                 ("no_neighbors", {"agents_only": ("supply_chain", "technical", "mean_reversion", "events", "risk", "macro")}),
                 ("price_agents_only", {"agents_only": ("technical", "mean_reversion", "risk", "macro")})]
-    if not args.quick and not (args.round2 or args.round3 or args.round4 or args.round5 or args.round6 or args.round7 or args.round8 or args.round9 or args.round10 or args.round11 or args.round12 or args.round13 or args.round14 or args.round15):
+    if not args.quick and not (args.round2 or args.round3 or args.round4 or args.round5 or args.round6 or args.round7 or args.round8 or args.round9 or args.round10 or args.round11 or args.round12 or args.round13 or args.round14 or args.round15 or args.round16):
         for combo in itertools.product(*GRID.values()):
             kv = dict(zip(GRID.keys(), combo))
             if kv == {k: BASE[k] for k in GRID}:
                 continue
             variants.append(("+".join(f"{k}={v}" for k, v in kv.items()), kv))
-    tag = ("2" if args.round2 else "3" if args.round3 else "4" if args.round4 else "5" if args.round5 else "6" if args.round6 else "7" if args.round7 else "8" if args.round8 else "9" if args.round9 else "10" if args.round10 else "11" if args.round11 else "12" if args.round12 else "13" if args.round13 else "14" if args.round14 else "15" if args.round15 else "") + args.tag
+    tag = ("2" if args.round2 else "3" if args.round3 else "4" if args.round4 else "5" if args.round5 else "6" if args.round6 else "7" if args.round7 else "8" if args.round8 else "9" if args.round9 else "10" if args.round10 else "11" if args.round11 else "12" if args.round12 else "13" if args.round13 else "14" if args.round14 else "15" if args.round15 else "16" if args.round16 else "") + args.tag
     run_info = {"kind": "sweep", "tag": tag, "total": len(variants), "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     t0 = time.time()
     results = evaluate(variants, common, args.workers, run_info, pool=pool, data=data)

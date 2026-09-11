@@ -51,6 +51,7 @@ CV_MIN_DATES = 8               # walk-forward CV needs this many distinct predic
 WINSOR = 0.15                  # clip realised abnormal returns at +/-15%
 DEFAULT_SCALE = {5: 0.02, 10: 0.03, 20: 0.045, 40: 0.065, 60: 0.08}   # typical |abnormal| per horizon until measured
 DIR_TERMS = True               # False: drop the direction-only features (7 fewer parameters; research flag, live keeps True)
+NONNEG = False                 # True: weights constrained >= 0 (non-negative ridge via NNLS on the augmented system); research flag
 MIN_RELIABILITY = 0.02
 
 
@@ -217,6 +218,13 @@ def ridge(X, y, d, lam, w0):
     """Posterior mean of w under the Gaussian prior N(w0, I/lam) and observation weights d."""
     if len(y) == 0:
         return w0.copy()
+    if NONNEG:
+        # same objective, weights >= 0:  min || sqrt(d)(Xw - y) ||^2 + lam || w - w0 ||^2  s.t. w >= 0
+        from scipy.optimize import nnls
+        sd = np.sqrt(d)[:, None]
+        A_aug = np.vstack([X * sd, np.sqrt(lam) * np.eye(X.shape[1])])
+        b_aug = np.concatenate([np.sqrt(d) * y, np.sqrt(lam) * w0])
+        return nnls(A_aug, b_aug, maxiter=50 * X.shape[1])[0]
     Xd = X * d[:, None]
     A = X.T @ Xd + lam * np.eye(X.shape[1])
     b = X.T @ (d * y) + lam * w0

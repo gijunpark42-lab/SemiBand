@@ -404,3 +404,19 @@ Two things to watch rather than fix: (1) the wide universe brings non-semiconduc
 (SHEL, APD, MMM, utilities — data-centre power/materials suppliers), and today the top pick was one of them; (2) a long
 cash regime forfeits any SOXX rebound. Both are the model's rules working as validated; if the user wants a floor on
 exposure or a semiconductor-only universe, that is a config decision to test, not a bug.
+
+## 2026-09-11 — round 16: are the negative agent weights right? (non-negative ridge test)
+
+The user saw negative effective weights (supply_chain −0.046, macro −0.043 on the first live day) and asked whether that
+is correct. Same objective, weights constrained >= 0 (NNLS on the augmented ridge system), 150-name ledger, PBO 0.03:
+
+| Learner | Return | Sharpe | Max DD | IC 10d | OOS return | OOS Sharpe |
+|---|---|---|---|---|---|---|
+| **signed ridge (v2.3)** | +758% | 1.81 | 28.7% | 0.016 | +215% | 1.94 |
+| non-negative weights | +172% | 1.01 | 29.3% | 0.001 | +32% | 0.75 |
+| non-negative, no direction terms | +171% | 1.02 | 29.2% | 0.002 | +39% | 0.91 |
+
+Forbidding negative weights destroys most of the edge in both windows. The negatives are not noise: supply_chain and
+neighbors come from the same graph, and the ridge uses one and partly nets the other out (collinearity correction),
+and some agents are reliably wrong at some horizon and are worth using upside down. Verdict: keep the signed ridge; a
+negative display weight means "used as a correction / contrarian input", not "broken".

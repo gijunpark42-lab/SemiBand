@@ -516,7 +516,7 @@ ledger (`_pre2024`, where the rules lose) and on 2024-26 (`_v24`, where they win
 | 60-day return < 0 → half size | −22% | −0.23 | 39.1% | +610% | 1.68 | 1.91 |
 | 60-day return < −10% → flat | −9% | −0.08 | 44.2% | +730% | 1.78 | 1.88 (never fires) |
 | 120-day return < 0 → half size | −36% | −0.43 | 43.9% | +731% | 1.78 | 1.88 (never fires) |
-| walk-forward IC < 0 → half size | (2024-26: +425% / 1.49) | | | | | rejected earlier |
+| walk-forward IC < 0 → half size | −1% | −0.01 | 36.8% | +425% | 1.49 | 1.71 |
 
 **Decision:** no gate. In the bad regime the gates whipsaw (the strategy's bad years are choppy, not one long slide),
 so cutting size after losses mostly cuts the recoveries; in the good regime they either never fire or cost Sharpe.

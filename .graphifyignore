@@ -1,5 +1,0 @@
-# graphify maps CODE + DOCS only (AST, no LLM).
-# Worktree checkouts duplicate the whole repo (backtest-live is an ACTIVE worktree - never index it).
-.claude/worktrees/
-# Backtest databases, reports and run logs (already gitignored; stated explicitly)
-state/

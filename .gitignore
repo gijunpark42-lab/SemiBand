@@ -12,3 +12,6 @@ web/tsconfig.tsbuildinfo
 .vercel
 .env*
 graphify-out/
+
+.claude/
+.graphifyignore

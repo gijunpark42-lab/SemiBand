@@ -48,7 +48,7 @@ export default function BacktestLive({ initial }: { initial: BacktestProgress | 
         <span><b>{p.kind === "sweep" ? "parameter sweep" : "walk-forward backtest"}</b>{p.tag ? ` · tag ${p.tag}` : ""}
           {p.kind === "backtest" && p.exec ? ` · execution at the ${p.exec === "open" ? "next open (live rule)" : "signal-day close"}` : ""}
           {p.period ? ` · ${p.period.start} → ${p.period.end} (${p.period.trading_days} days, ${p.tickers} names)` : ""}</span>
-        <span className="muted" data-tick={tick}>updated {ago(p.updated)} · polling every {running ? POLL_RUNNING_MS / 1000 : POLL_IDLE_MS / 1000}s{err ? ` · fetch error ${err}` : ""}</span>
+        <span className="muted">updated {tick ? ago(p.updated) : "…"} · polling every {running ? POLL_RUNNING_MS / 1000 : POLL_IDLE_MS / 1000}s{err ? ` · fetch error ${err}` : ""}</span>
       </div>
       {p.message && status !== "running" && <div className="muted" style={{ margin: "8px 0", fontSize: 12 }}>{p.message}</div>}
 
@@ -203,10 +203,10 @@ function Curve({ curve }: { curve: NonNullable<BacktestProgress["curve"]> }) {
         <svg className="chart" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ height: 260 }}
           onMouseMove={(e) => { const r = e.currentTarget.getBoundingClientRect(); setHover(Math.round(((e.clientX - r.left) / r.width * W - PAD.l) / (W - PAD.l - PAD.r) * (curve.length - 1))); }}
           onMouseLeave={() => setHover(null)}>
-          {ticks.map((v) => <g key={v}><line className="grid" x1={PAD.l} x2={W - PAD.r} y1={Y(v)} y2={Y(v)} /><text className="axis" x={PAD.l - 6} y={Y(v) + 4} textAnchor="end">{v}x</text></g>)}
-          {xt.map((i) => <text key={i} className="axis" x={X(i)} y={H - 6} textAnchor="middle">{curve[i].date.slice(2)}</text>)}
+          {ticks.map((v) => <g key={v}><line className="grid" x1={PAD.l} x2={W - PAD.r} y1={Y(v).toFixed(1)} y2={Y(v).toFixed(1)} /><text className="axis" x={PAD.l - 6} y={(Y(v) + 4).toFixed(1)} textAnchor="end">{v}x</text></g>)}
+          {xt.map((i) => <text key={i} className="axis" x={X(i).toFixed(1)} y={H - 6} textAnchor="middle">{curve[i].date.slice(2)}</text>)}
           {Object.entries(series).map(([n, arr]) => <path key={n} d={path(arr)} fill="none" stroke={COLORS[n]} strokeWidth={n === "Portfolio" ? 2.2 : 1.4} strokeLinejoin="round" />)}
-          {h && <line className="cross" x1={X(hover!)} x2={X(hover!)} y1={PAD.t} y2={H - PAD.b} />}
+          {h && <line className="cross" x1={X(hover!).toFixed(1)} x2={X(hover!).toFixed(1)} y1={PAD.t} y2={H - PAD.b} />}
         </svg>
         {h && <div className="tip" style={{ left: `${(X(hover!) / W) * 100}%`, top: 0 }}>{h.date} · portfolio {pct(h.portfolio - 1)} · rank {pct(h.rank - 1)} · SOXX {pct(h.soxx - 1)} · {h.n} names, gross {(h.gross * 100).toFixed(0)}%</div>}
       </div>
@@ -221,9 +221,9 @@ function Sparkline({ points, labels }: { points: number[]; labels: string[] }) {
   const Y = (v: number) => PAD.t + (1 - (v - y0) / (y1 - y0)) * (H - PAD.t - PAD.b);
   return (
     <svg className="chart" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ height: 90 }}>
-      <line className="grid" x1={PAD.l} x2={W - PAD.r} y1={Y(0)} y2={Y(0)} />
-      <text className="axis" x={PAD.l - 6} y={Y(0) + 4} textAnchor="end">0</text>
-      {[0, Math.floor(points.length / 2), points.length - 1].map((i) => <text key={i} className="axis" x={X(i)} y={H - 4} textAnchor="middle">{labels[i]?.slice(2)}</text>)}
+      <line className="grid" x1={PAD.l} x2={W - PAD.r} y1={Y(0).toFixed(1)} y2={Y(0).toFixed(1)} />
+      <text className="axis" x={PAD.l - 6} y={(Y(0) + 4).toFixed(1)} textAnchor="end">0</text>
+      {[0, Math.floor(points.length / 2), points.length - 1].map((i) => <text key={i} className="axis" x={X(i).toFixed(1)} y={H - 4} textAnchor="middle">{labels[i]?.slice(2)}</text>)}
       <path className="series" d={points.map((v, i) => `${i ? "L" : "M"}${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(" ")} />
     </svg>
   );

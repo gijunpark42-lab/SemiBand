@@ -417,6 +417,7 @@ def main():
     ap.add_argument("--round9", action="store_true", help="ninth round: short book and index hedge")
     ap.add_argument("--round10", action="store_true", help="tenth round (2026-09-11): vol targeting, EWMA smoothing, no-learning, drop-one agents; run on _open500 with --exec open --oos-end 2025-09-24")
     ap.add_argument("--round11", action="store_true", help="eleventh round (2026-09-11): round-10 winners combined (vol target x no-events x horizons 10/20 x cap)")
+    ap.add_argument("--round15", action="store_true", help="fifteenth round (2026-09-11): rule roster with / without the point-in-time llm_guidance (ledger _llmg from llm_backtest.py)")
     ap.add_argument("--round14", action="store_true", help="fourteenth round (2026-09-11): cap-tiered costs, low-turnover variants, v2.3 knobs on 150 names, CPI-day hold (ledger _u150b)")
     ap.add_argument("--round13", action="store_true", help="thirteenth round (2026-09-11): horizons 10/20/40, 20/40, 20, 40 and the learner without direction-only terms (ledger _h40)")
     ap.add_argument("--round12", action="store_true", help="twelfth round (2026-09-11): inverse-vol sizing, drawdown brake, exit hysteresis, min hold, IC-weighted blend (150-name ledger _u150b)")
@@ -501,6 +502,14 @@ def main():
                     ("h10_20", dict(v21, horizons=(10, 20)))]
         for a in PIT_AGENTS:
             variants.append((f"drop_{a}", dict(v21, agents_only=tuple(x for x in PIT_AGENTS if x != a))))
+    elif args.round15:
+        # does a point-in-time llm_guidance (Sonnet, low effort; see llm_backtest.py) add to the rule roster?
+        v23 = {"lam": 150.0, "min_conv": 0.10, "size_k": 0.60, "top_n": 15, "cap": 0.15, "band": 0.30, "vol_target": 0.50, "horizons": (10, 20)}
+        rules = tuple(PIT_AGENTS)
+        variants = [("rules_only", dict(v23, agents_only=rules)),
+                    ("rules_plus_llm_guidance", dict(v23, agents_only=rules + ("llm_guidance",))),
+                    ("llm_guidance_only", dict(v23, agents_only=("llm_guidance",))),
+                    ("llm_guidance_only_no_learning", dict(v23, agents_only=("llm_guidance",), learn=False))]
     elif args.round14:
         # realism round on the 150-name ledger: cap-tiered costs, low-turnover variants under those costs,
         # v2.3 knobs re-checked on the wider universe, and a CPI-release-day hold (dates from FRED, known in advance)
@@ -645,13 +654,13 @@ def main():
                 ("technical_only", {"learn": False, "agents_only": ("technical",)}),
                 ("no_neighbors", {"agents_only": ("supply_chain", "technical", "mean_reversion", "events", "risk", "macro")}),
                 ("price_agents_only", {"agents_only": ("technical", "mean_reversion", "risk", "macro")})]
-    if not args.quick and not (args.round2 or args.round3 or args.round4 or args.round5 or args.round6 or args.round7 or args.round8 or args.round9 or args.round10 or args.round11 or args.round12 or args.round13 or args.round14):
+    if not args.quick and not (args.round2 or args.round3 or args.round4 or args.round5 or args.round6 or args.round7 or args.round8 or args.round9 or args.round10 or args.round11 or args.round12 or args.round13 or args.round14 or args.round15):
         for combo in itertools.product(*GRID.values()):
             kv = dict(zip(GRID.keys(), combo))
             if kv == {k: BASE[k] for k in GRID}:
                 continue
             variants.append(("+".join(f"{k}={v}" for k, v in kv.items()), kv))
-    tag = ("2" if args.round2 else "3" if args.round3 else "4" if args.round4 else "5" if args.round5 else "6" if args.round6 else "7" if args.round7 else "8" if args.round8 else "9" if args.round9 else "10" if args.round10 else "11" if args.round11 else "12" if args.round12 else "13" if args.round13 else "14" if args.round14 else "") + args.tag
+    tag = ("2" if args.round2 else "3" if args.round3 else "4" if args.round4 else "5" if args.round5 else "6" if args.round6 else "7" if args.round7 else "8" if args.round8 else "9" if args.round9 else "10" if args.round10 else "11" if args.round11 else "12" if args.round12 else "13" if args.round13 else "14" if args.round14 else "15" if args.round15 else "") + args.tag
     run_info = {"kind": "sweep", "tag": tag, "total": len(variants), "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     t0 = time.time()
     results = evaluate(variants, common, args.workers, run_info, pool=pool, data=data)

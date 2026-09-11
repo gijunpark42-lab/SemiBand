@@ -366,3 +366,23 @@ them back; vol target 0.40 is documented as the switch to flip if drawdown ever 
 i.e. ~300 calls would have ended around 08:00 PT, well after the open). Relaunched on Opus at HIGH effort with the Claude agents
 limited to the 60 highest preliminary-|conviction| names (`LLM_MAX_TICKERS`): test call 12 s / 2.3k in / 0.7k out. Rule of thumb
 now: the LLM stage must fit in ~90 minutes (03:40 → 05:30 PT) — roughly 200 calls at ~50 s with 2 workers.
+
+## 2026-09-11 — round 15: does `llm_guidance` earn its place? (point-in-time partial backtest)
+
+`llm_backtest.py` re-asked the live agent's question 487 times (one per name and statement date since 2024-06, statements
+dated <= that day only, Sonnet at low effort per the research-model rule, 27 min) and held each opinion until the next
+statement, writing 16,551 dated rows into a copy of the 150-name ledger. `sweep.py --round15 --tag _llmg`, PBO 0.03.
+
+| Roster | Return | Sharpe | Max DD | Turnover/day | IC 10d | OOS return | OOS Sharpe |
+|---|---|---|---|---|---|---|---|
+| 7 rule agents (v2.3) | +758% | 1.81 | 28.7% | 41% | 0.016 | +215% | 1.94 |
+| 7 rule agents + llm_guidance | +779% | 1.83 | 28.8% | 38% | 0.016 | +220% | 1.97 |
+| llm_guidance alone (learned) | +3% | 0.10 | 18.0% | 0.7% | **0.043** | ~0 | — |
+| llm_guidance alone (equal prior) | +9% | 0.17 | 28.5% | 2.5% | 0.032 | ~0 | — |
+
+- Its own ranking IC (0.043 at 10 days) is the highest of any single agent, but it speaks for few names at a time
+  (only those with fresh statements), so alone it barely trades. Inside the roster it adds a little on every metric in
+  both windows (+3% return, +0.02 / +0.03 Sharpe, −3 pts turnover) — small, but the first Claude agent with a measured,
+  point-in-time, out-of-sample positive contribution.
+- Live it runs on Opus at high effort (stronger than the Sonnet-low proxy), so the real contribution is plausibly >= this.
+  Verdict: keep it, and keep paying for it. `llm_supply` and `llm_news` still cannot be backtested (no dated inputs).

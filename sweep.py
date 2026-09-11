@@ -58,7 +58,7 @@ def load_signals():
     return by_date
 
 
-def simulate(by_date, closes, params, refit_every=5, warmup=30, opens=None):
+def simulate(by_date, closes, params, refit_every=1, warmup=30, opens=None):
     p = dict(BASE, **params)
     learner.HALF_LIFE_DAYS = p["half_life"]
     learner.LAMBDA_GRID = (p["lam"],) if p["lam"] else tuple(config.LEARNER_LAMBDA_GRID)

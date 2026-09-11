@@ -64,7 +64,7 @@ reference line on the dashboard. Day one is identical to the equal blend by cons
 
 `python backtest.py --days 250` replays the point-in-time agents (technical, mean_reversion, risk, macro, events,
 and time-filtered supply_chain / neighbors) day by day, scores every opinion against SOXX at 5/10/20 days, refits
-the learner weekly on outcomes known at the time, and simulates the live sizing rules plus a top-15 rank portfolio.
+the learner every day (like the live cycle) on outcomes known at the time, and simulates the live sizing rules plus a top-15 rank portfolio.
 Output: `state/backtest_report.json` (published to the dashboard) and `state/backtest.sqlite`, which warm-starts the
 live learner at half weight (`WARM_START_WEIGHT`). Not simulated: fundamentals (no point-in-time data) and the Claude agents.
 

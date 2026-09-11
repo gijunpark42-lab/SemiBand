@@ -182,7 +182,7 @@ def publish_progress(payload):
         log.warning("progress publish failed: %s", exc)
 
 
-def run(days=250, refit_every=5, warmup=30, tag="", extra=(), cap=None, exec_mode="close"):
+def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mode="close"):
     """tag: suffix for the output files (state/backtest<tag>.sqlite / backtest_report<tag>.json)
     so a long build can run while sweeps read the default files.
     exec_mode: 'close' = trade at the close the signals were computed on (optimistic);
@@ -409,7 +409,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--days", type=int, default=250)
-    p.add_argument("--refit-every", type=int, default=5)
+    p.add_argument("--refit-every", type=int, default=1, help="1 = refit the learner every day like the live cycle (weekly refits made results depend on the refit phase)")
     p.add_argument("--tag", default="", help="output suffix, e.g. _500")
     p.add_argument("--extra", default="", help="comma list of optional agents to include: momentum,sue,ml_ranker")
     p.add_argument("--cap", type=float, default=None, help="override MAX_MARKET_CAP (e.g. 1e13 for no cap)")

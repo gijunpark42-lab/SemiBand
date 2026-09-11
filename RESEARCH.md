@@ -157,3 +157,30 @@ no market-cap cap.
 - A point-in-time snapshot of the earnings-ai graph per month, so `neighbors` / `supply_chain` edges stop being today's.
 - Regime split of the OOS year: 2025Q2 (V-shaped rebound) was the only quarter far behind SOXX (−36% excess); do not
   fix it on one occurrence, but watch for a second.
+
+## 2026-09-11 — "did the graph update cut the return?" (answer: mostly no)
+
+Separating the two things that changed between the morning ledger and the confirmation ledger:
+
+| v2.1, weekly refit (old engine default) | Return | Sharpe | OOS Sharpe |
+|---|---|---|---|
+| old ledger, full range | +984% | 1.63 | 0.92 |
+| old ledger, first day dropped (same data, refit phase shifted) | +935% | 1.58 | 0.80 |
+| fresh ledger (graph updated 19:20, window +1 day) | +803% | 1.50 | 0.82 |
+
+Dropping ONE day of the same data moved OOS Sharpe 0.92 → 0.80: the weekly refit made results depend on which
+weekday the learner happened to refit on. The live cycle refits every day (`score.py`), so the honest engine setting
+is `refit_every=1`, which the learner cache now makes affordable. With daily refits the two ledgers agree:
+
+| Daily refit (= live) | Return | Sharpe | Max DD | OOS return | OOS Sharpe | OOS DD | IS Sharpe |
+|---|---|---|---|---|---|---|---|
+| v2.1, old ledger | +676% | 1.40 | 43.7% | +62% | 0.67 | 43.7% | 2.12 |
+| v2.1, fresh ledger | +685% | 1.43 | 43.8% | +67% | 0.72 | 43.8% | 2.16 |
+| v2.2 (vol target 0.50), old ledger | +488% | 1.60 | 29.2% | +66% | 0.91 | 29.2% | 2.30 |
+| v2.2 (vol target 0.50), fresh ledger | +483% | 1.61 | 30.8% | +67% | 0.92 | 30.8% | 2.34 |
+
+- The graph update changed the result by ~1%. The apparent −18% was the refit phase, not the data.
+- The weekly-refit numbers reported earlier (+984%, +447% on 220 days) were optimistic versus what the live rule does;
+  the daily-refit numbers above are the ones to quote from now on. `backtest.py` and `sweep.py` default to daily refits.
+- v2.2 holds under daily refits, and more clearly: OOS Sharpe 0.67 → 0.91, drawdown 44% → 29%, OOS return unchanged
+  (+62-67% either way); the raw-return cost is entirely in-sample.

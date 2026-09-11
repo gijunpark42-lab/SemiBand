@@ -29,8 +29,9 @@ LLM_URL = os.getenv("LOCAL_CLAUDE_URL", "http://127.0.0.1:8765/v1")
 LLM_MODEL = "claude-opus-5"         # LIVE cycle + guardian only. 2026-09-11: Fable max ~10k tokens and 55 s per call; Opus max 105 s and up to 15k tokens -> the local server runs opus at HIGH effort
 LLM_MODEL_RESEARCH = "claude-sonnet-5"   # any research / backtest script that calls Claude uses this (cheap, low effort), never Fable max
 LLM_WORKERS = 2                   # concurrent claude -p calls (server allows 2)
-LLM_MAX_TICKERS = 60              # top names by preliminary |conviction| get the 3 Claude agents. 2026-09-11: Opus max measured 105 s/call -> 100 names x 3 agents
-                                  # could not finish before the open; 60 names on Opus high (~50 s/call, 2 workers) fits the 03:30 -> 06:30 PT window
+LLM_MAX_TICKERS = 100             # top names by preliminary |conviction| get the 3 Claude agents. 2026-09-11: Opus HIGH measured 16 s and ~1k output
+                                  # tokens per call, so 100 names x 3 agents = ~40 min with 2 workers, well inside the 03:30 -> 06:30 PT window
+                                  # (Opus max was 105 s/call and would have missed the open; Fable max ~55 s and ~10k tokens)
 WEB_SEARCH_TICKERS = 30           # llm_news may run a live web search (Claude's built-in WebSearch) for this many names: holdings + highest prelim |conviction|
 
 # --- universe ---

@@ -19,6 +19,8 @@ import argparse
 import itertools
 import json
 import math
+import pathlib
+import random
 import sqlite3
 import time
 from datetime import date, datetime, timezone
@@ -247,6 +249,97 @@ GRID = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Parallel evaluation (one process per worker; each loads the ledger and prices once)
+
+_W = {}
+
+
+def _init_worker(db_path, exec_mode, roster):
+    import os, ledger as _ledger
+    global DB
+    DB = pathlib.Path(db_path); _ledger.DB = DB
+    learner.MODEL_FILE = config.STATE_DIR / f"sweep_model_{os.getpid()}.json"
+    config.AGENTS = list(roster)
+    by_date = load_signals()
+    tickers = sorted({s.ticker for sigs in by_date.values() for s in sigs})
+    closes = market.closes(tickers + [config.BENCHMARK, "SPY"], lookback_days=800, cache=False)
+    _W["by_date"], _W["closes"] = by_date, closes[closes[config.BENCHMARK].notna()]
+    _W["opens"] = market.opens(tickers + [config.BENCHMARK, "SPY"], lookback_days=800) if exec_mode == "open" else None
+
+
+def _eval(job):
+    name, kv = job
+    r = simulate(_W["by_date"], _W["closes"], kv, opens=_W["opens"])
+    r["name"] = name
+    return r
+
+
+def evaluate(variants, common, workers, run_info, pool=None, data=None, log=None):
+    """Run every (name, params) pair, sequentially or on the pool; print and publish as results arrive."""
+    jobs = [(name, dict(common, **kv)) for name, kv in variants]
+    results, t0 = [], time.time()
+    if workers > 1:
+        it = pool.imap_unordered(_eval, jobs)
+    else:
+        by_date, closes, opens = data
+        it = (dict(simulate(by_date, closes, kv, opens=opens), name=name) for name, kv in jobs)
+    for k, r in enumerate(it, 1):
+        results.append(r)
+        oos = f" | OOS ret {r['oos']['total_return']:+.3f} sharpe {r['oos']['sharpe']:5.2f} dd {r['oos']['max_drawdown']:.3f}" if r.get("oos") else ""
+        print(f"{r['name']:32s} ret {r['total_return']:+.3f} excess {r['excess_vs_soxx']:+.3f} sharpe {r['sharpe']:5.2f} "
+              f"dd {r['max_drawdown']:.3f} gross {r['avg_gross']:.2f} turn {r['turnover_per_day']:.3f} ic {r['ic_10d']}{oos}", flush=True)
+        elapsed = time.time() - t0
+        shown = (log or []) + results
+        backtest.publish_progress(dict(run_info, status="running" if k < len(jobs) else "done", pct=round(k / len(jobs), 4),
+                                       done=k, total=len(jobs), elapsed_s=round(elapsed), eta_s=round(elapsed / k * (len(jobs) - k)),
+                                       results=[{kk: v for kk, v in x.items() if kk != "rets"} for x in shown]))
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Generational search: evaluate a population in parallel, keep the best, mutate it, repeat.
+# Objective = mean rank over full-window Sharpe and return, OOS Sharpe and return, and (lower) full-window max drawdown,
+# so a variant has to be good on all five, not spectacular on one. Every trial is appended to
+# state/backtest_search<tag>.json (this raises the trial count behind the deflated Sharpe: selection on both
+# windows makes the OOS window in-sample too, so the only validation left after a search is new data).
+
+SPACE = {
+    "vol_target": [None, 0.3, 0.4, 0.5, 0.6, 0.7],
+    "size_k": [0.45, 0.60, 0.75],
+    "min_conv": [0.10, 0.15, 0.20],
+    "top_n": [10, 15, 20],
+    "cap": [0.10, 0.15],
+    "band": [0.30, 0.50],
+    "lam": [100.0, 150.0, 250.0],
+    "half_life": [60, 90, 120],
+    "horizons": [(5, 10, 20), (10, 20)],
+}
+
+
+def objective(results):
+    cols = {"sharpe": [r["sharpe"] for r in results], "ret": [r["total_return"] for r in results],
+            "oos_sharpe": [r["oos"]["sharpe"] for r in results],
+            "oos_return": [r["oos"]["total_return"] for r in results],
+            "neg_dd": [-r["max_drawdown"] for r in results]}
+    for i, r in enumerate(results):
+        ranks = [sorted(v).index(v[i]) + 1 for v in cols.values()]        # 1 = worst
+        r["objective"] = round(float(np.mean(ranks)) / len(results), 3)   # 1.0 = best on everything
+
+
+def mutate(best, rng, tried, n):
+    out, keys = [], list(SPACE)
+    while len(out) < n:
+        kv = dict(best)
+        for k in rng.sample(keys, rng.choice((1, 1, 2))):
+            kv[k] = rng.choice(SPACE[k])
+        key = json.dumps({k: kv.get(k) for k in keys}, sort_keys=True)
+        if key not in tried:
+            tried.add(key); out.append(kv)
+    return out
+
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--apply", action="store_true")
@@ -264,6 +357,10 @@ def main():
     ap.add_argument("--tag", default="", help="read state/backtest<tag>.sqlite instead of the default")
     ap.add_argument("--exec", dest="exec_mode", choices=("close", "open"), default="close", help="open = next-open execution (the live rule)")
     ap.add_argument("--oos-end", default=None, help="ISO date: report rows before it as out-of-sample, from it as in-sample")
+    ap.add_argument("--workers", type=int, default=1, help="processes evaluating variants in parallel (16 cores here; 10 is comfortable)")
+    ap.add_argument("--search", type=int, default=0, help="generational search: this many generations of --pop variants, mutating the best (needs --oos-end)")
+    ap.add_argument("--pop", type=int, default=10)
+    ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
     live_agents, live_h = config.AGENTS, config.HORIZONS
@@ -275,12 +372,49 @@ def main():
     ledger.DB = DB
     learner.MODEL_FILE = config.STATE_DIR / "sweep_model.json"
 
-    by_date = load_signals()
-    tickers = sorted({s.ticker for sigs in by_date.values() for s in sigs})
-    closes = market.closes(tickers + [config.BENCHMARK, "SPY"], lookback_days=800, cache=False)
-    closes = closes[closes[config.BENCHMARK].notna()]
-    opens = market.opens(tickers + [config.BENCHMARK, "SPY"], lookback_days=800) if args.exec_mode == "open" else None
+    pool, data = None, None
+    if args.workers > 1:
+        import multiprocessing as mp
+        pool = mp.Pool(args.workers, initializer=_init_worker, initargs=(str(DB), args.exec_mode, PIT_AGENTS))
+    else:
+        by_date = load_signals()
+        tickers = sorted({s.ticker for sigs in by_date.values() for s in sigs})
+        closes = market.closes(tickers + [config.BENCHMARK, "SPY"], lookback_days=800, cache=False)
+        closes = closes[closes[config.BENCHMARK].notna()]
+        opens = market.opens(tickers + [config.BENCHMARK, "SPY"], lookback_days=800) if args.exec_mode == "open" else None
+        data = (by_date, closes, opens)
     common = {"exec": args.exec_mode, "oos_end": args.oos_end}
+
+    if args.search:
+        if not args.oos_end:
+            raise SystemExit("--search needs --oos-end (the objective uses both windows)")
+        rng = random.Random(args.seed)
+        out = config.STATE_DIR / f"backtest_search{args.tag}.json"
+        trials = json.loads(out.read_text(encoding="utf-8"))["trials"] if out.exists() else []
+        tried = {json.dumps({k: t["params"].get(k) for k in SPACE}, sort_keys=True) for t in trials}
+        best = {"vol_target": config.VOL_TARGET, "size_k": config.SIZE_PER_CONVICTION, "min_conv": config.MIN_CONVICTION,
+                "top_n": config.TOP_N, "cap": config.MAX_POSITION_PCT, "band": config.REBALANCE_BAND, "lam": config.LEARNER_PRIOR_STRENGTH,
+                "half_life": config.LEARNER_HALF_LIFE_DAYS, "horizons": tuple(config.HORIZONS)}   # generation 0 = the live config
+        for g in range(1, args.search + 1):
+            key = json.dumps({k: best.get(k) for k in SPACE}, sort_keys=True)
+            pop = ([("g%d_base" % g, dict(best))] if key not in tried else [])
+            tried.add(key)
+            pop += [("g%d_%d" % (g, i), kv) for i, kv in enumerate(mutate(best, rng, tried, args.pop - len(pop)), 1)]
+            run_info = {"kind": "sweep", "tag": f"search{args.tag} gen {g}/{args.search}", "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+            res = evaluate(pop, common, args.workers, run_info, pool=pool, data=data, log=list(trials))
+            for r in res:
+                r["generation"] = g
+            trials += [{k: v for k, v in r.items() if k != "rets"} for r in res]
+            objective(trials)
+            trials.sort(key=lambda t: -t["objective"])
+            out.write_text(json.dumps({"generated": date.today().isoformat(), "trials": trials}, indent=1), encoding="utf-8")
+            top = trials[0]
+            best = {k: (tuple(top["params"][k]) if isinstance(top["params"][k], list) else top["params"][k]) for k in SPACE}
+            print("\n== generation %d: best so far %s objective %s | ret %+.3f sharpe %.2f dd %.3f | OOS ret %+.3f sharpe %.2f | %s\n" % (
+                g, top["name"], top["objective"], top["total_return"], top["sharpe"], top["max_drawdown"],
+                top["oos"]["total_return"], top["oos"]["sharpe"], json.dumps({k: best[k] for k in SPACE})), flush=True)
+        config.AGENTS, config.HORIZONS = live_agents, live_h
+        return
 
     if args.round10:
         v21 = {"lam": 150.0, "min_conv": 0.15, "size_k": 0.60, "top_n": 15, "band": 0.30}
@@ -407,19 +541,8 @@ def main():
             variants.append(("+".join(f"{k}={v}" for k, v in kv.items()), kv))
     tag = ("2" if args.round2 else "3" if args.round3 else "4" if args.round4 else "5" if args.round5 else "6" if args.round6 else "7" if args.round7 else "8" if args.round8 else "9" if args.round9 else "10" if args.round10 else "11" if args.round11 else "") + args.tag
     run_info = {"kind": "sweep", "tag": tag, "total": len(variants), "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}
-    results = []
     t0 = time.time()
-    for k, (name, kv) in enumerate(variants, 1):
-        r = simulate(by_date, closes, dict(common, **kv), opens=opens)
-        r["name"] = name
-        results.append(r)
-        oos = f" | OOS ret {r['oos']['total_return']:+.3f} sharpe {r['oos']['sharpe']:5.2f} dd {r['oos']['max_drawdown']:.3f}" if r.get("oos") else ""
-        print(f"{name:32s} ret {r['total_return']:+.3f} excess {r['excess_vs_soxx']:+.3f} sharpe {r['sharpe']:5.2f} "
-              f"dd {r['max_drawdown']:.3f} gross {r['avg_gross']:.2f} turn {r['turnover_per_day']:.3f} ic {r['ic_10d']}{oos}", flush=True)
-        elapsed = time.time() - t0
-        backtest.publish_progress(dict(run_info, status="running" if k < len(variants) else "done", pct=round(k / len(variants), 4),
-                                       done=k, elapsed_s=round(elapsed), eta_s=round(elapsed / k * (len(variants) - k)),
-                                       results=[{kk: v for kk, v in x.items() if kk != "rets"} for x in results]))
+    results = evaluate(variants, common, args.workers, run_info, pool=pool, data=data)
     config.AGENTS, config.HORIZONS = live_agents, live_h
     # robust ranking: Sharpe first, then excess vs SOXX, penalise turnover
     for r in results:

@@ -1,6 +1,6 @@
 # SemiBand v2 — self-weighting agent ensemble (Alpaca paper)
 
-Ten agents each give an opinion on every stock in the universe. The opinions are blended with
+Eleven agents each give an opinion on every stock in the universe. The opinions are blended with
 trust weights, the blend is traded in an Alpaca paper account, and every prediction is scored
 5 / 10 / 20 trading days later against SOXX. Agents that were right gain weight; agents that
 were wrong lose it. LLM work runs through the Claude Max subscription (`claude -p`) — no API key.
@@ -19,7 +19,8 @@ The universe is the US-listed slice of the earnings-ai supply-chain graph (marke
      guidance wording) · `neighbors` (the map one hop out: are customers/suppliers hot) ·
      `fundamentals` (growth, margins, valuation, target) · `technical` (20/60-day momentum, trend,
      RSI) · `mean_reversion` (fade 5-day overextension; the opposite temperament of technical) ·
-     `risk` (volatility and drawdown brake; speaks only when risk is elevated) · `macro` (SOXX/SPY trend, VIX, 10-year
+     `events` (earnings within 7 days = risk, reported within 14 days = drift) · `risk` (volatility and
+     drawdown brake; speaks only when risk is elevated) · `macro` (SOXX/SPY trend, VIX, 10-year
      yield, FRED curve slope and NFCI → a regime score expressed through each name's beta)
    - Claude agents: `llm_supply` (the supply-chain report: structure, deals, transitions) ·
      `llm_guidance` (the company's own call statements + curated metrics: guidance momentum) ·
@@ -61,8 +62,8 @@ reference line on the dashboard. Day one is identical to the equal blend by cons
 
 ## Backtest (`backtest.py`)
 
-`python backtest.py --days 250` replays the point-in-time agents (technical, mean_reversion, risk, macro, and
-time-filtered supply_chain / neighbors; `events` is still recorded for re-tests but is no longer in the roster) day by day, scores every opinion against SOXX at 5/10/20 days, refits
+`python backtest.py --days 250` replays the point-in-time agents (technical, mean_reversion, risk, macro, events,
+and time-filtered supply_chain / neighbors) day by day, scores every opinion against SOXX at 5/10/20 days, refits
 the learner weekly on outcomes known at the time, and simulates the live sizing rules plus a top-15 rank portfolio.
 Output: `state/backtest_report.json` (published to the dashboard) and `state/backtest.sqlite`, which warm-starts the
 live learner at half weight (`WARM_START_WEIGHT`). Not simulated: fundamentals (no point-in-time data) and the Claude agents.

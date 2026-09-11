@@ -255,3 +255,17 @@ Ordered by expected value per hour, all to be run through the same search harnes
   relations), `slot` and `capex` fields. They already flow through the existing agents: `supply_chain` scores their text as
   dated signals, `neighbors` reads customers' statements, `llm_guidance` reads the latest statements. 93% of the rows are
   dated Feb-Sep 2026, so a filings-specific agent could only be judged in-sample; not built today (see Next).
+
+Baseline `_u150` (v2.3 rules, 150 names, daily refits, next-open execution) vs v2.3 on the 96-name universe:
+
+| | Return | Sharpe | Max DD | OOS return | OOS Sharpe | IS return | IS Sharpe | Deflated Sharpe |
+|---|---|---|---|---|---|---|---|---|
+| v2.3, 96 names (cap $400B) | +966% | 2.08 | 28.9% | +160% | 1.67 | +310% | 2.51 | 0.83 |
+| v2.3, 150 names (no cap) | +758% | 1.81 | 28.7% | +215% | 1.94 | +173% | 1.68 | 0.99 |
+
+The wider universe is stronger out of sample (Sharpe 1.94, +215%) and weaker in the tuning window (the mega-caps
+lagged the small caps in 2026H1); quintiles stay monotone (Q1 −0.0% … Q5 +1.65%), cost at 30 bps +433% / 1.40.
+A profile whose OOS year is at least as good as its tuning year is the healthier one, so the no-cap universe stays
+(it is also the user's decision). Two cautions: names added to the graph in 2026 were chosen knowing they matter
+in 2026 (a mild look-ahead in universe construction that only fresh snapshots will remove), and 2026Q3 (partial) is
+−12.8% on this universe vs −3.9% on the old one — watch the live scoreboard.

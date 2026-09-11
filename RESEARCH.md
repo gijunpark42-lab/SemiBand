@@ -504,3 +504,33 @@ Consequences: (1) live expectations must be regime-conditional — in a non-boom
 (round 21 tests self-monitoring gates on both ledgers); (3) the graph agents' value, if any, has to come from horizons
 or forms not yet tested (slow information, 60-day scoring), or from the LLM readers — llm_guidance was the only one
 with a measured positive contribution (round 15).
+
+## 2026-09-11 — round 21: self-monitoring exposure gates on both regimes
+
+Gate = scale the book when the strategy's own trailing return is below a threshold. Tested on the 2019-23 price-agent
+ledger (`_pre2024`, where the rules lose) and on 2024-26 (`_v24`, where they win).
+
+| Gate | 2019-23 return | 2019-23 Sharpe | 2019-23 DD | 2024-26 return | 2024-26 Sharpe | 2024-26 OOS Sharpe |
+|---|---|---|---|---|---|---|
+| none (base) | −18% | −0.16 | 45.8% | +731% | 1.78 | 1.88 |
+| 60-day return < 0 → half size | −22% | −0.23 | 39.1% | +610% | 1.68 | 1.91 |
+| 60-day return < −10% → flat | −9% | −0.08 | 44.2% | +730% | 1.78 | 1.88 (never fires) |
+| 120-day return < 0 → half size | −36% | −0.43 | 43.9% | +731% | 1.78 | 1.88 (never fires) |
+| walk-forward IC < 0 → half size | (2024-26: +425% / 1.49) | | | | | rejected earlier |
+
+**Decision:** no gate. In the bad regime the gates whipsaw (the strategy's bad years are choppy, not one long slide),
+so cutting size after losses mostly cuts the recoveries; in the good regime they either never fire or cost Sharpe.
+A strategy that has no edge in a regime cannot be rescued by watching its own P&L — it has to be switched off by
+something that identifies the regime ahead of time, and nothing tested does that. The honest position stands: v2.3
+is a relative-momentum strategy on the AI supply chain with a proven edge only in the 2024-26 regime.
+
+## 2026-09-11 — what would actually be new (after 21 rounds)
+
+- Signals that are not price momentum: the graph agents in their current form add nothing; `llm_guidance` adds a little
+  and is the only Claude agent with a measured contribution. The next real experiment is a 60-day scoring horizon for the
+  slow (graph / filings) information, and dated counterparty relations from the 10-K rows as a point-in-time edge set
+  once snapshots accumulate.
+- Regime identification from outside the strategy (breadth, credit, semiconductor cycle indicators) as an on/off switch
+  — testable on 2019-26 with the price-agent ledgers already built.
+- The beta-adjusted target (Sharpe 1.94 / OOS 2.01 / drawdown 38.7%) combined with a drawdown control, as the one
+  learner change that moved the OOS window.

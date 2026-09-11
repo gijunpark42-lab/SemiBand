@@ -369,6 +369,15 @@ GRID = {
 _W = {}
 
 
+
+
+def _lookback(by_date):
+    """Calendar days of prices to fetch so that the ledger's earliest date is covered (with a year of history before it)."""
+    from datetime import date as _date
+    first = min(by_date) if by_date else _date.today().isoformat()
+    return max(800, (_date.today() - _date.fromisoformat(first)).days + 400)
+
+
 def _init_worker(db_path, exec_mode, roster):
     import os, ledger as _ledger
     global DB
@@ -377,9 +386,10 @@ def _init_worker(db_path, exec_mode, roster):
     config.AGENTS = list(roster)
     by_date = load_signals()
     tickers = sorted({s.ticker for sigs in by_date.values() for s in sigs})
-    closes = market.closes(tickers + [config.BENCHMARK, "SPY"], lookback_days=800, cache=False)
+    lb = _lookback(by_date)
+    closes = market.closes(tickers + [config.BENCHMARK, "SPY"], lookback_days=lb, cache=False)
     _W["by_date"], _W["closes"] = by_date, closes[closes[config.BENCHMARK].notna()]
-    _W["opens"] = market.opens(tickers + [config.BENCHMARK, "SPY"], lookback_days=800) if exec_mode == "open" else None
+    _W["opens"] = market.opens(tickers + [config.BENCHMARK, "SPY"], lookback_days=lb) if exec_mode == "open" else None
 
 
 def _eval(job):
@@ -505,9 +515,10 @@ def main():
     else:
         by_date = load_signals()
         tickers = sorted({s.ticker for sigs in by_date.values() for s in sigs})
-        closes = market.closes(tickers + [config.BENCHMARK, "SPY"], lookback_days=800, cache=False)
+        lb = _lookback(by_date)
+        closes = market.closes(tickers + [config.BENCHMARK, "SPY"], lookback_days=lb, cache=False)
         closes = closes[closes[config.BENCHMARK].notna()]
-        opens = market.opens(tickers + [config.BENCHMARK, "SPY"], lookback_days=800) if args.exec_mode == "open" else None
+        opens = market.opens(tickers + [config.BENCHMARK, "SPY"], lookback_days=lb) if args.exec_mode == "open" else None
         data = (by_date, closes, opens)
     common = {"exec": args.exec_mode, "oos_end": args.oos_end}
 

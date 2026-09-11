@@ -60,7 +60,10 @@ BASE = dict(min_conv=0.10, size_k=0.30, cap=0.10, gross=1.50, band=0.15, top_n=1
             floor_w=0.03,         # ... each at max(conviction x size_k, floor_w)
             rank_always=False,    # hold the top_n names by conviction whenever conviction > 0, each at least floor_w (always invested)
             regime_scale=None,    # de-risk instead of hedging: multiply the long book by this when SOXX is below its 50-day mean
-            hedge_mode="fixed")   # 'fixed' = hedge_size whenever the regime is weak; 'prop' = min(hedge_size, long gross): a hedge, never a net short
+            hedge_mode="fixed",   # 'fixed' = hedge_size whenever the regime is weak; 'prop' = min(hedge_size, long gross): a hedge, never a net short
+            ic_gate=None,         # (threshold, floor): when the learner's walk-forward IC (mean over horizons) is below threshold, run the book at floor x size
+            bag=None,             # list of sizing overrides {min_conv, size_k, top_n, cap}: trade the AVERAGE book of several configurations (bagging)
+            perf_gate=None)       # (window, threshold, floor): when the book's own trailing `window`-day return is below threshold, run at floor x size
 
 
 def load_signals():
@@ -202,6 +205,16 @@ def simulate(by_date, closes, params, refit_every=1, warmup=30, opens=None):
                             chosen.remove(worst)
                             chosen.append((t, c))
                 longs = chosen
+            if p["bag"]:
+                # bagging: average the books of several sizing configurations (same convictions, same learner)
+                books = []
+                for q in p["bag"]:
+                    mc, sk, tn, cp = q.get("min_conv", p["min_conv"]), q.get("size_k", p["size_k"]), q.get("top_n", p["top_n"]), q.get("cap", p["cap"])
+                    el = sorted(((t, c) for t, c in conv.items() if c >= mc), key=lambda tc: -tc[1])[:tn]
+                    books.append({t: min(c * sk, cp) for t, c in el})
+                names = set().union(*books) if books else set()
+                longs = [(t, conv[t]) for t in names]
+                bag_w = {t: sum(bk.get(t, 0.0) for bk in books) / len(books) for t in names}
             if p["inv_vol"]:
                 vols = {}
                 for t, _ in longs:
@@ -213,6 +226,17 @@ def simulate(by_date, closes, params, refit_every=1, warmup=30, opens=None):
                 w = {t: min(c * p["size_k"] * mult[t], p["cap"]) for t, c in longs}
             else:
                 w = {t: min(c * p["size_k"], p["cap"]) for t, c in longs}
+            if p["bag"]:
+                w = dict(bag_w)
+            if p["perf_gate"] and len(curve) >= p["perf_gate"][0]:
+                win, thr, floor = p["perf_gate"]
+                trailing = curve[-1]["portfolio"] / curve[-win]["portfolio"] - 1
+                if trailing < thr:
+                    w = {t: x * floor for t, x in w.items()}
+            if p["ic_gate"] and model is not None:
+                cvs = [v.get("cv_ic") for v in model["horizons"].values() if v.get("cv_ic") is not None]
+                if cvs and float(np.mean(cvs)) < p["ic_gate"][0]:
+                    w = {t: x * p["ic_gate"][1] for t, x in w.items()}
             if p["rank_always"] or p["floor_names"]:
                 w = {t: min(max(x, p["floor_w"]), p["cap"]) for t, x in w.items()}
             # optional short book: the k lowest-conviction names, sized to short_gross in total
@@ -444,6 +468,9 @@ def main():
     ap.add_argument("--round9", action="store_true", help="ninth round: short book and index hedge")
     ap.add_argument("--round10", action="store_true", help="tenth round (2026-09-11): vol targeting, EWMA smoothing, no-learning, drop-one agents; run on _open500 with --exec open --oos-end 2025-09-24")
     ap.add_argument("--round11", action="store_true", help="eleventh round (2026-09-11): round-10 winners combined (vol target x no-events x horizons 10/20 x cap)")
+    ap.add_argument("--round21", action="store_true", help="twenty-first round: self-monitoring exposure gates on a bad regime (2019-23 ledger) and a good one (2024-26)")
+    ap.add_argument("--round20", action="store_true", help="twentieth round: price agents vs graph agents on 2024-26 (after the 2019-23 price-only stress test)")
+    ap.add_argument("--round19", action="store_true", help="nineteenth round: bagging over sizing configs, IC-gated exposure (and the beta-adjusted ledger via --tag _beta)")
     ap.add_argument("--round18d", action="store_true", help="round 18d: fixed-size regime hedge vs a hedge capped at the long gross (never net short)")
     ap.add_argument("--round18b", action="store_true", help="round 18b: SOXX-below-50-day hedge sizes vs simply de-risking the long book in that regime")
     ap.add_argument("--round18", action="store_true", help="eighteenth round (2026-09-11): short book and inverse-SOXX hedges (regime / net-bearish / idle-cash) on the 150-name ledger")
@@ -534,6 +561,32 @@ def main():
                     ("h10_20", dict(v21, horizons=(10, 20)))]
         for a in PIT_AGENTS:
             variants.append((f"drop_{a}", dict(v21, agents_only=tuple(x for x in PIT_AGENTS if x != a))))
+    elif args.round21:
+        # self-monitoring gates, judged on BOTH regimes: the 2019-23 price-agent ledger (where the rules lost money) and 2024-26
+        v23 = {"lam": 150.0, "min_conv": 0.10, "size_k": 0.60, "top_n": 15, "cap": 0.15, "band": 0.30, "vol_target": 0.50, "horizons": (10, 20)}
+        variants = [("base", dict(v23)),
+                    ("perf60_neg_x0.5", dict(v23, perf_gate=(60, 0.0, 0.5))),
+                    ("perf60_m10_x0.0", dict(v23, perf_gate=(60, -0.10, 0.0))),
+                    ("perf120_neg_x0.5", dict(v23, perf_gate=(120, 0.0, 0.5))),
+                    ("icgate_0.00_x0.5", dict(v23, ic_gate=(0.0, 0.5)))]
+    elif args.round20:
+        # which half carries 2024-26: the price agents (which lost money 2019-23) or the graph agents?
+        v23 = {"lam": 150.0, "min_conv": 0.10, "size_k": 0.60, "top_n": 15, "cap": 0.15, "band": 0.30, "vol_target": 0.50, "horizons": (10, 20)}
+        variants = [("all_rule_agents", dict(v23)),
+                    ("price_agents_only", dict(v23, agents_only=("technical", "mean_reversion", "risk", "macro"))),
+                    ("graph_agents_only", dict(v23, agents_only=("supply_chain", "neighbors", "events"))),
+                    ("graph_plus_risk_macro", dict(v23, agents_only=("supply_chain", "neighbors", "events", "risk", "macro")))]
+    elif args.round19:
+        # structural ideas, not knobs: bagging over sizing configs, IC-gated exposure, and (via --tag _beta) a beta-adjusted learning target
+        v23 = {"lam": 150.0, "min_conv": 0.10, "size_k": 0.60, "top_n": 15, "cap": 0.15, "band": 0.30, "vol_target": 0.50, "horizons": (10, 20)}
+        bag5 = [{"min_conv": 0.10}, {"min_conv": 0.075}, {"min_conv": 0.15}, {"top_n": 10}, {"top_n": 20, "cap": 0.10}]
+        bag3 = [{"min_conv": 0.10}, {"size_k": 0.45}, {"size_k": 0.75, "cap": 0.15}]
+        variants = [("v23", dict(v23)),
+                    ("bag5_entry_topn", dict(v23, bag=bag5)),
+                    ("bag3_size", dict(v23, bag=bag3)),
+                    ("icgate_0.00_x0.5", dict(v23, ic_gate=(0.0, 0.5))),
+                    ("icgate_0.02_x0.5", dict(v23, ic_gate=(0.02, 0.5))),
+                    ("icgate_0.02_x0.0", dict(v23, ic_gate=(0.02, 0.0)))]
     elif args.round18d:
         v23 = {"lam": 150.0, "min_conv": 0.10, "size_k": 0.60, "top_n": 15, "cap": 0.15, "band": 0.30, "vol_target": 0.50, "horizons": (10, 20)}
         variants = [("long_only", dict(v23)),
@@ -742,13 +795,13 @@ def main():
                 ("technical_only", {"learn": False, "agents_only": ("technical",)}),
                 ("no_neighbors", {"agents_only": ("supply_chain", "technical", "mean_reversion", "events", "risk", "macro")}),
                 ("price_agents_only", {"agents_only": ("technical", "mean_reversion", "risk", "macro")})]
-    if not args.quick and not (args.round2 or args.round3 or args.round4 or args.round5 or args.round6 or args.round7 or args.round8 or args.round9 or args.round10 or args.round11 or args.round12 or args.round13 or args.round14 or args.round15 or args.round16 or args.round17 or args.round18 or args.round18b or args.round18d):
+    if not args.quick and not (args.round2 or args.round3 or args.round4 or args.round5 or args.round6 or args.round7 or args.round8 or args.round9 or args.round10 or args.round11 or args.round12 or args.round13 or args.round14 or args.round15 or args.round16 or args.round17 or args.round18 or args.round18b or args.round18d or args.round19 or args.round20 or args.round21):
         for combo in itertools.product(*GRID.values()):
             kv = dict(zip(GRID.keys(), combo))
             if kv == {k: BASE[k] for k in GRID}:
                 continue
             variants.append(("+".join(f"{k}={v}" for k, v in kv.items()), kv))
-    tag = ("2" if args.round2 else "3" if args.round3 else "4" if args.round4 else "5" if args.round5 else "6" if args.round6 else "7" if args.round7 else "8" if args.round8 else "9" if args.round9 else "10" if args.round10 else "11" if args.round11 else "12" if args.round12 else "13" if args.round13 else "14" if args.round14 else "15" if args.round15 else "16" if args.round16 else "17" if args.round17 else "18" if args.round18 else "18b" if args.round18b else "18d" if args.round18d else "") + args.tag
+    tag = ("2" if args.round2 else "3" if args.round3 else "4" if args.round4 else "5" if args.round5 else "6" if args.round6 else "7" if args.round7 else "8" if args.round8 else "9" if args.round9 else "10" if args.round10 else "11" if args.round11 else "12" if args.round12 else "13" if args.round13 else "14" if args.round14 else "15" if args.round15 else "16" if args.round16 else "17" if args.round17 else "18" if args.round18 else "18b" if args.round18b else "18d" if args.round18d else "19" if args.round19 else "20" if args.round20 else "21" if args.round21 else "") + args.tag
     run_info = {"kind": "sweep", "tag": tag, "total": len(variants), "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     t0 = time.time()
     results = evaluate(variants, common, args.workers, run_info, pool=pool, data=data)

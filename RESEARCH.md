@@ -468,3 +468,39 @@ cost (−8% return, same full-window Sharpe, OOS drawdown 28.8% → 23.6%, OOS S
 0.40 offers, not new alpha. The code stays in (`HEDGE_SIZE`, `broker.hedge_to`, engine support, dry-run tested) as an
 optional risk overlay for when drawdown matters more than return. Today specifically, SOXX is below its 50-day average
 and rallied — the hedge would have lost.
+
+## 2026-09-11 — round 19: bagging, IC gating, beta-adjusted target (today's ledger `_v24`)
+
+| Variant | Return | Sharpe | Max DD | OOS return | OOS Sharpe | Verdict |
+|---|---|---|---|---|---|---|
+| v2.3 | +731% | 1.78 | 28.8% | +204% | 1.88 | reference |
+| bagging over 3 sizing configs (size 0.45 / 0.60 / 0.75) | +738% | 1.79 | 28.8% | +203% | 1.88 | identical — the sizing choice does not matter |
+| bagging over 5 configs (entry 0.075-0.15, top 10/20) | +730% | 1.83 | 27.3% | +188% | 1.84 | inside the noise band |
+| IC gate: half size when the learner's walk-forward IC < 0 | +425% | 1.49 | 28.8% | +143% | 1.71 | rejected — low recent IC did not predict poor returns in 2024-26 |
+| IC gate < 0.02 → half / → flat | +393% / +84% | 1.44 / 0.60 | | +147% / +56% | 1.74 / 1.04 | rejected |
+| beta-adjusted learning target (`make_beta_ledger.py`, 60-day beta per name) | +710% | 1.94 | **38.7%** | +257% | 2.01 | mixed: better Sharpe and OOS, much deeper drawdown (the learner stops penalising high beta). Worth revisiting together with a drawdown control |
+
+## 2026-09-11 — the regime question: 2019-2023 stress test and price vs graph agents (the most important result so far)
+
+`backtest.py --days 1200 --end 2023-12-29 --agents technical,mean_reversion,risk,macro,events` (the graph has no dated
+signals before 2024, so only the price/rule agents can be replayed there; today's 150 names, i.e. survivorship favours it):
+
+| 2019-04 → 2023-11 (1,170 days) | Return | Sharpe | Max DD | IC 10d |
+|---|---|---|---|---|
+| price agents, v2.3 sizing | **−16.6%** | −0.14 | 42.6% | learned −0.028, equal prior −0.016 |
+| top-15 rank line (always invested) | +99% | 0.44 | | |
+| SOXX / SPY | +170% / +70% | | | |
+
+And on 2024-26 (round 20, ledger `_v24`): price agents only +877% / 1.86 / OOS 2.05 — better than all seven rule agents
+(+731% / 1.78 / 1.88); graph agents only (supply_chain, neighbors, events) +2% / 0.04; graph + risk + macro +509% / 1.67.
+
+**Reading:** the whole 2024-26 edge is the price stack — 20/60-day relative momentum, 5-day reversal, vol, beta × regime —
+and that same stack lost money for five years before the AI boom, with negative IC. The graph agents add nothing
+measurable on their own and slightly dilute the price agents in 2024-26. So the honest description of v2.3 is: a
+relative-momentum machine on the AI supply chain that worked in one regime. That is not curve-fit overfitting (the
+plateau is wide and the OOS year holds), it is regime dependence: the same rules have no proven edge outside 2024-26.
+Consequences: (1) live expectations must be regime-conditional — in a non-boom tape the rules are not known to work;
+(2) the highest-value research is a regime-aware layer that protects in bad regimes without giving the good ones back
+(round 21 tests self-monitoring gates on both ledgers); (3) the graph agents' value, if any, has to come from horizons
+or forms not yet tested (slow information, 60-day scoring), or from the LLM readers — llm_guidance was the only one
+with a measured positive contribution (round 15).

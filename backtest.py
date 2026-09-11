@@ -191,20 +191,22 @@ def publish_progress(payload):
         log.warning("progress publish failed: %s", exc)
 
 
-def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mode="close"):
+def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mode="close", agents=None, end=None):
     """tag: suffix for the output files (state/backtest<tag>.sqlite / backtest_report<tag>.json)
     so a long build can run while sweeps read the default files.
     exec_mode: 'close' = trade at the close the signals were computed on (optimistic);
                'open'  = trade at the NEXT open and hold to the following open (what the live cycle does)."""
     global DB, REPORT, PIT_AGENTS
     extra_mods = [{"momentum": momentum, "sue": sue, "ml_ranker": ml_ranker}[e] for e in extra]
+    if agents:
+        PIT_AGENTS = [a for a in SIM_AGENTS if a in agents]
     PIT_AGENTS = PIT_AGENTS + list(extra)
     if tag:
         DB = config.STATE_DIR / f"backtest{tag}.sqlite"
         REPORT = config.STATE_DIR / f"backtest_report{tag}.json"
     config.STATE_DIR.mkdir(exist_ok=True)
-    run_info = {"kind": "backtest", "tag": tag, "days": days, "exec": exec_mode, "extra": list(extra), "cap": cap,
-                "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    run_info = {"kind": "backtest", "tag": tag, "days": days, "exec": exec_mode, "extra": list(extra), "cap": cap, "end": end,
+                "agents_requested": agents, "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     publish_progress(dict(run_info, status="loading", pct=0.0, message="downloading prices and earnings"))
     try:
         return _run(days, refit_every, warmup, extra_mods, exec_mode, run_info)
@@ -222,13 +224,17 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
         universe = universe_mod.load()
     tickers = list(universe)
     extra = [config.BENCHMARK, "SPY", "^VIX", "^TNX"]
-    closes = market.closes(tickers + extra, lookback_days=int(days * 1.6) + 400, cache=False)
+    end_date = date.fromisoformat(run_info["end"]) if run_info.get("end") else None
+    lookback = int(days * 1.6) + 400 + ((date.today() - end_date).days if end_date else 0)
+    closes = market.closes(tickers + extra, lookback_days=lookback, cache=False)
+    if end_date:
+        closes = closes[closes.index <= pd.Timestamp(end_date)]              # historical window ending before today
     closes = closes[closes[config.BENCHMARK].notna() & closes["SPY"].notna()]   # drop holiday rows that only ^VIX/^TNX filled
     idx = closes.index
     bench = closes[config.BENCHMARK]
     # execution prices: close mode trades at close t; open mode buys at open t+1 and marks at open t+2
     if exec_mode == "open":
-        px = market.opens(tickers + [config.BENCHMARK, "SPY"], lookback_days=int(days * 1.6) + 400).reindex(idx)
+        px = market.opens(tickers + [config.BENCHMARK, "SPY"], lookback_days=lookback).reindex(idx)
         shift = 1
     else:
         px, shift = closes, 0
@@ -279,17 +285,19 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
         window = closes.iloc[: i + 1]
         ctx = {"closes": window, "asof": t, "earnings": earnings, "today": t.isoformat(), "hist": hist, "asof_ts": idx[i]}
         signals = []
-        for a in [technical, mean_reversion, risk, macro] + extra_mods:
+        for a in [m for m in (technical, mean_reversion, risk, macro) if m.NAME in PIT_AGENTS] + extra_mods:
             try:
                 signals += a.run(universe, ctx)
             except Exception as exc:
                 log.warning("%s @ %s: %s", a.NAME, t, exc)
-        try:
-            signals += events.run(universe, ctx)
-        except Exception as exc:
-            log.warning("events @ %s: %s", t, exc)
+        if "events" in PIT_AGENTS:
+            try:
+                signals += events.run(universe, ctx)
+            except Exception as exc:
+                log.warning("events @ %s: %s", t, exc)
         for tk, company in universe.items():
-            for s in (pit.supply_chain(tk, company, t), pit.neighbors(tk, company, t)):
+            for s in ((pit.supply_chain(tk, company, t) if "supply_chain" in PIT_AGENTS else None),
+                      (pit.neighbors(tk, company, t) if "neighbors" in PIT_AGENTS else None)):
                 if s:
                     signals.append(s)
         # record predictions + realised outcomes (known only later; the learner filters by maturity)
@@ -453,6 +461,8 @@ if __name__ == "__main__":
     p.add_argument("--exec", dest="exec_mode", choices=("close", "open"), default="close",
                    help="close = trade at the signal day's close (optimistic); open = trade at the next open like the live cycle")
     p.add_argument("--no-publish", action="store_true", help="do not upload progress (equivalence tests, scratch runs)")
+    p.add_argument("--agents", default=None, help="comma list restricting the replayed roster, e.g. technical,mean_reversion,risk,macro,events (pre-2024 windows have no graph signals)")
+    p.add_argument("--end", default=None, help="ISO date: the window ends here instead of today (historical stress tests)")
     p.add_argument("--horizons", default=None, help="comma list overriding config.HORIZONS for this run, e.g. 10,20,40 (the ledger then carries all of them)")
     p.add_argument("--graph-asof", default=None, help="ISO date: build the supply-chain map from the newest graph snapshot dated <= this (state/graph_snapshots) instead of today's graph")
     args = p.parse_args()
@@ -467,5 +477,5 @@ if __name__ == "__main__":
         print("graph snapshot:", snap)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     r = run(days=args.days, refit_every=args.refit_every, tag=args.tag, extra=tuple(x for x in args.extra.split(",") if x), cap=args.cap,
-            exec_mode=args.exec_mode)
+            exec_mode=args.exec_mode, agents=tuple(x for x in args.agents.split(",") if x) if args.agents else None, end=args.end)
     print(json.dumps({k: v for k, v in r.items() if k != "curve"}, indent=2)[:4000])

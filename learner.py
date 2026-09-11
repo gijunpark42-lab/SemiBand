@@ -49,7 +49,8 @@ PRIOR_STRENGTH = config.LEARNER_PRIOR_STRENGTH      # lambda: pseudo-observation
 LAMBDA_GRID = tuple(config.LEARNER_LAMBDA_GRID)
 CV_MIN_DATES = 8               # walk-forward CV needs this many distinct prediction dates
 WINSOR = 0.15                  # clip realised abnormal returns at +/-15%
-DEFAULT_SCALE = {5: 0.02, 10: 0.03, 20: 0.045}   # typical |abnormal| per horizon until measured
+DEFAULT_SCALE = {5: 0.02, 10: 0.03, 20: 0.045, 40: 0.065, 60: 0.08}   # typical |abnormal| per horizon until measured
+DIR_TERMS = True               # False: drop the direction-only features (7 fewer parameters; research flag, live keeps True)
 MIN_RELIABILITY = 0.02
 
 
@@ -72,7 +73,8 @@ def features(per_agent: dict, names: list) -> np.ndarray:
         d = float(s["direction"] if isinstance(s, dict) else s.direction)
         c = float(s["confidence"] if isinstance(s, dict) else s.confidence)
         x[i] = d * c
-        x[len(names) + i] = d
+        if DIR_TERMS:
+            x[len(names) + i] = d
     return x
 
 

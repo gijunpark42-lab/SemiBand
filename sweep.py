@@ -50,7 +50,8 @@ BASE = dict(min_conv=0.10, size_k=0.30, cap=0.10, gross=1.50, band=0.15, top_n=1
             inv_vol=None,         # per-name risk sizing: weight x clip(ref / 20d vol, 0.5, 2); ref = 'median' (cross-section) or a number (annualised)
             dd_brake=None,        # (trigger, factor, release): book x factor once the sim equity is trigger below its high, until it is back within release
             exit_conv=None,       # hysteresis: a HELD name stays eligible down to this conviction (entry still needs min_conv)
-            min_hold=0)           # a name entered fewer than this many days ago is not dropped unless its conviction turns negative
+            min_hold=0,           # a name entered fewer than this many days ago is not dropped unless its conviction turns negative
+            dir_terms=True)       # False: learner without the direction-only features (fewer parameters)
 
 
 def load_signals():
@@ -70,6 +71,8 @@ def simulate(by_date, closes, params, refit_every=1, warmup=30, opens=None):
     learner.LAMBDA_GRID = (p["lam"],) if p["lam"] else tuple(config.LEARNER_LAMBDA_GRID)
     learner.PRIOR_STRENGTH = p["lam"] or config.LEARNER_PRIOR_STRENGTH
     config.HORIZONS = tuple(p["horizons"])
+    learner.DIR_TERMS = bool(p["dir_terms"])
+    learner._CACHE.clear()                         # features depend on DIR_TERMS
     # agents_only = the roster itself (prior 1/n over those agents), exactly what dropping the agent from config.AGENTS does live
     config.AGENTS = list(p["agents_only"]) if p["agents_only"] else list(PIT_AGENTS)
     dates = sorted(by_date)
@@ -394,6 +397,7 @@ def main():
     ap.add_argument("--round9", action="store_true", help="ninth round: short book and index hedge")
     ap.add_argument("--round10", action="store_true", help="tenth round (2026-09-11): vol targeting, EWMA smoothing, no-learning, drop-one agents; run on _open500 with --exec open --oos-end 2025-09-24")
     ap.add_argument("--round11", action="store_true", help="eleventh round (2026-09-11): round-10 winners combined (vol target x no-events x horizons 10/20 x cap)")
+    ap.add_argument("--round13", action="store_true", help="thirteenth round (2026-09-11): horizons 10/20/40, 20/40, 20, 40 and the learner without direction-only terms (ledger _h40)")
     ap.add_argument("--round12", action="store_true", help="twelfth round (2026-09-11): inverse-vol sizing, drawdown brake, exit hysteresis, min hold, IC-weighted blend (150-name ledger _u150b)")
     ap.add_argument("--tag", default="", help="read state/backtest<tag>.sqlite instead of the default")
     ap.add_argument("--exec", dest="exec_mode", choices=("close", "open"), default="close", help="open = next-open execution (the live rule)")
@@ -476,6 +480,16 @@ def main():
                     ("h10_20", dict(v21, horizons=(10, 20)))]
         for a in PIT_AGENTS:
             variants.append((f"drop_{a}", dict(v21, agents_only=tuple(x for x in PIT_AGENTS if x != a))))
+    elif args.round13:
+        # horizons beyond 20 days (the 5 -> 10/20 change was the biggest win: is 40 better still?) and a leaner learner
+        v23 = {"lam": 150.0, "min_conv": 0.10, "size_k": 0.60, "top_n": 15, "cap": 0.15, "band": 0.30, "vol_target": 0.50, "horizons": (10, 20)}
+        variants = [("v23_h10_20", dict(v23)),
+                    ("h10_20_40", dict(v23, horizons=(10, 20, 40))),
+                    ("h20_40", dict(v23, horizons=(20, 40))),
+                    ("h20", dict(v23, horizons=(20,))),
+                    ("h40", dict(v23, horizons=(40,))),
+                    ("h10_20_nodir", dict(v23, dir_terms=False)),
+                    ("h10_20_40_nodir", dict(v23, horizons=(10, 20, 40), dir_terms=False))]
     elif args.round12:
         # the "Next" list of 2026-09-11 on the 150-name ledger: risk sizing, drawdown brake, hysteresis, minimum hold, IC blend
         v23 = {"lam": 150.0, "min_conv": 0.10, "size_k": 0.60, "top_n": 15, "cap": 0.15, "band": 0.30, "vol_target": 0.50, "horizons": (10, 20)}
@@ -592,13 +606,13 @@ def main():
                 ("technical_only", {"learn": False, "agents_only": ("technical",)}),
                 ("no_neighbors", {"agents_only": ("supply_chain", "technical", "mean_reversion", "events", "risk", "macro")}),
                 ("price_agents_only", {"agents_only": ("technical", "mean_reversion", "risk", "macro")})]
-    if not args.quick and not (args.round2 or args.round3 or args.round4 or args.round5 or args.round6 or args.round7 or args.round8 or args.round9 or args.round10 or args.round11 or args.round12):
+    if not args.quick and not (args.round2 or args.round3 or args.round4 or args.round5 or args.round6 or args.round7 or args.round8 or args.round9 or args.round10 or args.round11 or args.round12 or args.round13):
         for combo in itertools.product(*GRID.values()):
             kv = dict(zip(GRID.keys(), combo))
             if kv == {k: BASE[k] for k in GRID}:
                 continue
             variants.append(("+".join(f"{k}={v}" for k, v in kv.items()), kv))
-    tag = ("2" if args.round2 else "3" if args.round3 else "4" if args.round4 else "5" if args.round5 else "6" if args.round6 else "7" if args.round7 else "8" if args.round8 else "9" if args.round9 else "10" if args.round10 else "11" if args.round11 else "12" if args.round12 else "") + args.tag
+    tag = ("2" if args.round2 else "3" if args.round3 else "4" if args.round4 else "5" if args.round5 else "6" if args.round6 else "7" if args.round7 else "8" if args.round8 else "9" if args.round9 else "10" if args.round10 else "11" if args.round11 else "12" if args.round12 else "13" if args.round13 else "") + args.tag
     run_info = {"kind": "sweep", "tag": tag, "total": len(variants), "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     t0 = time.time()
     results = evaluate(variants, common, args.workers, run_info, pool=pool, data=data)

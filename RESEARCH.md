@@ -317,3 +317,21 @@ partial backtest (~800 Claude calls), graph snapshots accumulating for a point-i
 Test call (llm_guidance, NVDA + AMD): 52-58 s per call, ~$0.32 of subscription budget each, opinions well formed.
 At ~300 calls a day and 2 concurrent workers that is ~2 h 20 min per cycle, so the 05:50 PT start would place orders
 well after the open — the cycle start needs to move to ~03:30 PT (or the worker count up) to keep the open.
+
+## 2026-09-11 — round 13: longer horizons and a leaner learner (ledger `_h40`, scores at 10/20/40 days)
+
+`python backtest.py --days 500 --exec open --tag _h40 --horizons 10,20,40` then `sweep.py --round13`. PBO 0.23.
+
+| Variant | Return | Sharpe | Max DD | OOS return | OOS Sharpe | Verdict |
+|---|---|---|---|---|---|---|
+| **v2.3, horizons 10/20** | +741% | 1.85 | 29.0% | +209% | 1.96 | reference — best on every metric |
+| horizons 10/20/40 | +696% | 1.77 | 28.2% | +189% | 1.83 | rejected |
+| horizons 20/40 | +492% | 1.49 | 33.0% | +122% | 1.31 | rejected |
+| horizon 20 only / 40 only | +502% / +530% | 1.53 / 1.54 | 36.8% / 29.5% | +144% / +133% | 1.47 / 1.43 | rejected — one horizon is not enough |
+| 10/20 without direction-only features | +316% | 1.26 | 28.3% | +86% | 1.12 | rejected clearly — the direction-only terms carry real information |
+| 10/20/40 without direction-only features | +397% | 1.37 | 27.9% | +125% | 1.40 | rejected |
+
+**Decision:** unchanged. Dropping the 5-day horizon was the win; going longer than 20 days is not. The learner's
+two feature blocks (direction × confidence and direction alone) both matter. Rounds 12-13 together: 22 variants, none
+beats v2.3 outside the noise band — v2.3 is the configuration to trade, and further gains have to come from data
+(graph snapshots, more months, the Claude agents' live scoreboard), not from knobs.

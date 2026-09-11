@@ -5,8 +5,9 @@ trust weights, the blend is traded in an Alpaca paper account, and every predict
 10 / 20 trading days later against SOXX (the 5-day horizon was dropped in v2.3: it scored noise). Agents that were right gain weight; agents that
 were wrong lose it. LLM work runs through the Claude Max subscription (`claude -p`) — no API key.
 The universe is every US-listed, Alpaca-tradable name in the earnings-ai supply-chain graph (150 tickers, no market-cap cap since 2026-09-11).
+Live Claude calls use `LLM_MODEL` (Fable 5.1, max effort); research scripts that ever call Claude must use `LLM_MODEL_RESEARCH` (Sonnet, low effort).
 
-## One cycle a day (`cycle.py`, 05:50 PT, orders at the 09:30 ET open)
+## One cycle a day (`cycle.py`, 03:30 PT, orders at the 09:30 ET open)
 
 1. If `state/liquidate_pending` exists, liquidate everything first (fresh start).
 2. Abort if orders without our `sb2-` client-order prefix appeared in the last 24h — another bot is
@@ -44,10 +45,10 @@ python universe.py                          # refresh the universe
 Python: `C:\Users\calif\AppData\Local\Python\bin\python.exe` with `PYTHONUTF8=1`.
 If the local Claude server is down, `agents/llm.py` starts `dev\TradingAgents\local-claude\server.py`.
 
-Scheduled task (weekdays 05:50 PT):
+Scheduled task (weekdays 03:30 PT — the three Claude agents run on Fable 5.1 at max effort, ~55 s per call, ~2 h 20 min per cycle, so the start moved from 05:50 on 2026-09-11):
 
 ```
-schtasks /Create /F /SC WEEKLY /D MON,TUE,WED,THU,FRI /ST 05:50 /TN SemiBand-Cycle /TR "cmd /c cd /d C:\Users\calif\Desktop\Trading && set PYTHONUTF8=1 && C:\Users\calif\AppData\Local\Python\bin\python.exe cycle.py >> state\run_daily.log 2>&1"
+schtasks /Create /F /SC WEEKLY /D MON,TUE,WED,THU,FRI /ST 03:30 /TN SemiBand-Cycle /TR "cmd /c cd /d C:\Users\calif\Desktop\Trading && set PYTHONUTF8=1 && C:\Users\calif\AppData\Local\Python\bin\python.exe cycle.py >> state\run_daily.log 2>&1"
 ```
 
 ## Learning rule (Bayesian ridge stacking, `learner.py`)

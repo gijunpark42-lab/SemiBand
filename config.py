@@ -26,7 +26,8 @@ TRADINGAGENTS_DIR = Path(os.getenv("TRADINGAGENTS_DIR", "C:/Users/calif/dev/Trad
 
 # --- LLM: the local Claude server (Claude Max subscription, no API key) ---
 LLM_URL = os.getenv("LOCAL_CLAUDE_URL", "http://127.0.0.1:8765/v1")
-LLM_MODEL = "claude-fable-5-1"      # user 2026-09-11: Fable 5.1 at max effort for llm_supply / llm_guidance / llm_news (local server maps it)
+LLM_MODEL = "claude-fable-5-1"      # LIVE cycle + guardian only (user 2026-09-11): Fable 5.1 at max effort via the local server
+LLM_MODEL_RESEARCH = "claude-sonnet-5"   # any research / backtest script that calls Claude uses this (cheap, low effort), never Fable max
 LLM_WORKERS = 2                   # concurrent claude -p calls (server allows 2)
 LLM_MAX_TICKERS = 100             # user 2026-09-10: all agents on the whole universe (returns & accuracy first); lower to save subscription budget
 WEB_SEARCH_TICKERS = 30           # llm_news may run a live web search (Claude's built-in WebSearch) for this many names: holdings + highest prelim |conviction|

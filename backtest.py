@@ -260,7 +260,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
         hist[tk] = {"close": c_full, "rets": c_full.pct_change().dropna()}
         if tk != config.BENCHMARK:
             hist[tk]["pair"] = pd.concat([closes[tk].pct_change(), bench_ret_full], axis=1).dropna()
-    end = len(idx) - 21                              # need +20 trading days for scoring
+    end = len(idx) - max(config.HORIZONS) - 1        # need +max(horizon) trading days for scoring
     start = max(260, end - days)
     log.info("backtest %s -> %s (%d days), %d tickers", idx[start].date(), idx[end - 1].date(), end - start, len(tickers))
     run_info = dict(run_info, period={"start": idx[start].date().isoformat(), "end": idx[end - 1].date().isoformat(),
@@ -448,9 +448,12 @@ if __name__ == "__main__":
     p.add_argument("--exec", dest="exec_mode", choices=("close", "open"), default="close",
                    help="close = trade at the signal day's close (optimistic); open = trade at the next open like the live cycle")
     p.add_argument("--no-publish", action="store_true", help="do not upload progress (equivalence tests, scratch runs)")
+    p.add_argument("--horizons", default=None, help="comma list overriding config.HORIZONS for this run, e.g. 10,20,40 (the ledger then carries all of them)")
     p.add_argument("--graph-asof", default=None, help="ISO date: build the supply-chain map from the newest graph snapshot dated <= this (state/graph_snapshots) instead of today's graph")
     args = p.parse_args()
     PUBLISH = not args.no_publish
+    if args.horizons:
+        config.HORIZONS = tuple(int(x) for x in args.horizons.split(","))
     if args.graph_asof:
         snap = snapshots.dir_for(args.graph_asof)
         if snap is None:

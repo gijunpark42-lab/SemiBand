@@ -51,7 +51,9 @@ BASE = dict(min_conv=0.10, size_k=0.30, cap=0.10, gross=1.50, band=0.15, top_n=1
             dd_brake=None,        # (trigger, factor, release): book x factor once the sim equity is trigger below its high, until it is back within release
             exit_conv=None,       # hysteresis: a HELD name stays eligible down to this conviction (entry still needs min_conv)
             min_hold=0,           # a name entered fewer than this many days ago is not dropped unless its conviction turns negative
-            dir_terms=True)       # False: learner without the direction-only features (fewer parameters)
+            dir_terms=True,       # False: learner without the direction-only features (fewer parameters)
+            cost_model="flat",    # 'flat' = config.COST_BPS on every unit of turnover; 'cap' = 5 / 10 / 20 bps by market cap (>50B / 5-50B / <5B)
+            event_hold=None)      # set of ISO dates on which the book is held as is (no rebalance): macro-release rule
 
 
 def load_signals():
@@ -63,6 +65,23 @@ def load_signals():
     for r in rows:
         by_date.setdefault(r["date"], []).append(Signal(r["agent"], r["ticker"], r["direction"], r["confidence"], r["horizon"], ""))
     return by_date
+
+
+_CAPS = None
+
+
+def _cost_bps(ticker, model):
+    """bps per unit of turnover for one name: flat config.COST_BPS, or tiered by today's market cap."""
+    global _CAPS
+    if model != "cap":
+        return config.COST_BPS
+    if _CAPS is None:
+        try:
+            _CAPS = json.loads((config.STATE_DIR / "universe.json").read_text(encoding="utf-8")).get("market_caps", {})
+        except Exception:
+            _CAPS = {}
+    cap = _CAPS.get(ticker) or 0
+    return 5 if cap >= 50e9 else (10 if cap >= 5e9 else 20)
 
 
 def simulate(by_date, closes, params, refit_every=1, warmup=30, opens=None):
@@ -139,8 +158,8 @@ def simulate(by_date, closes, params, refit_every=1, warmup=30, opens=None):
                     banned[t] = k + p["cooldown"]
             conv = {t: c for t, c in conv.items() if banned.get(t, -1) < k}
         # sizing
-        if p["rebalance_every"] > 1 and prev_w and (k - warmup) % p["rebalance_every"]:
-            w = dict(prev_w)                          # hold the book on non-rebalance days
+        if (p["rebalance_every"] > 1 and prev_w and (k - warmup) % p["rebalance_every"]) or (p["event_hold"] and d in p["event_hold"] and prev_w):
+            w = dict(prev_w)                          # hold the book on non-rebalance days / macro-release days
         else:
             floor = p["exit_conv"] if p["exit_conv"] is not None else p["min_conv"]
             eligible = sorted(((t, c) for t, c in conv.items()
@@ -227,6 +246,7 @@ def simulate(by_date, closes, params, refit_every=1, warmup=30, opens=None):
             if t not in w:
                 entry.pop(t, None)
         turnover = sum(abs(w.get(t, 0) - prev_w.get(t, 0)) for t in set(w) | set(prev_w))
+        cost = sum(abs(w.get(t, 0) - prev_w.get(t, 0)) * _cost_bps(t, p["cost_model"]) for t in set(w) | set(prev_w)) / 10_000
         ret = 0.0
         for t, wt in w.items():
             sym = config.BENCHMARK if t == "__HEDGE__" else t
@@ -235,7 +255,7 @@ def simulate(by_date, closes, params, refit_every=1, warmup=30, opens=None):
                 ret += wt * (float(c1 / c0) - 1)
             if wt < 0:
                 ret -= abs(wt) * 0.0002        # ~5%/yr borrow / inverse-ETF drag on the short side
-        ret -= turnover * config.COST_BPS / 10_000
+        ret -= cost
         equity *= 1 + ret
         turnover_total += turnover
         prev_w = w
@@ -247,7 +267,7 @@ def simulate(by_date, closes, params, refit_every=1, warmup=30, opens=None):
     dd = 1 - eq / np.maximum.accumulate(eq)
     n = len(curve)
     out = {
-        "params": {k: (list(v) if isinstance(v, tuple) else v) for k, v in p.items()},
+        "params": {k: (sorted(v) if isinstance(v, (set, frozenset)) else list(v) if isinstance(v, tuple) else v) for k, v in p.items()},
         "rets": [round(float(r), 5) for r in rets],      # daily log returns, kept for the PBO test across variants
         "total_return": round(float(eq[-1] - 1), 4),
         "soxx_return": round(float(curve[-1]["soxx"] - 1), 4),
@@ -397,6 +417,7 @@ def main():
     ap.add_argument("--round9", action="store_true", help="ninth round: short book and index hedge")
     ap.add_argument("--round10", action="store_true", help="tenth round (2026-09-11): vol targeting, EWMA smoothing, no-learning, drop-one agents; run on _open500 with --exec open --oos-end 2025-09-24")
     ap.add_argument("--round11", action="store_true", help="eleventh round (2026-09-11): round-10 winners combined (vol target x no-events x horizons 10/20 x cap)")
+    ap.add_argument("--round14", action="store_true", help="fourteenth round (2026-09-11): cap-tiered costs, low-turnover variants, v2.3 knobs on 150 names, CPI-day hold (ledger _u150b)")
     ap.add_argument("--round13", action="store_true", help="thirteenth round (2026-09-11): horizons 10/20/40, 20/40, 20, 40 and the learner without direction-only terms (ledger _h40)")
     ap.add_argument("--round12", action="store_true", help="twelfth round (2026-09-11): inverse-vol sizing, drawdown brake, exit hysteresis, min hold, IC-weighted blend (150-name ledger _u150b)")
     ap.add_argument("--tag", default="", help="read state/backtest<tag>.sqlite instead of the default")
@@ -480,6 +501,24 @@ def main():
                     ("h10_20", dict(v21, horizons=(10, 20)))]
         for a in PIT_AGENTS:
             variants.append((f"drop_{a}", dict(v21, agents_only=tuple(x for x in PIT_AGENTS if x != a))))
+    elif args.round14:
+        # realism round on the 150-name ledger: cap-tiered costs, low-turnover variants under those costs,
+        # v2.3 knobs re-checked on the wider universe, and a CPI-release-day hold (dates from FRED, known in advance)
+        v23 = {"lam": 150.0, "min_conv": 0.10, "size_k": 0.60, "top_n": 15, "cap": 0.15, "band": 0.30, "vol_target": 0.50, "horizons": (10, 20)}
+        cpi = set(json.loads((config.STATE_DIR / "macro_calendar.json").read_text(encoding="utf-8"))["cpi"])
+        variants = [("v23_flat5", dict(v23)),
+                    ("v23_capcost", dict(v23, cost_model="cap")),
+                    ("capcost_exit0.07", dict(v23, cost_model="cap", exit_conv=0.07)),
+                    ("capcost_hold3", dict(v23, cost_model="cap", min_hold=3)),
+                    ("capcost_band0.5", dict(v23, cost_model="cap", band=0.50)),
+                    ("capcost_rebal2", dict(v23, cost_model="cap", rebalance_every=2)),
+                    ("capcost_top10", dict(v23, cost_model="cap", top_n=10)),
+                    ("vt0.40", dict(v23, vol_target=0.40)),
+                    ("vt0.60", dict(v23, vol_target=0.60)),
+                    ("top20", dict(v23, top_n=20)),
+                    ("minconv0.15", dict(v23, min_conv=0.15)),
+                    ("cpi_hold", dict(v23, event_hold=cpi)),
+                    ("cpi_hold_capcost", dict(v23, event_hold=cpi, cost_model="cap"))]
     elif args.round13:
         # horizons beyond 20 days (the 5 -> 10/20 change was the biggest win: is 40 better still?) and a leaner learner
         v23 = {"lam": 150.0, "min_conv": 0.10, "size_k": 0.60, "top_n": 15, "cap": 0.15, "band": 0.30, "vol_target": 0.50, "horizons": (10, 20)}
@@ -606,13 +645,13 @@ def main():
                 ("technical_only", {"learn": False, "agents_only": ("technical",)}),
                 ("no_neighbors", {"agents_only": ("supply_chain", "technical", "mean_reversion", "events", "risk", "macro")}),
                 ("price_agents_only", {"agents_only": ("technical", "mean_reversion", "risk", "macro")})]
-    if not args.quick and not (args.round2 or args.round3 or args.round4 or args.round5 or args.round6 or args.round7 or args.round8 or args.round9 or args.round10 or args.round11 or args.round12 or args.round13):
+    if not args.quick and not (args.round2 or args.round3 or args.round4 or args.round5 or args.round6 or args.round7 or args.round8 or args.round9 or args.round10 or args.round11 or args.round12 or args.round13 or args.round14):
         for combo in itertools.product(*GRID.values()):
             kv = dict(zip(GRID.keys(), combo))
             if kv == {k: BASE[k] for k in GRID}:
                 continue
             variants.append(("+".join(f"{k}={v}" for k, v in kv.items()), kv))
-    tag = ("2" if args.round2 else "3" if args.round3 else "4" if args.round4 else "5" if args.round5 else "6" if args.round6 else "7" if args.round7 else "8" if args.round8 else "9" if args.round9 else "10" if args.round10 else "11" if args.round11 else "12" if args.round12 else "13" if args.round13 else "") + args.tag
+    tag = ("2" if args.round2 else "3" if args.round3 else "4" if args.round4 else "5" if args.round5 else "6" if args.round6 else "7" if args.round7 else "8" if args.round8 else "9" if args.round9 else "10" if args.round10 else "11" if args.round11 else "12" if args.round12 else "13" if args.round13 else "14" if args.round14 else "") + args.tag
     run_info = {"kind": "sweep", "tag": tag, "total": len(variants), "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     t0 = time.time()
     results = evaluate(variants, common, args.workers, run_info, pool=pool, data=data)

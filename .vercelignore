@@ -1,0 +1,6 @@
+web/node_modules
+web/.next
+state
+graphify-out
+*.sqlite
+*.log

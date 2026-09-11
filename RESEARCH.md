@@ -534,3 +534,63 @@ is a relative-momentum strategy on the AI supply chain with a proven edge only i
   — testable on 2019-26 with the price-agent ledgers already built.
 - The beta-adjusted target (Sharpe 1.94 / OOS 2.01 / drawdown 38.7%) combined with a drawdown control, as the one
   learner change that moved the OOS window.
+
+## 2026-09-11 — data coverage: the earnings-call graph only starts in 2025-10 (read this before judging any graph agent)
+
+Counted from `graph/merged_graph.json` (`quarterly_data` labels, e.g. "NVIDIA Q1 FY2027 (05-20-2026)"):
+
+| Month | 2025-10 | 11 | 12 | 2026-01 | 02 | 03 | 04 | 05 | 06 | 07 | 08 | 09 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| dated statements | 11 | 34 | 31 | 12 | 241 | 58 | 359 | 503 | 182 | 833 | 1,370 | 130 |
+
+Nothing before 2025-10; 85% of the 3,764 rows are dated 2026-04 or later. In the `backtest.sqlite` ledger, `supply_chain`
+has rows only from 2025-10-03 (16.8k) while `technical` / `macro` / `mean_reversion` have ~72k each from 2024-08-13.
+
+**What this invalidates.** The OOS year (2024-09-24 → 2025-09-23) contains no earnings-call data at all, so every OOS verdict
+on `supply_chain`, `neighbors` and `llm_guidance` (rounds 10, 15, 20) was decided with those agents silent. "Graph agents
+add nothing OOS" is a consequence of the data, not evidence about the agents. Their only backtestable window is
+2026-02 → 2026-08, which sits inside the tuning window (weak evidence either way). The real test is the live scoreboard.
+
+**What it does NOT invalidate.** The price/calendar agents (`technical`, `mean_reversion`, `risk`, `macro`, `events`) use
+prices and the earnings calendar, which exist for the whole 500-day window and for 2019-23. Every sizing, learner,
+vol-target and horizon decision rests on them and stands.
+
+**Artifact to fix before the next graph-agent test.** `PointInTimeMap.neighbors` (backtest.py) returns
+`tanh(-0.25) = -0.245` for every name that has edges whenever no neighbour has a dated statement — i.e. a constant
+negative opinion for all of 2024-08 → 2025-09, with confidence set by today's edge count. That is what the ridge
+learned as neighbors' "contrarian" weight (round 10: negative IC; round 16). It should return `None` (like
+`supply_chain` does) when no neighbour has any dated statement as of the day.
+
+**Why the live learner leans on `technical`.** The warm start (`WARM_START_WEIGHT` 0.5) is fit on the ledger above,
+where the price agents have 470 days of scored opinions and the graph agents ~7 months. Under the ridge, sparse agents
+stay near the prior and the always-speaking agents absorb the fit: on the first live day `technical` 0.137 vs prior
+0.091, `supply_chain` −0.046, `macro` −0.043. As live rows accumulate (daily refits, 90-day half-life, warm start at
+half weight) the graph and Claude agents earn their weights from live scores; expect ~60-90 scored days before their
+live evidence outweighs the warm start.
+
+**Options.** (a) Backfill 2024-25 transcripts in earnings-ai (Alpha Vantage historical quarters, ~150 names × 6 quarters
+≈ 900 calls; then `enrich`) — makes the OOS year graph-covered and is the only way to backtest these agents honestly;
+earnings-ai work, the user's call. (b) Skip the backtest and pre-register live decision rules (per-agent live IC after
+60 scored days; Q5−Q1 spread on the dashboard). Until (a) happens, (b) is the validation.
+
+## 2026-09-11 — round 22: the neighbors point-in-time artifact, fixed (ledgers `_base` / `_nbfix`, 500 days, next-open, daily refits)
+
+Question from the user: the live weights tilt sharply to `technical` — is that wrong? Two things were tested at once: the
+artifact above (`PointInTimeMap.neighbors` now returns `None` when no neighbour has a dated statement as of the day) and
+whether removing it changes where the learner puts its weight.
+
+| | Return | Sharpe | Max DD | Turnover/day | OOS Sharpe (monthly) | IS Sharpe | IC 10d learned | neighbors rows | final w_conf technical 10d / 20d |
+|---|---|---|---|---|---|---|---|---|---|
+| before (fresh graph, today) | +731% | 1.78 | 28.8% | 41% | 2.03 | 1.54 | 0.017 | 55,500 from 2024-08 | 0.265 / 0.250 |
+| **neighbors fix** | +687% | 1.73 | 28.1% | 40% | 1.88 | 1.54 | 0.014 | 14,490 from 2025-10 | 0.262 / 0.247 |
+
+- The fake rows were worth a little: neighbors' constant −0.245 with confidence = today's edge count acted as a "has many
+  edges in today's graph" factor over the OOS year, a mild look-ahead. Removing it costs −6% return / −0.05 Sharpe / −0.15
+  OOS Sharpe — inside the noise band, and the honest number. **Adopted** (correctness, not performance).
+- **The technical tilt is not the artifact.** With the fake rows gone the final technical weight is unchanged (0.26 → 0.26).
+  It is what the data supports: `technical` has 470 days of positive IC (0.049 / 0.061); `supply_chain` has the highest IC of
+  any agent (0.099 / 0.134) but only ~7 months of rows, so the ridge (λ 150) keeps it near the prior. Forcing weights was
+  tested in round 16 and destroys the edge, so nothing is capped. The tilt will fade only as live scored months accumulate.
+- Warm start: `state/backtest.sqlite` (live) should be replaced by the `_nbfix` ledger (backup the old one as
+  `backtest_prenbfix.sqlite`) so the live learner stops warming up on the fake rows. Not done automatically from this
+  session (shared live state); see the commit message / report for the copy commands.

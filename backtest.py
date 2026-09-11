@@ -133,6 +133,11 @@ class PointInTimeMap:
         cust, supp = self.customers.get(company, set()), self.suppliers.get(company, set())
         if not cust and not supp:
             return None
+        # No neighbour has said anything dated on or before this day (the graph's statements start 2025-10):
+        # silent, like supply_chain — otherwise every name with edges gets the same tanh(-0.25) for 14 months
+        # and the learner fits that constant (RESEARCH.md, "data coverage").
+        if not any(d <= asof for nb in cust | supp for d, _ in self.signals.get(nb, [])):
+            return None
 
         def heat(nb):
             rec = self.recent(nb, asof, 90)

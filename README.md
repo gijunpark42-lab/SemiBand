@@ -68,6 +68,9 @@ and time-filtered supply_chain / neighbors) day by day, scores every opinion aga
 the learner every day (like the live cycle) on outcomes known at the time, and simulates the live sizing rules plus a top-15 rank portfolio.
 Output: `state/backtest_report.json` (published to the dashboard) and `state/backtest.sqlite`, which warm-starts the
 live learner at half weight (`WARM_START_WEIGHT`). Not simulated: fundamentals (no point-in-time data) and the Claude agents.
+**Data caveat:** the earnings-ai graph's dated statements start in 2025-10 (85% from 2026-04 on), so `supply_chain` /
+`neighbors` are silent for the whole OOS year (2024-09 → 2025-09); backtest verdicts on the graph agents rest on 2026-02 → 08
+only, and their real test is the live scoreboard (RESEARCH.md, "data coverage").
 
 - `--exec open` trades at the NEXT open and marks open-to-open, which is what the live cycle actually gets; the default
   `close` mode trades at the close the signals were computed on and is optimistic (it books the overnight move).

@@ -214,6 +214,9 @@ def headlines(symbol, limit=12):
     return items[:limit]
 
 
+_FRED = {}   # (series_id, day) -> result, so a backtest does not re-read the daily file every simulated day
+
+
 def fred_latest(series_id, days=400):
     """Latest value and the value ~20 observations earlier for a FRED series; None without a key."""
     import json
@@ -222,9 +225,13 @@ def fred_latest(series_id, days=400):
     key = os.getenv("FRED_API_KEY")
     if not key:
         return None
+    memo = (series_id, date.today().isoformat())
+    if memo in _FRED:
+        return _FRED[memo]
     path = _daily_json(f"fred_{series_id}")
     if path.exists():
-        return json.loads(path.read_text(encoding="utf-8"))
+        _FRED[memo] = json.loads(path.read_text(encoding="utf-8"))
+        return _FRED[memo]
     start = (date.today() - timedelta(days=days)).isoformat()
     url = (f"https://api.stlouisfed.org/fred/series/observations?series_id={series_id}&api_key={key}"
            f"&file_type=json&observation_start={start}")

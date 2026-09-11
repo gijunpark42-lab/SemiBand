@@ -52,6 +52,7 @@ import robustness
 import universe as universe_mod
 from agents import macro, mean_reversion, ml_ranker, momentum, risk, sue, technical, events
 from agents.base import Signal, clip
+from agents import indicators
 from agents.supply_chain import _load, _POSITIVE
 from agents.neighbors import _EXPAND
 
@@ -61,6 +62,8 @@ REPORT = config.STATE_DIR / "backtest_report.json"
 PROGRESS = config.STATE_DIR / "backtest_progress.json"
 PROGRESS_BLOB = "semiband-v2/backtest_progress.json"
 CURVE_POINTS = 300                                   # the live page gets the curve thinned to this many points
+PROGRESS_EVERY = 5                                   # publish progress every N traded days (an upload costs ~1 s)
+PUBLISH = True                                       # --no-publish: keep test runs off the website's Backtest tab
 _DATE = re.compile(r"\((\d{2})-(\d{2})-(\d{4})\)")
 SIM_AGENTS = ["supply_chain", "neighbors", "technical", "mean_reversion", "events", "risk", "macro"]   # everything the replay can compute; all recorded
 PIT_AGENTS = [a for a in SIM_AGENTS if a in config.AGENTS]   # the roster the learner and the sizing see = the live roster minus the unsimulated agents
@@ -173,6 +176,8 @@ def thin(curve, n=CURVE_POINTS):
 
 def publish_progress(payload):
     """state/backtest_progress.json + the Blob copy the website polls. Never raises."""
+    if not PUBLISH:
+        return
     try:
         payload = dict(payload, updated=datetime.now(timezone.utc).isoformat(timespec="seconds"))
         body = json.dumps(payload, ensure_ascii=False)
@@ -226,6 +231,8 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
     earnings = market.earnings(tickers, limit=40)
     pit = PointInTimeMap()
 
+    # RSI over the whole history once per ticker (causal, so identical to the day-by-day prefix computation)
+    indicators.PRECOMPUTED = {tk: indicators.rsi_series(closes[tk].dropna()) for tk in tickers if tk in closes.columns}
     _init_db()
     ledger.DB = DB                                   # learner reads through ledger.connect()
     learner.MODEL_FILE = config.STATE_DIR / "backtest_model.json"
@@ -329,7 +336,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
                       "spy": float(px["SPY"].iloc[i + 1 + shift] / px["SPY"].iloc[base])})
         if (i - start) % 50 == 0:
             log.info("  %s equity %.3f soxx %.3f (%.0fs)", t, equity, curve[-1]["soxx"], time.time() - t0)
-        if (i - start) % refit_every == 0 or i == end - 1:
+        if (i - start) % PROGRESS_EVERY == 0 or i == end - 1:
             done, total, elapsed = i - start + 1, end - start, time.time() - t0
             publish_progress(dict(run_info, status="running", pct=round(done / total, 4), day=done, total_days=total,
                                   date=t.isoformat(), elapsed_s=round(elapsed), eta_s=round(elapsed / done * (total - done)),
@@ -415,7 +422,9 @@ if __name__ == "__main__":
     p.add_argument("--cap", type=float, default=None, help="override MAX_MARKET_CAP (e.g. 1e13 for no cap)")
     p.add_argument("--exec", dest="exec_mode", choices=("close", "open"), default="close",
                    help="close = trade at the signal day's close (optimistic); open = trade at the next open like the live cycle")
+    p.add_argument("--no-publish", action="store_true", help="do not upload progress (equivalence tests, scratch runs)")
     args = p.parse_args()
+    PUBLISH = not args.no_publish
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     r = run(days=args.days, refit_every=args.refit_every, tag=args.tag, extra=tuple(x for x in args.extra.split(",") if x), cap=args.cap,
             exec_mode=args.exec_mode)

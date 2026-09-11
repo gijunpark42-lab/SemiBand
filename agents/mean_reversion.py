@@ -15,12 +15,7 @@ from agents.base import Signal, clip
 NAME = "mean_reversion"
 
 
-def _rsi(series: pd.Series, n=14):
-    delta = series.diff()
-    up = delta.clip(lower=0).rolling(n).mean()
-    down = (-delta.clip(upper=0)).rolling(n).mean()
-    rs = up / down.replace(0, float("nan"))
-    return float((100 - 100 / (1 + rs)).iloc[-1])
+from agents.indicators import rsi as _rsi
 
 
 def run(universe: dict, ctx: dict) -> list[Signal]:

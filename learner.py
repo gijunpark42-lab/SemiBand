@@ -115,7 +115,7 @@ def _load_source(db_path, sw, horizon, names):
         keys = sorted(groups)
         X = np.array([features(groups[k]["agents"], names) for k in keys]) if keys else np.zeros((0, 2 * len(names)))
         y = np.array([float(np.clip(groups[k]["y"], -WINSOR, WINSOR)) for k in keys])
-        for k in [k for k in _CACHE if k[:3] != key[:3]]:   # drop stale versions of this file (or other files)
+        for k in [k for k in _CACHE if k[0] == key[0] and k[:3] != key[:3]]:   # drop stale versions of this file only
             del _CACHE[k]
         _CACHE[key] = (X, y, np.array([k[0] for k in keys]))
     X, y, dates = _CACHE[key]
@@ -146,8 +146,13 @@ def dataset(horizon: int, names: list, asof=None):
     return X[order], y[order], list(dates[order]), sw[order]
 
 
+_ORD = {}   # ISO date -> ordinal; a fit sees the same few hundred dates tens of thousands of times
+
+
 def decay(dates, today):
-    t = np.array([(today - date.fromisoformat(d)).days for d in dates], dtype=float)
+    uniq, inv = np.unique(np.asarray(dates, dtype=str), return_inverse=True)
+    ords = np.array([_ORD.get(d) or _ORD.setdefault(d, date.fromisoformat(d).toordinal()) for d in uniq], dtype=float)
+    t = today.toordinal() - ords[inv]
     return np.power(0.5, t / HALF_LIFE_DAYS)
 
 

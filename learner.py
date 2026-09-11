@@ -76,18 +76,27 @@ def features(per_agent: dict, names: list) -> np.ndarray:
     return x
 
 
-def _rows(db_path, horizon, asof):
-    """Scored rows from one ledger file; with asof, only predictions whose outcome was known by then."""
+def _rows(db_path, horizon, asof, since_scored=None, dates=None):
+    """Scored rows from one ledger file. since_scored: only rows scored on/after that date (what changed since
+    the last load); dates: only these prediction dates. With asof, only predictions whose outcome was known by then."""
     import sqlite3
     if not db_path.exists():
         return []
     con = sqlite3.connect(db_path)
     con.row_factory = sqlite3.Row
+    base = ("SELECT p.date, p.ticker, p.agent, p.direction, p.confidence, s.abnormal, s.scored_date "
+            "FROM predictions p JOIN scores s ON s.prediction_id = p.id AND s.horizon = ?")
     try:
-        rows = con.execute(
-            "SELECT p.date, p.ticker, p.agent, p.direction, p.confidence, s.abnormal "
-            "FROM predictions p JOIN scores s ON s.prediction_id = p.id AND s.horizon = ?",
-            (horizon,)).fetchall()
+        if dates is not None:
+            rows = []
+            dates = sorted(dates)
+            for k in range(0, len(dates), 400):                       # SQLite parameter limit
+                chunk = dates[k:k + 400]
+                rows += con.execute(base + " WHERE p.date IN (%s)" % ",".join("?" * len(chunk)), (horizon, *chunk)).fetchall()
+        elif since_scored is not None:
+            rows = con.execute(base + " WHERE s.scored_date >= ?", (horizon, since_scored)).fetchall()
+        else:
+            rows = con.execute(base, (horizon,)).fetchall()
     finally:
         con.close()
     if asof is not None:
@@ -96,7 +105,19 @@ def _rows(db_path, horizon, asof):
     return rows
 
 
-_CACHE = {}   # (db path, mtime, size, horizon, names) -> (X, y, dates, sw) for the whole file; sliced by asof below
+def _touched_dates(db_path, horizon, since_scored):
+    """Prediction dates that received scores on/after since_scored (uses the scores(scored_date) index)."""
+    import sqlite3
+    con = sqlite3.connect(db_path)
+    try:
+        return [r[0] for r in con.execute(
+            "SELECT DISTINCT p.date FROM scores s JOIN predictions p ON p.id = s.prediction_id "
+            "WHERE s.horizon = ? AND s.scored_date >= ?", (horizon, since_scored)).fetchall()]
+    finally:
+        con.close()
+
+
+_CACHE = {}   # (db path, horizon, names) -> {stamp, by_date: {date: (X_d, y_d)}, last_scored, arrays}
 
 
 def _stamp(path):
@@ -105,20 +126,44 @@ def _stamp(path):
 
 
 def _load_source(db_path, sw, horizon, names):
-    """All scored rows of one ledger file as arrays (cached until the file changes)."""
-    key = _stamp(db_path) + (horizon, tuple(names))
-    if key not in _CACHE:
-        groups = {}
-        for r in _rows(db_path, horizon, None):
-            g = groups.setdefault((r["date"], r["ticker"]), {"agents": {}, "y": r["abnormal"]})
+    """All scored rows of one ledger file as arrays, one row per (date, ticker), ordered by (date, ticker).
+
+    Cached per file. When the file changed since the last call, only the prediction dates that received new
+    scores are re-read and rebuilt (a backtest adds one date per day, live scoring a few matured dates per
+    cycle), so a refit costs O(new rows) instead of rebuilding tens of thousands of feature rows every day.
+    The arrays are the same values in the same order as a full rebuild would give."""
+    key = (str(db_path), horizon, tuple(names))
+    stamp = _stamp(db_path)[1:]
+    ent = _CACHE.get(key)
+    if ent is None:
+        ent = _CACHE[key] = {"stamp": None, "by_date": {}, "last_scored": None, "arrays": None}
+    if ent["stamp"] != stamp:
+        if ent["last_scored"] is None:
+            rows = _rows(db_path, horizon, None)
+        else:
+            touched = _touched_dates(db_path, horizon, ent["last_scored"])
+            rows = _rows(db_path, horizon, None, dates=touched) if touched else []
+        per = {}
+        for r in rows:
+            g = per.setdefault(r["date"], {}).setdefault(r["ticker"], {"agents": {}, "y": r["abnormal"]})
             g["agents"][r["agent"]] = {"direction": r["direction"], "confidence": r["confidence"]}
-        keys = sorted(groups)
-        X = np.array([features(groups[k]["agents"], names) for k in keys]) if keys else np.zeros((0, 2 * len(names)))
-        y = np.array([float(np.clip(groups[k]["y"], -WINSOR, WINSOR)) for k in keys])
-        for k in [k for k in _CACHE if k[0] == key[0] and k[:3] != key[:3]]:   # drop stale versions of this file only
-            del _CACHE[k]
-        _CACHE[key] = (X, y, np.array([k[0] for k in keys]))
-    X, y, dates = _CACHE[key]
+            if ent["last_scored"] is None or r["scored_date"] > ent["last_scored"]:
+                ent["last_scored"] = r["scored_date"]
+        for d, groups in per.items():
+            tks = sorted(groups)
+            ent["by_date"][d] = (np.array([features(groups[tk]["agents"], names) for tk in tks]),
+                                 np.array([float(np.clip(groups[tk]["y"], -WINSOR, WINSOR)) for tk in tks]))
+        ent["stamp"], ent["arrays"] = stamp, None
+    if ent["arrays"] is None:
+        ds = sorted(ent["by_date"])
+        if ds:
+            X = np.concatenate([ent["by_date"][d][0] for d in ds])
+            y = np.concatenate([ent["by_date"][d][1] for d in ds])
+            dates = np.concatenate([np.full(len(ent["by_date"][d][1]), d) for d in ds])
+        else:
+            X, y, dates = np.zeros((0, 2 * len(names))), np.zeros(0), np.zeros(0, dtype=str)
+        ent["arrays"] = (X, y, dates)
+    X, y, dates = ent["arrays"]
     return X, y, dates, np.full(len(y), sw)
 
 
@@ -149,11 +194,21 @@ def dataset(horizon: int, names: list, asof=None):
 _ORD = {}   # ISO date -> ordinal; a fit sees the same few hundred dates tens of thousands of times
 
 
-def decay(dates, today):
+def _ordinals(dates):
+    """Day ordinals (float) for a sequence of ISO dates, parsing each distinct date once."""
+    if len(dates) == 0:
+        return np.zeros(0)
     uniq, inv = np.unique(np.asarray(dates, dtype=str), return_inverse=True)
-    ords = np.array([_ORD.get(d) or _ORD.setdefault(d, date.fromisoformat(d).toordinal()) for d in uniq], dtype=float)
-    t = today.toordinal() - ords[inv]
-    return np.power(0.5, t / HALF_LIFE_DAYS)
+    o = np.array([_ORD.get(d) or _ORD.setdefault(d, date.fromisoformat(d).toordinal()) for d in uniq], dtype=float)
+    return o[inv]
+
+
+def decay_ord(ords, today):
+    return np.power(0.5, (today.toordinal() - ords) / HALF_LIFE_DAYS)
+
+
+def decay(dates, today):
+    return decay_ord(_ordinals(dates), today)
 
 
 def ridge(X, y, d, lam, w0):
@@ -175,23 +230,23 @@ def ic(pred, y):
     return float(np.corrcoef(rp, ry)[0, 1])
 
 
-def walk_forward_ic(X, y, dates, w0, lam, today, horizon, last_k=10):
+def walk_forward_ic(X, y, dates, w0, lam, today, horizon, last_k=10, ords=None):
     """Mean IC over the last_k dates, each predicted from a model that only saw rows whose
     outcome was already known on that date (prediction date + horizon), so overlapping
     return windows cannot leak the answer into the training set."""
     uniq = sorted(set(dates))
     if len(uniq) < CV_MIN_DATES:
         return None
-    dates_arr = np.array(dates)
+    ords = _ordinals(dates) if ords is None else ords
     gap = int(math.ceil(horizon * 1.45)) + 1
     ics = []
     for dt in uniq[-last_k:]:
-        cutoff = (date.fromisoformat(dt) - timedelta(days=gap)).isoformat()
-        train = dates_arr <= cutoff
-        test = dates_arr == dt
+        d0 = date.fromisoformat(dt)
+        train = ords <= float((d0 - timedelta(days=gap)).toordinal())   # same rows as the ISO-string comparison
+        test = ords == float(d0.toordinal())
         if train.sum() < 20 or test.sum() < 5:
             continue
-        w = ridge(X[train], y[train], decay(list(dates_arr[train]), date.fromisoformat(dt)), lam, w0)
+        w = ridge(X[train], y[train], decay_ord(ords[train], d0), lam, w0)
         ics.append(ic(X[test] @ w, y[test]))
     return float(np.mean(ics)) if ics else None
 
@@ -206,17 +261,18 @@ def fit(today: date | None = None, asof: date | None = None) -> dict:
     model = {"fitted": today.isoformat(), "agents": names, "horizons": {}}
     for h in config.HORIZONS:
         X, y_raw, dates, sw = dataset(h, names, asof)
+        ords = _ordinals(dates)
         scale = float(np.std(y_raw)) if len(y_raw) >= 40 else DEFAULT_SCALE[h]
         scale = max(scale, 0.01)
         y = y_raw / scale
         lam, cv = PRIOR_STRENGTH, None
         if len(set(dates)) >= CV_MIN_DATES:
-            scores = {l: walk_forward_ic(X, y, dates, w0, l, today, h) for l in LAMBDA_GRID}
+            scores = {l: walk_forward_ic(X, y, dates, w0, l, today, h, ords=ords) for l in LAMBDA_GRID}
             scores = {l: s for l, s in scores.items() if s is not None}
             if scores:
                 lam = max(scores, key=scores.get)
                 cv = scores[lam]
-        d = decay(dates, today) * sw if len(dates) else np.zeros(0)
+        d = decay_ord(ords, today) * sw if len(dates) else np.zeros(0)
         w = ridge(X, y, d, lam, w0)
         agent_ic = {}
         for i, a in enumerate(names):

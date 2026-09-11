@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS scores(
     prediction_id INTEGER, horizon INTEGER, scored_date TEXT,
     ret REAL, bench_ret REAL, abnormal REAL, hit INTEGER,
     PRIMARY KEY(prediction_id, horizon));
+CREATE INDEX IF NOT EXISTS scores_scored_date ON scores(scored_date);
 CREATE TABLE IF NOT EXISTS weights(date TEXT, agent TEXT, weight REAL, PRIMARY KEY(date, agent));
 CREATE TABLE IF NOT EXISTS hedge_weights(date TEXT, agent TEXT, weight REAL, PRIMARY KEY(date, agent));
 CREATE TABLE IF NOT EXISTS cycles(

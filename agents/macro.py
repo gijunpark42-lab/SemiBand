@@ -68,13 +68,20 @@ def run(universe: dict, ctx: dict) -> list[Signal]:
     if any(c not in closes.columns for c in EXTRA):
         closes = market.closes(list(universe) + [config.BENCHMARK] + EXTRA)
     r, why = regime(closes)
-    bench_ret = closes[config.BENCHMARK].pct_change()
+    hist, asof = ctx.get("hist"), ctx.get("asof_ts")   # backtest fast path: precomputed (name, SOXX) return pairs
+    bench_ret = closes[config.BENCHMARK].pct_change() if hist is None else None
     out = []
     for ticker in universe:
-        if ticker not in closes.columns:
-            continue
-        rets = closes[ticker].pct_change()
-        pair = pd.concat([rets, bench_ret], axis=1).dropna().iloc[-60:]
+        if hist is not None:
+            h = hist.get(ticker)
+            if h is None or "pair" not in h:
+                continue
+            pair = h["pair"].loc[:asof].iloc[-60:]
+        else:
+            if ticker not in closes.columns:
+                continue
+            rets = closes[ticker].pct_change()
+            pair = pd.concat([rets, bench_ret], axis=1).dropna().iloc[-60:]
         if len(pair) < 40:
             continue
         cov = pair.cov().iloc[0, 1]

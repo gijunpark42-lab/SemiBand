@@ -243,6 +243,23 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
     live_agents = config.AGENTS
     config.AGENTS = PIT_AGENTS                       # the prior and the sizing see only the simulated agents
 
+    # numpy views of the price frames: the day loop reads single cells thousands of times (same float64 values as .iloc)
+    C = closes.to_numpy(dtype=float)
+    col = {tk: j for j, tk in enumerate(closes.columns)}
+    B = C[:, col[config.BENCHMARK]]
+    P = px.to_numpy(dtype=float) if px is not closes else C
+    pcol = {tk: j for j, tk in enumerate(px.columns)}
+    # per-ticker full-history series for risk / macro (the agents slice them as of each day: same pandas
+    # operations on the same values as recomputing from the day's prefix, computed once instead of daily)
+    bench_ret_full = closes[config.BENCHMARK].pct_change()
+    hist = {}
+    for tk in list(tickers) + [config.BENCHMARK]:
+        if tk not in closes.columns:
+            continue
+        c_full = closes[tk].dropna()
+        hist[tk] = {"close": c_full, "rets": c_full.pct_change().dropna()}
+        if tk != config.BENCHMARK:
+            hist[tk]["pair"] = pd.concat([closes[tk].pct_change(), bench_ret_full], axis=1).dropna()
     end = len(idx) - 21                              # need +20 trading days for scoring
     start = max(260, end - days)
     log.info("backtest %s -> %s (%d days), %d tickers", idx[start].date(), idx[end - 1].date(), end - start, len(tickers))
@@ -260,7 +277,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
     for i in range(start, end):
         t = idx[i].date()
         window = closes.iloc[: i + 1]
-        ctx = {"closes": window, "asof": t, "earnings": earnings, "today": t.isoformat()}
+        ctx = {"closes": window, "asof": t, "earnings": earnings, "today": t.isoformat(), "hist": hist, "asof_ts": idx[i]}
         signals = []
         for a in [technical, mean_reversion, risk, macro] + extra_mods:
             try:
@@ -276,20 +293,22 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
                 if s:
                     signals.append(s)
         # record predictions + realised outcomes (known only later; the learner filters by maturity)
-        last = {tk: float(window[tk].iloc[-1]) for tk in tickers if not pd.isna(window[tk].iloc[-1])}
+        last = {tk: float(C[i, col[tk]]) for tk in tickers if not np.isnan(C[i, col[tk]])}
         ledger.add_predictions(t.isoformat(), signals, last)
         with ledger.connect() as con:
             rows = con.execute("SELECT id, ticker, direction FROM predictions WHERE date = ?", (t.isoformat(),)).fetchall()
+            batch = []
             for r in rows:
+                j = col[r["ticker"]]
                 for h in config.HORIZONS:
-                    c0, c1 = closes[r["ticker"]].iloc[i], closes[r["ticker"]].iloc[i + h]
-                    b0, b1 = bench.iloc[i], bench.iloc[i + h]
-                    if any(pd.isna(v) for v in (c0, c1, b0, b1)):
+                    c0, c1 = C[i, j], C[i + h, j]
+                    b0, b1 = B[i], B[i + h]
+                    if any(np.isnan(v) for v in (c0, c1, b0, b1)):
                         continue
                     abn = float(c1 / c0 - 1) - float(b1 / b0 - 1)
                     hit = None if abs(r["direction"]) < 0.1 else int((r["direction"] > 0) == (abn > 0))
-                    con.execute("INSERT OR REPLACE INTO scores VALUES (?,?,?,?,?,?,?)",
-                                (r["id"], h, idx[i + h].date().isoformat(), float(c1 / c0 - 1), float(b1 / b0 - 1), abn, hit))
+                    batch.append((r["id"], h, idx[i + h].date().isoformat(), float(c1 / c0 - 1), float(b1 / b0 - 1), abn, hit))
+            con.executemany("INSERT OR REPLACE INTO scores VALUES (?,?,?,?,?,?,?)", batch)
         if i - start < warmup:
             continue
         if model is None or (i - start) % refit_every == 0:
@@ -299,9 +318,10 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
         # IC of today's convictions against the 10-day outcome (evaluated later in the loop's own scores)
         y10 = {}
         for tk in conv:
-            c0, c1 = closes[tk].iloc[i], closes[tk].iloc[i + 10]
-            b0, b1 = bench.iloc[i], bench.iloc[i + 10]
-            if not any(pd.isna(v) for v in (c0, c1, b0, b1)):
+            j = col[tk]
+            c0, c1 = C[i, j], C[i + 10, j]
+            b0, b1 = B[i], B[i + 10]
+            if not any(np.isnan(v) for v in (c0, c1, b0, b1)):
                 y10[tk] = float(c1 / c0 - 1) - float(b1 / b0 - 1)
         common = [tk for tk in y10 if tk in conv_prior]
         if len(common) >= 10:
@@ -323,8 +343,9 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
                 w[tk] = prev_w[tk]
         turnover = sum(abs(w.get(tk, 0) - prev_w.get(tk, 0)) for tk in set(w) | set(prev_w))
         def day_ret(tk):
-            c0, c1 = px[tk].iloc[i + shift], px[tk].iloc[i + 1 + shift]
-            return None if (pd.isna(c0) or pd.isna(c1) or c0 <= 0) else float(c1 / c0) - 1
+            j = pcol[tk]
+            c0, c1 = P[i + shift, j], P[i + 1 + shift, j]
+            return None if (np.isnan(c0) or np.isnan(c1) or c0 <= 0) else float(c1 / c0) - 1
         ret = sum(w_i * r for tk, w_i in w.items() if (r := day_ret(tk)) is not None)
         ret -= turnover * config.COST_BPS / 10_000
         equity *= 1 + ret

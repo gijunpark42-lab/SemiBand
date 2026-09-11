@@ -274,3 +274,13 @@ in 2026 (a mild look-ahead in universe construction that only fresh snapshots wi
 small caps; with the graph data covering the whole US-listed chain, breadth is the safer bet going forward. Next steps are
 listed under "Next" above; progress uploads to Vercel are now final-only (`PROGRESS_UPLOAD`), watch runs locally with
 `watch_backtest.cmd`.
+
+## 2026-09-11 — backtest speed, round 2 (results bit-identical)
+
+Verified with a frozen price pickle fed to both code versions (the earlier 1e-8 differences were yfinance adjustment
+factors changing between two downloads, not code): predictions, scores, equity curve, report and final model all
+identical. Changes: the learner rebuilds only the prediction dates that received new scores (an index on
+scores.scored_date; a backtest adds one date per day instead of re-featuring every row), date ordinals computed once
+per fit, the day loop reads prices from numpy views and writes scores in one executemany, and `risk` / `macro`
+slice precomputed full-history return series as of the day (same pandas operations on the same values; the live
+agents keep the original path when no history is passed). Same 60-day loop: 173 s (yesterday morning) → 76 s → 39 s.

@@ -24,15 +24,30 @@ def _drawdown(series: pd.Series) -> float:
 
 def run(universe: dict, ctx: dict) -> list[Signal]:
     closes: pd.DataFrame = ctx["closes"]
-    bench_dd = _drawdown(closes[config.BENCHMARK].dropna())
+    # backtest fast path: ctx["hist"] holds each name's full-history close / return series and ctx["asof_ts"] the
+    # day; slicing them "as of" the day gives exactly the series the prefix computation below would give
+    hist, asof = ctx.get("hist"), ctx.get("asof_ts")
+    if hist is not None:
+        bench_dd = _drawdown(hist[config.BENCHMARK]["close"].loc[:asof])
+    else:
+        bench_dd = _drawdown(closes[config.BENCHMARK].dropna())
     vols, dds = {}, {}
     for ticker in universe:
-        if ticker not in closes.columns:
-            continue
-        c = closes[ticker].dropna()
-        if len(c) < 65:
-            continue
-        rets = c.pct_change().dropna()
+        if hist is not None:
+            h = hist.get(ticker)
+            if h is None:
+                continue
+            c = h["close"].loc[:asof]
+            if len(c) < 65:
+                continue
+            rets = h["rets"].loc[:asof]
+        else:
+            if ticker not in closes.columns:
+                continue
+            c = closes[ticker].dropna()
+            if len(c) < 65:
+                continue
+            rets = c.pct_change().dropna()
         vols[ticker] = float(rets.iloc[-20:].std() * math.sqrt(252))
         dds[ticker] = _drawdown(c)
     if not vols:

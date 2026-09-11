@@ -340,3 +340,24 @@ beats v2.3 outside the noise band — v2.3 is the configuration to trade, and fu
 the user judged that too heavy for the Max plan and switched the live agents to Opus 5 at max effort (test call: 2.3k in / 0.5k out, 8 s).
 The 03:30 cycle was stopped after 15 Fable calls and relaunched at 03:41 on Opus (predictions are recorded only after all agents finish,
 so nothing was double-counted).
+
+## 2026-09-11 — round 14: realistic costs, low-turnover variants, v2.3 knobs on 150 names, CPI-day hold (ledger `_u150b`)
+
+Costs tiered by today's market cap: 5 bps (>$50B), 10 bps ($5-50B), 20 bps (<$5B). CPI release dates from FRED (release 10).
+
+| Variant | Return | Sharpe | Max DD | Turnover/day | OOS return | OOS Sharpe | Verdict |
+|---|---|---|---|---|---|---|---|
+| **v2.3, flat 5 bps** | +758% | 1.81 | 28.7% | 41% | +215% | 1.94 | reference |
+| v2.3, cap-tiered costs | +687% | 1.73 | 28.8% | 41% | +203% | 1.87 | realistic baseline: costs take ~9% of return, 0.08 Sharpe |
+| tiered costs + band 0.50 | +709% | 1.77 | 28.6% | 40% | +210% | 1.90 | inside the noise band |
+| tiered costs + exit 0.07 / hold 3 / rebalance every 2 | +699% / +645% / +511% | 1.74 / 1.69 / 1.61 | | 40% / 33% / 37% | +199% / +198% / +150% | 1.84 / 1.84 / 1.63 | rejected — lower turnover does not pay even at realistic costs |
+| tiered costs + top 10 | +784% | 1.84 | 30.7% | 42% | +210% | 1.88 | inside the noise band, more concentrated |
+| vol target 0.40 | +674% | 1.91 | 25.0% | 37% | +206% | 2.08 | the risk-first alternative: +0.1 Sharpe, −3.7 pts drawdown, −11% return |
+| vol target 0.60 | +896% | 1.78 | 32.3% | 44% | +234% | 1.89 | more return, more drawdown |
+| top 20 / min conviction 0.15 | +717% / +613% | 1.79 / 1.70 | 27.8% / 29.0% | 37% / 38% | +207% / +209% | 1.96 / 1.94 | inside the noise band / rejected |
+| CPI-day hold (no rebalance on release days) | +691% | 1.74 | 28.8% | 41% | +203% | 1.88 | rejected — trading through CPI days is fine |
+| CPI-day hold + tiered costs | +624% | 1.67 | 28.9% | 41% | +191% | 1.81 | rejected |
+
+**Decision:** unchanged again. Realistic costs are survivable (+687% / 1.73 / OOS 1.87) and no turnover rule earns
+them back; vol target 0.40 is documented as the switch to flip if drawdown ever matters more than return.
+(The round's summary file was lost to a JSON bug with the date set — fixed — so no PBO for this round.)

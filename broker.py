@@ -128,6 +128,35 @@ def cleanup_open_orders(prefix, dry_run=None):
     return n
 
 
+def hedge_to(symbol, target_notional, client_order_id=None, dry_run=None):
+    """Bring the SHORT position in `symbol` to -target_notional dollars (0 = flat) with one whole-share market order
+    for the difference. Returns the signed share delta ordered (negative = sold short / added)."""
+    pos = positions().get(symbol)
+    cur_qty = float(pos.qty) if pos else 0.0
+    price = float(pos.current_price) if pos else None
+    if price is None:
+        bid, ask, _ = quote(symbol)
+        price = (bid + ask) / 2 if bid and ask else None
+    if price is None:
+        try:
+            price = float(_client.get_latest_trade(symbol).price)   # last resort
+        except Exception:
+            log.warning("hedge %s: no price, skipped", symbol)
+            return 0
+    target_qty = -int(target_notional / price) if target_notional > 0 else 0
+    delta = target_qty - cur_qty
+    if abs(delta) * price < config.MIN_ORDER_USD:
+        return 0
+    side = OrderSide.SELL if delta < 0 else OrderSide.BUY
+    if _dry(dry_run):
+        log.info("DRY_RUN hedge %s %s %d shares (from %.0f to %d)", side.name, symbol, abs(int(delta)), cur_qty, target_qty)
+        return int(delta)
+    order = _client.submit_order(MarketOrderRequest(symbol=symbol, qty=abs(int(delta)), side=side,
+                                                    time_in_force=TimeInForce.DAY, client_order_id=client_order_id))
+    log.info("hedge %s %s %d shares MARKET (from %.0f to %d, order %s)", side.name, symbol, abs(int(delta)), cur_qty, target_qty, order.id)
+    return int(delta)
+
+
 def buy(symbol, notional, client_order_id=None, dry_run=None):
     """Market buy for a dollar amount."""
     return _order(symbol, notional, OrderSide.BUY, client_order_id, dry_run)

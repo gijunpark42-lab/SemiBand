@@ -58,7 +58,9 @@ BASE = dict(min_conv=0.10, size_k=0.30, cap=0.10, gross=1.50, band=0.15, top_n=1
             tickers_only=None,    # set of tickers: restrict the universe replayed from the ledger (sub-universe tests)
             floor_names=0,        # exposure floor: if fewer names pass min_conv, add the next-ranked names with conviction > 0 ...
             floor_w=0.03,         # ... each at max(conviction x size_k, floor_w)
-            rank_always=False)    # hold the top_n names by conviction whenever conviction > 0, each at least floor_w (always invested)
+            rank_always=False,    # hold the top_n names by conviction whenever conviction > 0, each at least floor_w (always invested)
+            regime_scale=None,    # de-risk instead of hedging: multiply the long book by this when SOXX is below its 50-day mean
+            hedge_mode="fixed")   # 'fixed' = hedge_size whenever the regime is weak; 'prop' = min(hedge_size, long gross): a hedge, never a net short
 
 
 def load_signals():
@@ -222,9 +224,18 @@ def simulate(by_date, closes, params, refit_every=1, warmup=30, opens=None):
             # optional index hedge: a synthetic -1x SOXX position (like PSQ/SOXS-third) when the regime is weak
             if p["hedge"]:
                 soxx = closes[config.BENCHMARK]
-                weak = (p["hedge"] == "below50" and soxx.iloc[i] < soxx.iloc[max(0, i - 50): i + 1].mean()) or                        (p["hedge"] == "always")
+                mean_conv = float(np.mean(list(conv.values()))) if conv else 0.0
+                weak = ((p["hedge"] == "below50" and soxx.iloc[i] < soxx.iloc[max(0, i - 50): i + 1].mean())
+                        or (p["hedge"] == "always")
+                        or (p["hedge"] == "negconv" and mean_conv < -0.05)                      # the ensemble is net bearish
+                        or (p["hedge"] == "idle" and mean_conv < 0 and sum(w.values()) < 0.5))   # bearish AND mostly in cash
                 if weak:
-                    w["__HEDGE__"] = -p["hedge_size"]
+                    long_gross = sum(x for x in w.values() if x > 0)
+                    w["__HEDGE__"] = -(min(p["hedge_size"], long_gross) if p["hedge_mode"] == "prop" else p["hedge_size"])
+            if p["regime_scale"] is not None:
+                soxx = closes[config.BENCHMARK]
+                if soxx.iloc[i] < soxx.iloc[max(0, i - 50): i + 1].mean():
+                    w = {t: x * p["regime_scale"] for t, x in w.items()}
             if p["vol_scale"] and w:
                 # scale each name by (median vol / its vol): calmer names get more, wild ones less
                 vols = {}
@@ -234,9 +245,9 @@ def simulate(by_date, closes, params, refit_every=1, warmup=30, opens=None):
                 med = float(np.median([v for v in vols.values() if v])) if any(vols.values()) else None
                 if med:
                     w = {t: min(x * (med / vols[t] if vols.get(t) else 1.0), p["cap"]) for t, x in w.items()}
-        g = sum(w.values())
-        if g > p["gross"]:
-            w = {t: x * p["gross"] / g for t, x in w.items()}
+        g = sum(x for x in w.values() if x > 0)            # the gross ceiling is on the LONG book (as portfolio.targets / plan live);
+        if g > p["gross"]:                                # a signed sum let a hedge or short book unlock extra long leverage (bug until 2026-09-11)
+            w = {t: (x * p["gross"] / g if x > 0 else x) for t, x in w.items()}
         # portfolio vol targeting: trailing 20-day realised vol of the book itself; scale down only, never lever up
         if p["vol_target"] and len(curve) >= 20:
             realised = float(np.std([c["ret"] for c in curve[-20:]])) * math.sqrt(252)
@@ -433,6 +444,9 @@ def main():
     ap.add_argument("--round9", action="store_true", help="ninth round: short book and index hedge")
     ap.add_argument("--round10", action="store_true", help="tenth round (2026-09-11): vol targeting, EWMA smoothing, no-learning, drop-one agents; run on _open500 with --exec open --oos-end 2025-09-24")
     ap.add_argument("--round11", action="store_true", help="eleventh round (2026-09-11): round-10 winners combined (vol target x no-events x horizons 10/20 x cap)")
+    ap.add_argument("--round18d", action="store_true", help="round 18d: fixed-size regime hedge vs a hedge capped at the long gross (never net short)")
+    ap.add_argument("--round18b", action="store_true", help="round 18b: SOXX-below-50-day hedge sizes vs simply de-risking the long book in that regime")
+    ap.add_argument("--round18", action="store_true", help="eighteenth round (2026-09-11): short book and inverse-SOXX hedges (regime / net-bearish / idle-cash) on the 150-name ledger")
     ap.add_argument("--round17", action="store_true", help="seventeenth round (2026-09-11): entry bar, exposure floors, always-invested ranking, sub-universes (ledger _u150b)")
     ap.add_argument("--round16", action="store_true", help="sixteenth round (2026-09-11): non-negative learner weights vs the signed ridge (ledger _u150b)")
     ap.add_argument("--round15", action="store_true", help="fifteenth round (2026-09-11): rule roster with / without the point-in-time llm_guidance (ledger _llmg from llm_backtest.py)")
@@ -520,6 +534,35 @@ def main():
                     ("h10_20", dict(v21, horizons=(10, 20)))]
         for a in PIT_AGENTS:
             variants.append((f"drop_{a}", dict(v21, agents_only=tuple(x for x in PIT_AGENTS if x != a))))
+    elif args.round18d:
+        v23 = {"lam": 150.0, "min_conv": 0.10, "size_k": 0.60, "top_n": 15, "cap": 0.15, "band": 0.30, "vol_target": 0.50, "horizons": (10, 20)}
+        variants = [("long_only", dict(v23)),
+                    ("hedge_fixed_0.7", dict(v23, hedge="below50", hedge_size=0.70)),
+                    ("hedge_prop_0.7", dict(v23, hedge="below50", hedge_size=0.70, hedge_mode="prop")),
+                    ("hedge_prop_1.0", dict(v23, hedge="below50", hedge_size=1.0, hedge_mode="prop"))]
+    elif args.round18b:
+        v23 = {"lam": 150.0, "min_conv": 0.10, "size_k": 0.60, "top_n": 15, "cap": 0.15, "band": 0.30, "vol_target": 0.50, "horizons": (10, 20)}
+        variants = [("v23_long_only", dict(v23)),
+                    ("hedge_below50_0.5", dict(v23, hedge="below50", hedge_size=0.50)),
+                    ("hedge_below50_0.7", dict(v23, hedge="below50", hedge_size=0.70)),
+                    ("regime_scale_0.5", dict(v23, regime_scale=0.5)),
+                    ("regime_scale_0.7", dict(v23, regime_scale=0.7)),
+                    ("regime_scale_0.0", dict(v23, regime_scale=0.0)),
+                    ("hedge_below50_0.85", dict(v23, hedge="below50", hedge_size=0.85)),
+                    ("hedge_below50_1.0", dict(v23, hedge="below50", hedge_size=1.0))]
+    elif args.round18:
+        # shorts and inverse-index hedges under the new harness (round 9 rejected them on the old one); the cash regime
+        # question in its bearish form: when the ensemble is net negative, can idle cash earn on the short side?
+        v23 = {"lam": 150.0, "min_conv": 0.10, "size_k": 0.60, "top_n": 15, "cap": 0.15, "band": 0.30, "vol_target": 0.50, "horizons": (10, 20)}
+        variants = [("v23_long_only", dict(v23)),
+                    ("short5_g0.2", dict(v23, short_k=5, short_gross=0.20)),
+                    ("short10_g0.3", dict(v23, short_k=10, short_gross=0.30)),
+                    ("hedge_below50_0.3", dict(v23, hedge="below50", hedge_size=0.30)),
+                    ("hedge_below50_0.5", dict(v23, hedge="below50", hedge_size=0.50)),
+                    ("hedge_negconv_0.3", dict(v23, hedge="negconv", hedge_size=0.30)),
+                    ("hedge_negconv_0.5", dict(v23, hedge="negconv", hedge_size=0.50)),
+                    ("hedge_idle_0.3", dict(v23, hedge="idle", hedge_size=0.30)),
+                    ("hedge_idle_0.5", dict(v23, hedge="idle", hedge_size=0.50))]
     elif args.round17:
         # the cash-regime question (live 2026-09-11: 92% cash while SOXX rallied): lower entry bar, exposure floors,
         # always-invested ranking, and sub-universes (graph members with a supply-chain layer / core semis / the old $400B cap)
@@ -699,13 +742,13 @@ def main():
                 ("technical_only", {"learn": False, "agents_only": ("technical",)}),
                 ("no_neighbors", {"agents_only": ("supply_chain", "technical", "mean_reversion", "events", "risk", "macro")}),
                 ("price_agents_only", {"agents_only": ("technical", "mean_reversion", "risk", "macro")})]
-    if not args.quick and not (args.round2 or args.round3 or args.round4 or args.round5 or args.round6 or args.round7 or args.round8 or args.round9 or args.round10 or args.round11 or args.round12 or args.round13 or args.round14 or args.round15 or args.round16 or args.round17):
+    if not args.quick and not (args.round2 or args.round3 or args.round4 or args.round5 or args.round6 or args.round7 or args.round8 or args.round9 or args.round10 or args.round11 or args.round12 or args.round13 or args.round14 or args.round15 or args.round16 or args.round17 or args.round18 or args.round18b or args.round18d):
         for combo in itertools.product(*GRID.values()):
             kv = dict(zip(GRID.keys(), combo))
             if kv == {k: BASE[k] for k in GRID}:
                 continue
             variants.append(("+".join(f"{k}={v}" for k, v in kv.items()), kv))
-    tag = ("2" if args.round2 else "3" if args.round3 else "4" if args.round4 else "5" if args.round5 else "6" if args.round6 else "7" if args.round7 else "8" if args.round8 else "9" if args.round9 else "10" if args.round10 else "11" if args.round11 else "12" if args.round12 else "13" if args.round13 else "14" if args.round14 else "15" if args.round15 else "16" if args.round16 else "17" if args.round17 else "") + args.tag
+    tag = ("2" if args.round2 else "3" if args.round3 else "4" if args.round4 else "5" if args.round5 else "6" if args.round6 else "7" if args.round7 else "8" if args.round8 else "9" if args.round9 else "10" if args.round10 else "11" if args.round11 else "12" if args.round12 else "13" if args.round13 else "14" if args.round14 else "15" if args.round15 else "16" if args.round16 else "17" if args.round17 else "18" if args.round18 else "18b" if args.round18b else "18d" if args.round18d else "") + args.tag
     run_info = {"kind": "sweep", "tag": tag, "total": len(variants), "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     t0 = time.time()
     results = evaluate(variants, common, args.workers, run_info, pool=pool, data=data)

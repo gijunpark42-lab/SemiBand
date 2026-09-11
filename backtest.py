@@ -338,15 +338,19 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
                     if config.VOL_TARGET and len(curve) >= config.VOL_LOOKBACK_DAYS else None)
         targets = portfolio.targets(conv, config.CAPITAL, realized_vol=realized)   # dollars, same rules as live
         w = {tk: v / config.CAPITAL for tk, v in targets.items()}   # -> weights
+        if config.HEDGE_SIZE and B[i] < float(np.nanmean(B[max(0, i - config.HEDGE_LOOKBACK): i + 1])):   # regime hedge, as live
+            scale = min(1.0, config.VOL_TARGET / realized) if (config.VOL_TARGET and realized and realized > config.VOL_TARGET) else 1.0
+            w["__HEDGE__"] = -min(config.HEDGE_SIZE * scale, sum(w.values()))   # capped at the long gross: a hedge, never a net short
         for tk in w:                                                 # rebalance band, as portfolio.plan() does live: a held name is
             if tk in prev_w and abs(w[tk] - prev_w[tk]) < config.REBALANCE_BAND * w[tk]:   # not resized for a move under 30% of target
                 w[tk] = prev_w[tk]
         turnover = sum(abs(w.get(tk, 0) - prev_w.get(tk, 0)) for tk in set(w) | set(prev_w))
         def day_ret(tk):
-            j = pcol[tk]
+            j = pcol[config.BENCHMARK if tk == "__HEDGE__" else tk]
             c0, c1 = P[i + shift, j], P[i + 1 + shift, j]
             return None if (np.isnan(c0) or np.isnan(c1) or c0 <= 0) else float(c1 / c0) - 1
         ret = sum(w_i * r for tk, w_i in w.items() if (r := day_ret(tk)) is not None)
+        ret -= abs(w.get("__HEDGE__", 0.0)) * 0.0002          # ~5%/yr borrow drag on the short side (as in sweep.py)
         ret -= turnover * config.COST_BPS / 10_000
         equity *= 1 + ret
         turnover_total += turnover
@@ -355,7 +359,8 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
         rank_rets = [r for tk in top if (r := day_ret(tk)) is not None]
         rank_ret = float(np.mean(rank_rets)) if rank_rets else 0.0
         equity_rank *= 1 + rank_ret - 0.1 * config.COST_BPS / 10_000    # ~10% daily turnover assumed
-        curve.append({"date": t.isoformat(), "portfolio": equity, "rank": equity_rank, "gross": sum(w.values()), "n": len(w),
+        curve.append({"date": t.isoformat(), "portfolio": equity, "rank": equity_rank, "gross": sum(abs(x) for x in w.values()),
+                      "n": len([tk for tk in w if tk != "__HEDGE__"]), "hedge": round(-w.get("__HEDGE__", 0.0), 2),
                       "ret": ret, "turnover": turnover,
                       "soxx": float(px[config.BENCHMARK].iloc[i + 1 + shift] / px[config.BENCHMARK].iloc[base]),
                       "spy": float(px["SPY"].iloc[i + 1 + shift] / px["SPY"].iloc[base])})
@@ -373,7 +378,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
                                   quintiles_10d=[round(float(np.mean(q)), 4) if q else None for q in quint],
                                   model={h: {k: v.get(k) for k in ("n_obs", "cv_ic", "agent_ic", "w_conf")}
                                          for h, v in model["horizons"].items()},
-                                  holdings=sorted(w, key=lambda tk: -w[tk]),
+                                  holdings=sorted((tk for tk in w if tk != "__HEDGE__"), key=lambda tk: -w[tk]),
                                   monthly=robustness.calendar(curve)["monthly"], curve=thin(curve)))
 
     ledger.DB = config.STATE_DIR / "ledger.sqlite"   # restore the live ledger path

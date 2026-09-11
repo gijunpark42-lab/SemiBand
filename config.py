@@ -88,6 +88,10 @@ VOL_TARGET = 0.50                 # portfolio vol targeting: when the book's tra
                                   # next-open execution, two ledger snapshots): OOS Sharpe 0.82-0.92 -> 0.96-1.27, max drawdown 36-39% -> 28-30%,
                                   # raw return lower (mostly the in-sample 2026Q2 burst); None = off (see RESEARCH.md)
 VOL_LOOKBACK_DAYS = 20            # trading days of the account's own daily returns behind that realised vol (no scaling until they exist)
+HEDGE_SYMBOL = "SOXX"             # optional regime hedge (round 18, 2026-09-11): while SOXX closes below its 50-day average, short SOXX by
+HEDGE_SIZE = None                 # HEDGE_SIZE x equity (capped at the long book, never net short). OFF: with the long-gross cap applied
+HEDGE_LOOKBACK = 50               # correctly it is a drawdown reducer, not a return source (150 names, daily refits: +731% / 1.78 / OOS 1.88
+                                  # long-only vs +675% / 1.78 / OOS 2.03, drawdown 28.8% -> 26.7%). Set 0.5-0.7 to trade drawdown for return.
 COMPARE_TICKERS = ("SOXX", "SPY", "QQQ")   # benchmarks shown against the portfolio on the dashboard
 MIN_ORDER_USD = 250               # ignore rebalancing dust below this
 REBALANCE_BAND = 0.30             # only resize a held name when the target moved by more than 30% of it (sweep: same Sharpe, less churn)

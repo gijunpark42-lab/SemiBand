@@ -228,6 +228,36 @@ def main():
         est_cost = round((size or 0.0) * config.COST_BPS / 10_000, 2)
         done.append({"ticker": t, "side": o["side"], "notional": size, "reason": reason, "est_cost_usd": est_cost})
 
+    # Regime hedge (v2.4): short config.HEDGE_SYMBOL by HEDGE_SIZE x equity while it closes below its HEDGE_LOOKBACK-day
+    # average; flat otherwise. Scaled like the book when the vol target is active. One whole-share market order.
+    if config.HEDGE_SIZE and config.HEDGE_SYMBOL in closes.columns:
+        soxx = closes[config.HEDGE_SYMBOL].dropna()
+        hedge_on = float(soxx.iloc[-1]) < float(soxx.iloc[-(config.HEDGE_LOOKBACK + 1):].mean())
+        scale = min(1.0, config.VOL_TARGET / realized) if (config.VOL_TARGET and realized and realized > config.VOL_TARGET) else 1.0
+        long_book = sum(float(p.market_value) for s, p in positions.items() if s in universe and float(p.market_value) > 0)
+        long_after = long_book + sum(o["notional"] or 0.0 for o in orders if o["side"] == "BUY") - sum(
+            (float(positions[o["ticker"]].market_value) if o["notional"] is None and o["ticker"] in positions else (o["notional"] or 0.0))
+            for o in orders if o["side"] == "SELL")
+        hedge_target = min(config.HEDGE_SIZE * equity * scale, max(long_after, 0.0)) if hedge_on else 0.0   # never a net short
+        cur = positions.get(config.HEDGE_SYMBOL)
+        cur_notional = -float(cur.market_value) if cur else 0.0
+        if abs(hedge_target - cur_notional) >= config.REBALANCE_BAND * max(hedge_target, cur_notional, 1.0):
+            try:
+                delta = broker.hedge_to(config.HEDGE_SYMBOL, hedge_target, f"{config.ORDER_PREFIX}{today}-{config.HEDGE_SYMBOL}-hedge", dry_run=dry)
+                side = "SELL" if delta < 0 else "BUY"
+                why = (f"regime hedge: {config.HEDGE_SYMBOL} below its {config.HEDGE_LOOKBACK}-day average -> short {config.HEDGE_SIZE:.0%} of equity"
+                       if hedge_on else f"regime hedge off: {config.HEDGE_SYMBOL} back above its {config.HEDGE_LOOKBACK}-day average -> cover")
+                if delta:
+                    journal.record(config.HEDGE_SYMBOL, side, why, float(soxx.iloc[-1]), notional=abs(hedge_target - cur_notional), dry_run=dry)
+                    ledger.add_order(today, config.HEDGE_SYMBOL, side, abs(hedge_target - cur_notional), why, f"{config.ORDER_PREFIX}{today}-{config.HEDGE_SYMBOL}-hedge", dry)
+                    done.append({"ticker": config.HEDGE_SYMBOL, "side": side, "notional": abs(hedge_target - cur_notional), "reason": why, "est_cost_usd": 0.0})
+                notes.append(why)
+            except Exception as exc:
+                log.error("hedge order failed: %s", exc)
+                notes.append(f"hedge order failed: {exc}")
+        else:
+            notes.append(f"regime hedge {'on' if hedge_on else 'off'} (unchanged)")
+
     if done:
         notes.append(f"estimated trading cost this cycle ${sum(d['est_cost_usd'] for d in done):,.0f} "
                      f"({config.COST_BPS} bps per order; commission $0)")

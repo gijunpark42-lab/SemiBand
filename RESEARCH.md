@@ -439,3 +439,32 @@ Ledger `_u150b`, daily refits, next-open execution, OOS split. PBO 0.93 (= no va
 sitting out — every way of forcing money to work (lower bar, floors, always-invested) gives back Sharpe and adds
 nothing out of sample. Today's miss versus SOXX is the price of that rule on one day; the rule earned its Sharpe over
 470 days. The wide universe is confirmed: dropping the non-semiconductor graph members hurts (OOS 1.94 → 1.48).
+
+## 2026-09-11 — round 18: shorts and the SOXX regime hedge (and a sweep bug this round exposed)
+
+Question from the user after a day of sitting in cash while SOXX rallied: shorts? inverse ETFs? Tested on the 150-name
+ledgers (`_u150b` and today's `_v24`), daily refits, next-open execution, OOS split.
+
+**First pass (wrong, kept for the record):** short books of the 5-10 most negative names were worse; hedging only when
+the ensemble is net bearish did nothing; but "short SOXX 0.7 x equity while SOXX is below its 50-day average" looked
+like a clear winner (+886% / 1.88 / OOS 2.18) and de-risking the longs in that regime looked terrible. The engine run of
+the same rule came back at +675% / 1.78 — engine and sweep had always agreed before, so this was chased down: the
+sweep's gross ceiling used the SIGNED sum of weights, so a −0.7 hedge let the long book run above the 150% ceiling on
+hedge days. Live can never do that (buying power, `GROSS_TARGET`). Fixed (long-only gross is capped); rounds 9 and 18a
+were the only ones affected, and both were short/hedge tests.
+
+**Corrected (today's ledger, engine = sweep to the first decimal again):**
+
+| Variant | Return | Sharpe | Max DD | Turnover/day | OOS return | OOS Sharpe | OOS DD |
+|---|---|---|---|---|---|---|---|
+| **long-only v2.3** | +731% | 1.78 | 28.8% | 41% | +204% | 1.88 | 28.8% |
+| hedge 0.7 × equity when SOXX < 50-day | +675% | 1.78 | 26.7% | 47% | +203% | 2.03 | 23.6% |
+| hedge capped at the long book (never net short), 0.7 | +685% | 1.81 | 26.7% | 47% | +191% | 1.96 | 23.6% |
+| same, 1.0 | +626% | 1.78 | 26.8% | 50% | +178% | 1.93 | 26.8% |
+| short book 5 / 10 names (round 18a, uncorrected cap) | +723% / +671% | 1.73 / 1.66 | | | +212% / +202% | 1.86 / 1.78 | | rejected |
+
+**Decision:** no shorts, hedge OFF by default. Correctly measured, the regime hedge is a drawdown reducer with a return
+cost (−8% return, same full-window Sharpe, OOS drawdown 28.8% → 23.6%, OOS Sharpe +0.15) — the same trade the vol target
+0.40 offers, not new alpha. The code stays in (`HEDGE_SIZE`, `broker.hedge_to`, engine support, dry-run tested) as an
+optional risk overlay for when drawdown matters more than return. Today specifically, SOXX is below its 50-day average
+and rallied — the hedge would have lost.

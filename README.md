@@ -1,6 +1,6 @@
 # SemiBand v2 — self-weighting agent ensemble (Alpaca paper)
 
-Eleven agents each give an opinion on every stock in the universe. The opinions are blended with
+Ten agents each give an opinion on every stock in the universe. The opinions are blended with
 trust weights, the blend is traded in an Alpaca paper account, and every prediction is scored
 5 / 10 / 20 trading days later against SOXX. Agents that were right gain weight; agents that
 were wrong lose it. LLM work runs through the Claude Max subscription (`claude -p`) — no API key.
@@ -14,20 +14,19 @@ The universe is the US-listed slice of the earnings-ai supply-chain graph (marke
 3. Universe (`universe.py`) → daily closes (`market.py`, yfinance).
 4. Score matured predictions and update weights (`score.py`, `ensemble.hedge_update`). Everything
    lives in `state/ledger.sqlite`.
-5. Run the ten agents (`agents/`), each with its own information source:
+5. Run the agents (`agents/`), each with its own information source:
    - Free rule agents: `supply_chain` (the map: transitions, sold-out capacity, freshness, curated
      guidance wording) · `neighbors` (the map one hop out: are customers/suppliers hot) ·
      `fundamentals` (growth, margins, valuation, target) · `technical` (20/60-day momentum, trend,
      RSI) · `mean_reversion` (fade 5-day overextension; the opposite temperament of technical) ·
-     `events` (earnings within 7 days = risk, reported within 14 days = drift) · `risk` (volatility
-     and drawdown brake; speaks only when risk is elevated) · `macro` (SOXX/SPY trend, VIX, 10-year
+     `risk` (volatility and drawdown brake; speaks only when risk is elevated) · `macro` (SOXX/SPY trend, VIX, 10-year
      yield, FRED curve slope and NFCI → a regime score expressed through each name's beta)
    - Claude agents: `llm_supply` (the supply-chain report: structure, deals, transitions) ·
      `llm_guidance` (the company's own call statements + curated metrics: guidance momentum) ·
      `llm_news` (three weeks of headlines from Finnhub + yfinance: catalysts)
    - `moderator` does not vote; it writes agreement / disagreement / verdict / watch for every order.
 6. Blend → conviction per ticker → targets (`portfolio.py`: conviction ≥ 0.15, top 15, 10% per name,
-   150% gross, within buying power) → orders (`broker.py`).
+   150% gross ceiling, scaled down when the book's trailing 20-day vol exceeds `VOL_TARGET`, within buying power) → orders (`broker.py`).
 7. Journal (`state/trades.json`) and dashboard (`state/dashboard.json`) are uploaded to Vercel Blob
    under `semiband-v2/`; `web/` renders them.
 
@@ -62,8 +61,8 @@ reference line on the dashboard. Day one is identical to the equal blend by cons
 
 ## Backtest (`backtest.py`)
 
-`python backtest.py --days 250` replays the point-in-time agents (technical, mean_reversion, risk, macro, events,
-and time-filtered supply_chain / neighbors) day by day, scores every opinion against SOXX at 5/10/20 days, refits
+`python backtest.py --days 250` replays the point-in-time agents (technical, mean_reversion, risk, macro, and
+time-filtered supply_chain / neighbors; `events` is still recorded for re-tests but is no longer in the roster) day by day, scores every opinion against SOXX at 5/10/20 days, refits
 the learner weekly on outcomes known at the time, and simulates the live sizing rules plus a top-15 rank portfolio.
 Output: `state/backtest_report.json` (published to the dashboard) and `state/backtest.sqlite`, which warm-starts the
 live learner at half weight (`WARM_START_WEIGHT`). Not simulated: fundamentals (no point-in-time data) and the Claude agents.
@@ -79,7 +78,10 @@ live learner at half weight (`WARM_START_WEIGHT`). Not simulated: fundamentals (
   variant's daily returns and reports the probability of backtest overfitting (CSCV) for the round.
 - Rule of thumb: the 2025-09 → 2026-08 window is where every sizing knob was chosen, so its numbers are in-sample.
   Judge changes on `--days 500` (the earlier year is out-of-sample), with `--exec open`, and only adopt a knob when
-  the out-of-sample Sharpe improves too.
+  the out-of-sample numbers improve too. `sweep.py --exec open --oos-end 2025-09-24` reports both windows per variant.
+- `RESEARCH.md` is the log of every idea tried (rounds 1-11), its numbers and the verdict. Read it before testing anything.
+- Portfolio vol targeting (`VOL_TARGET`, round 10): the book is scaled down when its own trailing 20-day realised vol exceeds
+  50% annualised; live, the realised vol comes from the Alpaca portfolio history, so it is off until the new account has 20 days.
 
 ## Execution and the intraday guardian
 

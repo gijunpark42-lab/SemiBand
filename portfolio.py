@@ -9,13 +9,15 @@ broker's buying power and by the gross ceiling, never beyond either.
 import config
 
 
-def targets(convictions, equity):
+def targets(convictions, equity, realized_vol=None):
     """{ticker: target USD}.
 
     Each name is sized by its own conviction (conviction x SIZE_PER_CONVICTION of
     equity, capped at MAX_POSITION_PCT), so a weak day produces a small book and
     cash stays a position. GROSS_TARGET is a ceiling, not a goal: if the sized
-    book exceeds it, everything is scaled down proportionally."""
+    book exceeds it, everything is scaled down proportionally.
+    realized_vol: the book's trailing annualised vol (None = unknown); when it exceeds
+    config.VOL_TARGET the whole book is scaled down by VOL_TARGET / realized_vol."""
     longs = sorted(((t, c) for t, c in convictions.items() if c >= config.MIN_CONVICTION),
                    key=lambda tc: -tc[1])[:config.TOP_N]
     if not longs:
@@ -24,6 +26,8 @@ def targets(convictions, equity):
     gross = sum(weights.values())
     if gross > config.GROSS_TARGET:
         weights = {t: w * config.GROSS_TARGET / gross for t, w in weights.items()}
+    if config.VOL_TARGET and realized_vol and realized_vol > config.VOL_TARGET:
+        weights = {t: w * config.VOL_TARGET / realized_vol for t, w in weights.items()}
     return {t: round(w * equity, 2) for t, w in weights.items() if w * equity >= config.MIN_ORDER_USD}
 
 

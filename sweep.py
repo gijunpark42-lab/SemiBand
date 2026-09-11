@@ -35,7 +35,7 @@ from agents.base import Signal
 
 DB = config.STATE_DIR / "backtest.sqlite"
 OUT = config.STATE_DIR / "backtest_sweep.json"
-PIT_AGENTS = ["supply_chain", "neighbors", "technical", "mean_reversion", "events", "risk", "macro"]
+PIT_AGENTS = list(backtest.PIT_AGENTS)   # the live roster restricted to simulated agents (events dropped 2026-09-11; its rows stay in the ledger)
 
 BASE = dict(min_conv=0.10, size_k=0.30, cap=0.10, gross=1.50, band=0.15, top_n=15,
             half_life=90, demean=False, horizons=(5, 10, 20), learn=True, agents_only=None, lam=None,
@@ -64,6 +64,8 @@ def simulate(by_date, closes, params, refit_every=5, warmup=30, opens=None):
     learner.LAMBDA_GRID = (p["lam"],) if p["lam"] else tuple(config.LEARNER_LAMBDA_GRID)
     learner.PRIOR_STRENGTH = p["lam"] or config.LEARNER_PRIOR_STRENGTH
     config.HORIZONS = tuple(p["horizons"])
+    # agents_only = the roster itself (prior 1/n over those agents), exactly what dropping the agent from config.AGENTS does live
+    config.AGENTS = list(p["agents_only"]) if p["agents_only"] else list(PIT_AGENTS)
     dates = sorted(by_date)
     idx = closes.index
     pos_of = {d.date().isoformat(): i for i, d in enumerate(idx)}
@@ -258,6 +260,7 @@ def main():
     ap.add_argument("--round8", action="store_true", help="eighth round: final sizing combos on the chosen agent set")
     ap.add_argument("--round9", action="store_true", help="ninth round: short book and index hedge")
     ap.add_argument("--round10", action="store_true", help="tenth round (2026-09-11): vol targeting, EWMA smoothing, no-learning, drop-one agents; run on _open500 with --exec open --oos-end 2025-09-24")
+    ap.add_argument("--round11", action="store_true", help="eleventh round (2026-09-11): round-10 winners combined (vol target x no-events x horizons 10/20 x cap)")
     ap.add_argument("--tag", default="", help="read state/backtest<tag>.sqlite instead of the default")
     ap.add_argument("--exec", dest="exec_mode", choices=("close", "open"), default="close", help="open = next-open execution (the live rule)")
     ap.add_argument("--oos-end", default=None, help="ISO date: report rows before it as out-of-sample, from it as in-sample")
@@ -298,6 +301,20 @@ def main():
                     ("h10_20", dict(v21, horizons=(10, 20)))]
         for a in PIT_AGENTS:
             variants.append((f"drop_{a}", dict(v21, agents_only=tuple(x for x in PIT_AGENTS if x != a))))
+    elif args.round11:
+        # round 10's single-knob winners (each better in BOTH windows), combined: do they still hold together?
+        v21 = {"lam": 150.0, "min_conv": 0.15, "size_k": 0.60, "top_n": 15, "band": 0.30}
+        no_ev = tuple(x for x in PIT_AGENTS if x != "events")
+        variants = [("v21", dict(v21)),
+                    ("vt50", dict(v21, vol_target=0.50)),
+                    ("vt50_h10_20", dict(v21, vol_target=0.50, horizons=(10, 20))),
+                    ("vt50_noevents", dict(v21, vol_target=0.50, agents_only=no_ev)),
+                    ("vt50_cap0.15", dict(v21, vol_target=0.50, cap=0.15)),
+                    ("vt50_noevents_h10_20", dict(v21, vol_target=0.50, agents_only=no_ev, horizons=(10, 20))),
+                    ("vt50_noevents_h10_20_cap0.15", dict(v21, vol_target=0.50, agents_only=no_ev, horizons=(10, 20), cap=0.15)),
+                    ("noevents_h10_20_cap0.15", dict(v21, agents_only=no_ev, horizons=(10, 20), cap=0.15)),
+                    ("vt40_noevents_h10_20", dict(v21, vol_target=0.40, agents_only=no_ev, horizons=(10, 20))),
+                    ("vt60_noevents_h10_20", dict(v21, vol_target=0.60, agents_only=no_ev, horizons=(10, 20)))]
     elif args.round2:
         variants = [("hl90_base", {})]
         for lam in (20.0, 50.0, 150.0, 400.0):
@@ -382,13 +399,13 @@ def main():
                 ("technical_only", {"learn": False, "agents_only": ("technical",)}),
                 ("no_neighbors", {"agents_only": ("supply_chain", "technical", "mean_reversion", "events", "risk", "macro")}),
                 ("price_agents_only", {"agents_only": ("technical", "mean_reversion", "risk", "macro")})]
-    if not args.quick and not (args.round2 or args.round3 or args.round4 or args.round5 or args.round6 or args.round7 or args.round8 or args.round9 or args.round10):
+    if not args.quick and not (args.round2 or args.round3 or args.round4 or args.round5 or args.round6 or args.round7 or args.round8 or args.round9 or args.round10 or args.round11):
         for combo in itertools.product(*GRID.values()):
             kv = dict(zip(GRID.keys(), combo))
             if kv == {k: BASE[k] for k in GRID}:
                 continue
             variants.append(("+".join(f"{k}={v}" for k, v in kv.items()), kv))
-    tag = ("2" if args.round2 else "3" if args.round3 else "4" if args.round4 else "5" if args.round5 else "6" if args.round6 else "7" if args.round7 else "8" if args.round8 else "9" if args.round9 else "10" if args.round10 else "") + args.tag
+    tag = ("2" if args.round2 else "3" if args.round3 else "4" if args.round4 else "5" if args.round5 else "6" if args.round6 else "7" if args.round7 else "8" if args.round8 else "9" if args.round9 else "10" if args.round10 else "11" if args.round11 else "") + args.tag
     run_info = {"kind": "sweep", "tag": tag, "total": len(variants), "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     results = []
     t0 = time.time()

@@ -137,3 +137,45 @@ export async function getDashboard(): Promise<Dashboard | null> {
   const url = process.env.DASHBOARD_URL ?? process.env.TRADES_URL?.replace(/trades\.json$/, "dashboard.json");
   return blob<Dashboard>(url);
 }
+
+// --- live backtest / sweep progress (backtest.py publish_progress -> semiband-v2/backtest_progress.json) ---
+export type CalendarRow = { period: string; portfolio: number; soxx: number; excess: number };
+export type SweepResult = {
+  name: string; params: Record<string, unknown>; total_return: number; soxx_return: number; excess_vs_soxx: number;
+  sharpe: number; max_drawdown: number; ann_vol: number; avg_gross: number; avg_names: number; turnover_per_day: number;
+  ic_10d: number | null; days: number; score?: number;
+};
+export type Robustness = {
+  sharpe: number; sharpe_ci95: [number, number] | null;
+  deflated: { dsr: number; n_trials: number; sr0_ann: number; skew: number; kurtosis: number } | null;
+  rolling_sharpe_60d: { date: string; sharpe: number }[];
+  cost_sensitivity: { bps: number; total_return: number; sharpe: number }[] | null;
+  best_quarter_share: number | null;
+};
+export type BacktestProgress = {
+  kind: "backtest" | "sweep";
+  status: "loading" | "running" | "done" | "failed";
+  tag: string; started: string; updated: string; pct: number; message?: string;
+  // backtest
+  days?: number; exec?: "close" | "open"; extra?: string[]; cap?: number | null;
+  period?: { start: string; end: string; trading_days: number }; tickers?: number; agents?: string[];
+  day?: number; total_days?: number; date?: string; elapsed_s?: number; eta_s?: number;
+  equity?: number; rank?: number; soxx?: number; spy?: number; gross?: number; names?: number; turnover_per_day?: number;
+  ic_10d?: { learned: number | null; equal_prior: number | null };
+  model?: Record<string, { n_obs: number; cv_ic: number | null; agent_ic: Record<string, number | null>; w_conf: Record<string, number> }>;
+  holdings?: string[];
+  monthly?: CalendarRow[]; quarterly?: CalendarRow[];
+  curve?: { date: string; portfolio: number; rank: number; soxx: number; spy: number; gross: number; n: number }[];
+  portfolio?: Backtest["portfolio"]; rank_portfolio?: Backtest["rank_portfolio"];
+  robustness?: Robustness; caveats?: string[];
+  // sweep
+  total?: number; done?: number; results?: SweepResult[];
+  pbo?: { pbo: number; combinations: number; median_oos_rank: number } | null;
+};
+
+export async function getBacktestProgress(): Promise<BacktestProgress | null> {
+  // backtest.py always uploads to semiband-v2/backtest_progress.json in the store TRADES_URL points at.
+  const origin = process.env.TRADES_URL ? new URL(process.env.TRADES_URL).origin : undefined;
+  const url = process.env.BACKTEST_PROGRESS_URL ?? (origin && `${origin}/semiband-v2/backtest_progress.json`);
+  return blob<BacktestProgress>(url);
+}

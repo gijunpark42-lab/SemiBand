@@ -1,3 +1,4 @@
+import Link from "next/link";
 import EquityChart from "@/components/EquityChart";
 import Performance from "@/components/Performance";
 import Pipeline, { ROLES } from "@/components/Pipeline";
@@ -49,6 +50,7 @@ export default async function Page() {
 
   return (
     <main>
+      <nav className="topnav"><Link href="/backtest">backtest live →</Link></nav>
       <h1>SemiBand · paper</h1>
       <p className="sub">Self-weighting agent ensemble on the earnings-ai supply-chain universe · Alpaca paper ·{" "}
         {new Date().toLocaleString("en-US", { timeZone: "America/New_York" })} ET</p>

@@ -68,6 +68,19 @@ the learner weekly on outcomes known at the time, and simulates the live sizing 
 Output: `state/backtest_report.json` (published to the dashboard) and `state/backtest.sqlite`, which warm-starts the
 live learner at half weight (`WARM_START_WEIGHT`). Not simulated: fundamentals (no point-in-time data) and the Claude agents.
 
+- `--exec open` trades at the NEXT open and marks open-to-open, which is what the live cycle actually gets; the default
+  `close` mode trades at the close the signals were computed on and is optimistic (it books the overnight move).
+- Every refit the run writes `state/backtest_progress.json` and uploads it as `semiband-v2/backtest_progress.json`;
+  the website's `/backtest` page polls it every 5 s (progress bar, ETA, equity curve, monthly heatmap, agent IC
+  heatmap, current book). `sweep.py` publishes to the same file (variants done, table so far, PBO at the end).
+- `robustness.py` is attached to every report: block-bootstrap Sharpe CI, deflated Sharpe for the number of sweep
+  trials on record (`state/backtest_sweep*.json`), monthly/quarterly tables, cost sensitivity (0/5/15/30 bps),
+  rolling 60-day Sharpe, and the share of the return that came from the single best quarter. `sweep.py` stores each
+  variant's daily returns and reports the probability of backtest overfitting (CSCV) for the round.
+- Rule of thumb: the 2025-09 → 2026-08 window is where every sizing knob was chosen, so its numbers are in-sample.
+  Judge changes on `--days 500` (the earlier year is out-of-sample), with `--exec open`, and only adopt a knob when
+  the out-of-sample Sharpe improves too.
+
 ## Execution and the intraday guardian
 
 - Orders: exits go out in full at the open; buys and trims are split into `EXECUTION_SLICES` (2) orders 10 minutes
@@ -95,3 +108,7 @@ live learner at half weight (`WARM_START_WEIGHT`). Not simulated: fundamentals (
 `web/` is a Next.js app deployed on Vercel (project `semiband`, Root Directory `web`).
 Env: `ALPACA_API_KEY`, `ALPACA_SECRET_KEY`, `TRADES_URL`, `BLOB_READ_WRITE_TOKEN`. Deploy with
 `vercel --prod` from the repo root. All code and UI text are in English.
+
+Pages: `/` (the paper account, decisions, agents) and `/backtest` (the live backtest / sweep view, polling
+`/api/backtest`, which reads `backtest_progress.json` from the same Blob folder as `trades.json`; set
+`BACKTEST_PROGRESS_URL` only if it lives elsewhere).

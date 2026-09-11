@@ -335,3 +335,8 @@ well after the open — the cycle start needs to move to ~03:30 PT (or the worke
 two feature blocks (direction × confidence and direction alone) both matter. Rounds 12-13 together: 22 variants, none
 beats v2.3 outside the noise band — v2.3 is the configuration to trade, and further gains have to come from data
 (graph snapshots, more months, the Claude agents' live scoreboard), not from knobs.
+
+(2026-09-11 03:40 PT) Fable 5.1 max in the live cycle measured ~4-7k input + 2.5-4.3k output tokens per call (~$0.20-0.33 API-equivalent);
+the user judged that too heavy for the Max plan and switched the live agents to Opus 5 at max effort (test call: 2.3k in / 0.5k out, 8 s).
+The 03:30 cycle was stopped after 15 Fable calls and relaunched at 03:41 on Opus (predictions are recorded only after all agents finish,
+so nothing was double-counted).

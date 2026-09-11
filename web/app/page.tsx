@@ -138,7 +138,7 @@ export default async function Page() {
         })()}
       </div>
 
-      <h2>How it works · data → 10 agents → weighted blend → orders → scoring</h2>
+      <h2>How it works · data → 11 agents → weighted blend → orders → scoring</h2>
       <div className="card">
         <Pipeline />
         <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>

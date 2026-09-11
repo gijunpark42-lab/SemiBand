@@ -307,6 +307,9 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
                     if config.VOL_TARGET and len(curve) >= config.VOL_LOOKBACK_DAYS else None)
         targets = portfolio.targets(conv, config.CAPITAL, realized_vol=realized)   # dollars, same rules as live
         w = {tk: v / config.CAPITAL for tk, v in targets.items()}   # -> weights
+        for tk in w:                                                 # rebalance band, as portfolio.plan() does live: a held name is
+            if tk in prev_w and abs(w[tk] - prev_w[tk]) < config.REBALANCE_BAND * w[tk]:   # not resized for a move under 30% of target
+                w[tk] = prev_w[tk]
         turnover = sum(abs(w.get(tk, 0) - prev_w.get(tk, 0)) for tk in set(w) | set(prev_w))
         def day_ret(tk):
             c0, c1 = px[tk].iloc[i + shift], px[tk].iloc[i + 1 + shift]

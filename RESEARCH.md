@@ -100,8 +100,60 @@ Here `noevents` removes the agent from the roster (prior 1/6). PBO of the round 
 | vt40 + no events + h10_20 | +580% | 1.87 | 28.5% | 31% | +86% | 1.20 | 28.5% | rejected |
 | vt60 + no events + h10_20 | +921% | 1.90 | 34.6% | 35% | +99% | 1.14 | 34.6% | rejected |
 
-**Decision (v2.2, 2026-09-11):** `VOL_TARGET = 0.50` (20-day realised vol of the book, scale down only) and `events`
-removed from `config.AGENTS`. Everything else stays at v2.1. Rejected today: no-learning, λ 400/1000, EWMA conviction
-smoothing (2/3/5 days), size 0.45, per-name cap 0.15, top 20, horizons 10/20 only, dropping any other agent.
+Provisional decision after round 11: vol target 0.50 + events removed. The confirmation run below overturned half of it.
 
-Confirmation run with the adopted config: `python backtest.py --days 500 --exec open --tag _v22` — see the entry below.
+## 2026-09-11 — confirmation run, and a lesson about the data
+
+`python backtest.py --days 500 --exec open --tag _v22` (vol target 0.50, events removed) came back at **+531% / Sharpe
+1.66 / OOS Sharpe 0.85**, not the +840% / 2.02 / 1.40 of the sweep. The engines agree exactly (replaying the new ledger
+through `sweep.py` with band 0 reproduces +531%); the **ledgers differ**: between the morning's `_open500` run and this one,
+the earnings-ai graph on disk had been updated (8,065 opinions changed on the same dates, mostly `neighbors` confidence
+0.65 → 0.70 and `supply_chain`; 4,300 extra rows), and the price window moved by one day. Same rules, fresh inputs:
+
+| Variant (fresh ledger, band 0.30) | Return | Sharpe | Max DD | OOS return | OOS Sharpe | OOS DD | IS Sharpe |
+|---|---|---|---|---|---|---|---|
+| v21 | +803% | 1.50 | 36.1% | +83% | 0.82 | 35.3% | 2.18 |
+| vt50 | +521% | 1.63 | 27.7% | +74% | 0.96 | 27.7% | 2.34 |
+| no events | +897% | 1.57 | 35.9% | +75% | **0.76** | 35.9% | 2.40 |
+| vt50 + no events | +573% | 1.71 | 28.1% | +68% | 0.91 | 28.1% | 2.55 |
+| vt40 + no events | +431% | 1.66 | 25.8% | +58% | 0.87 | 25.8% | 2.52 |
+
+- **Vol targeting holds**: on both ledgers and in both windows it raises Sharpe (+0.13 to +0.28) and cuts the drawdown
+  (36 → 28%), at the cost of raw return (mostly the in-sample 2026Q2 burst, which is the number we trust least).
+- **Removing events does not hold**: it helped OOS on the old ledger (0.92 → 1.03) and hurt OOS on the fresh one
+  (0.82 → 0.76). A change whose sign depends on which snapshot of the graph you ran is noise → **events stays**.
+- **Lesson**: one run of this strategy carries roughly ±20% return / ±0.15 Sharpe of input noise (graph version, a one-day
+  window shift). Anything smaller than that is not a result. The supply-chain graph is also not point-in-time in its
+  structure (edges and confidences are today's), which the caveats already say and this episode made concrete.
+
+**Final decision (v2.2, 2026-09-11):** `VOL_TARGET = 0.50` only. Roster unchanged (events kept). Rejected today:
+no-learning, λ 400/1000, EWMA conviction smoothing (2/3/5 days), size 0.45, per-name cap 0.15, top 20, horizons 10/20
+only, dropping any agent (events included, after re-validation). `backtest.py` now also applies the live 30% rebalance
+band, so the engine, the sweep and `portfolio.plan()` size the book the same way.
+
+Confirmation with the final config, `python backtest.py --days 500 --exec open --tag _v22b` (matches the sweep's `vt50`
+row to the first decimal, so engine = sweep = live sizing rules):
+
+| v2.2 | Return | SOXX | Sharpe | Max DD | Vol | Turnover/day | Avg gross |
+|---|---|---|---|---|---|---|---|
+| full 2024-09-25 → 2026-08-11 | +521% | +132% | 1.63 | 27.7% | 60% | 31% | 86% |
+| OOS 2024-09 → 2025-09 | +74% | +12% | 0.96 | 27.7% | | | |
+| IS 2025-09 → 2026-08 | +258% | +107% | 2.34 | 23.5% | | | |
+
+Robustness: bootstrap Sharpe CI 0.53-2.87, deflated Sharpe 0.63 after 204 trials, best quarter = 38% of the log return,
+conviction quintiles Q1 → Q5 = +0.14% / +0.40% / +0.27% / +0.60% / +1.94% (10-day abnormal), cost at 30 bps still
++330% / Sharpe 1.30. Versus v2.1 on the same inputs (+803% / 1.50 / DD 36% / OOS 0.82): less return, better everything else.
+
+## Ideas tested and NOT worth re-testing (2026-09-11)
+
+no-learning (equal prior) · λ 400 / 1000 · EWMA conviction smoothing · per-name vol scaling (round 5) · rebalance every
+2-3 days · size 0.45 · cap 0.15 · top 10 / 20 · horizons 5/10 or 10/20 only · dropping any single agent · price stops ·
+short book · SOXX hedge · momentum / SUE / ML-ranker agents · customer read-through · TopkDropout seat protection ·
+no market-cap cap.
+
+## Open ideas (not yet tested)
+
+- Quantile-spread monitoring live (Q5−Q1 on the dashboard) as an early warning that the ranking stopped working.
+- A point-in-time snapshot of the earnings-ai graph per month, so `neighbors` / `supply_chain` edges stop being today's.
+- Regime split of the OOS year: 2025Q2 (V-shaped rebound) was the only quarter far behind SOXX (−36% excess); do not
+  fix it on one occurrence, but watch for a second.

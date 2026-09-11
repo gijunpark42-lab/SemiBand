@@ -420,3 +420,22 @@ Forbidding negative weights destroys most of the edge in both windows. The negat
 neighbors come from the same graph, and the ridge uses one and partly nets the other out (collinearity correction),
 and some agents are reliably wrong at some horizon and are worth using upside down. Verdict: keep the signed ridge; a
 negative display weight means "used as a correction / contrarian input", not "broken".
+
+## 2026-09-11 — round 17: the cash regime (live went 92% cash while SOXX rallied) — lower bar, floors, always-invested, sub-universes
+
+Ledger `_u150b`, daily refits, next-open execution, OOS split. PBO 0.93 (= no variant is a robust winner; they are all the same).
+
+| Variant | Return | Sharpe | Max DD | Turnover/day | OOS return | OOS Sharpe | Verdict |
+|---|---|---|---|---|---|---|---|
+| **v2.3** (entry 0.10) | +758% | 1.81 | 28.7% | 41% | +215% | 1.94 | reference |
+| entry 0.05 / 0.075 | +778% / +787% | 1.82 / 1.83 | 28.3% / 28.4% | 42% / 41% | +202% / +208% | 1.86 / 1.90 | inside the noise band, OOS slightly worse |
+| exposure floor: always hold >= 8 / >= 12 names at >= 3% | +729% / +735% | 1.77 / 1.78 | 28.8% / 28.6% | 41% / 42% | +207% / +205% | 1.90 / 1.88 | rejected — forcing exposure does not add return, costs a little Sharpe |
+| always invested: top 15 by conviction > 0, each >= 5% | +729% | 1.76 | 28.2% | 42% | +201% | 1.86 | rejected |
+| universe: graph members with a supply-chain layer (101) | +638% | 1.74 | 30.3% | 34% | +131% | 1.48 | rejected — the "non-chain" names (utilities, gases, energy, OEM customers) help |
+| universe: core semiconductor layers only (77) | +585% | 1.85 | 33.5% | 32% | +113% | 1.54 | rejected — narrower is worse out of sample |
+| universe: drop the 16 names above $400B (134) | +766% | 1.81 | 27.7% | 39% | +222% | 1.97 | inside the noise band |
+
+**Decision:** unchanged. The days when fewer than a handful of names clear the bar are, on average, days worth
+sitting out — every way of forcing money to work (lower bar, floors, always-invested) gives back Sharpe and adds
+nothing out of sample. Today's miss versus SOXX is the price of that rule on one day; the rule earned its Sharpe over
+470 days. The wide universe is confirmed: dropping the non-semiconductor graph members hurts (OOS 1.94 → 1.48).

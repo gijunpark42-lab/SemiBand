@@ -54,7 +54,11 @@ BASE = dict(min_conv=0.10, size_k=0.30, cap=0.10, gross=1.50, band=0.15, top_n=1
             dir_terms=True,       # False: learner without the direction-only features (fewer parameters)
             cost_model="flat",    # 'flat' = config.COST_BPS on every unit of turnover; 'cap' = 5 / 10 / 20 bps by market cap (>50B / 5-50B / <5B)
             event_hold=None,      # set of ISO dates on which the book is held as is (no rebalance): macro-release rule
-            nonneg=False)         # learner weights constrained >= 0 (no contrarian use of any agent)
+            nonneg=False,         # learner weights constrained >= 0 (no contrarian use of any agent)
+            tickers_only=None,    # set of tickers: restrict the universe replayed from the ledger (sub-universe tests)
+            floor_names=0,        # exposure floor: if fewer names pass min_conv, add the next-ranked names with conviction > 0 ...
+            floor_w=0.03,         # ... each at max(conviction x size_k, floor_w)
+            rank_always=False)    # hold the top_n names by conviction whenever conviction > 0, each at least floor_w (always invested)
 
 
 def load_signals():
@@ -130,6 +134,8 @@ def simulate(by_date, closes, params, refit_every=1, warmup=30, opens=None):
                     v["w_dir"] = {a: 0.0 for a in pos}
                     v["reliability"] = 1.0
         sigs = by_date[d] if not p["agents_only"] else [s for s in by_date[d] if s.agent in p["agents_only"]]
+        if p["tickers_only"]:
+            sigs = [s for s in sigs if s.ticker in p["tickers_only"]]
         conv, _ = learner.predict(sigs, model if p["learn"] else None)
         if p["demean"]:
             m = float(np.mean(list(conv.values())))
@@ -167,6 +173,12 @@ def simulate(by_date, closes, params, refit_every=1, warmup=30, opens=None):
             eligible = sorted(((t, c) for t, c in conv.items()
                                if c >= p["min_conv"] or (t in prev_w and c >= floor)), key=lambda tc: -tc[1])
             longs = eligible[:p["top_n"]]
+            if p["rank_always"]:
+                longs = sorted(((t, c) for t, c in conv.items() if c > 0), key=lambda tc: -tc[1])[:p["top_n"]]
+            elif p["floor_names"] and len(longs) < p["floor_names"]:
+                have = {t for t, _ in longs}
+                extra = [(t, c) for t, c in sorted(conv.items(), key=lambda tc: -tc[1]) if c > 0 and t not in have]
+                longs = longs + extra[:p["floor_names"] - len(longs)]
             if p["min_hold"]:
                 chosen = {t for t, _ in longs}
                 for t in prev_w:                       # young positions are kept even when they fell out of the ranking
@@ -199,6 +211,8 @@ def simulate(by_date, closes, params, refit_every=1, warmup=30, opens=None):
                 w = {t: min(c * p["size_k"] * mult[t], p["cap"]) for t, c in longs}
             else:
                 w = {t: min(c * p["size_k"], p["cap"]) for t, c in longs}
+            if p["rank_always"] or p["floor_names"]:
+                w = {t: min(max(x, p["floor_w"]), p["cap"]) for t, x in w.items()}
             # optional short book: the k lowest-conviction names, sized to short_gross in total
             if p["short_k"] and p["short_gross"]:
                 shorts = sorted(((t, c) for t, c in conv.items() if c <= -p["min_conv"]), key=lambda tc: tc[1])[:p["short_k"]]
@@ -419,6 +433,7 @@ def main():
     ap.add_argument("--round9", action="store_true", help="ninth round: short book and index hedge")
     ap.add_argument("--round10", action="store_true", help="tenth round (2026-09-11): vol targeting, EWMA smoothing, no-learning, drop-one agents; run on _open500 with --exec open --oos-end 2025-09-24")
     ap.add_argument("--round11", action="store_true", help="eleventh round (2026-09-11): round-10 winners combined (vol target x no-events x horizons 10/20 x cap)")
+    ap.add_argument("--round17", action="store_true", help="seventeenth round (2026-09-11): entry bar, exposure floors, always-invested ranking, sub-universes (ledger _u150b)")
     ap.add_argument("--round16", action="store_true", help="sixteenth round (2026-09-11): non-negative learner weights vs the signed ridge (ledger _u150b)")
     ap.add_argument("--round15", action="store_true", help="fifteenth round (2026-09-11): rule roster with / without the point-in-time llm_guidance (ledger _llmg from llm_backtest.py)")
     ap.add_argument("--round14", action="store_true", help="fourteenth round (2026-09-11): cap-tiered costs, low-turnover variants, v2.3 knobs on 150 names, CPI-day hold (ledger _u150b)")
@@ -505,6 +520,27 @@ def main():
                     ("h10_20", dict(v21, horizons=(10, 20)))]
         for a in PIT_AGENTS:
             variants.append((f"drop_{a}", dict(v21, agents_only=tuple(x for x in PIT_AGENTS if x != a))))
+    elif args.round17:
+        # the cash-regime question (live 2026-09-11: 92% cash while SOXX rallied): lower entry bar, exposure floors,
+        # always-invested ranking, and sub-universes (graph members with a supply-chain layer / core semis / the old $400B cap)
+        v23 = {"lam": 150.0, "min_conv": 0.10, "size_k": 0.60, "top_n": 15, "cap": 0.15, "band": 0.30, "vol_target": 0.50, "horizons": (10, 20)}
+        uni = json.loads((config.STATE_DIR / "universe.json").read_text(encoding="utf-8"))
+        graph = json.loads((config.EARNINGS_AI_DIR / "graph" / "merged_graph.json").read_text(encoding="utf-8"))
+        node = {n["id"]: n for n in graph["nodes"]}
+        core = {"equipment", "memory", "foundry", "advanced_packaging", "materials", "compute_hardware", "interconnect"}
+        layered = {tk for tk, cid in uni["tickers"].items() if node.get(cid, {}).get("layers")}
+        semis = {tk for tk, cid in uni["tickers"].items() if set(node.get(cid, {}).get("layers") or []) & core}
+        cap400 = {tk for tk in uni["tickers"] if (uni["market_caps"].get(tk) or 0) <= 400e9}
+        print(f"sub-universes: layered {len(layered)}, core semis {len(semis)}, cap400B {len(cap400)} of {len(uni['tickers'])}")
+        variants = [("v23", dict(v23)),
+                    ("minconv0.05", dict(v23, min_conv=0.05)),
+                    ("minconv0.075", dict(v23, min_conv=0.075)),
+                    ("floor8_w3", dict(v23, floor_names=8, floor_w=0.03)),
+                    ("floor12_w3", dict(v23, floor_names=12, floor_w=0.03)),
+                    ("rank_always_w5", dict(v23, rank_always=True, floor_w=0.05)),
+                    ("uni_layered", dict(v23, tickers_only=layered)),
+                    ("uni_core_semis", dict(v23, tickers_only=semis)),
+                    ("uni_cap400B", dict(v23, tickers_only=cap400))]
     elif args.round16:
         # non-negative weights: same ridge objective with w >= 0 (no contrarian use of an agent) — interpretable, less collinearity risk
         v23 = {"lam": 150.0, "min_conv": 0.10, "size_k": 0.60, "top_n": 15, "cap": 0.15, "band": 0.30, "vol_target": 0.50, "horizons": (10, 20)}
@@ -663,13 +699,13 @@ def main():
                 ("technical_only", {"learn": False, "agents_only": ("technical",)}),
                 ("no_neighbors", {"agents_only": ("supply_chain", "technical", "mean_reversion", "events", "risk", "macro")}),
                 ("price_agents_only", {"agents_only": ("technical", "mean_reversion", "risk", "macro")})]
-    if not args.quick and not (args.round2 or args.round3 or args.round4 or args.round5 or args.round6 or args.round7 or args.round8 or args.round9 or args.round10 or args.round11 or args.round12 or args.round13 or args.round14 or args.round15 or args.round16):
+    if not args.quick and not (args.round2 or args.round3 or args.round4 or args.round5 or args.round6 or args.round7 or args.round8 or args.round9 or args.round10 or args.round11 or args.round12 or args.round13 or args.round14 or args.round15 or args.round16 or args.round17):
         for combo in itertools.product(*GRID.values()):
             kv = dict(zip(GRID.keys(), combo))
             if kv == {k: BASE[k] for k in GRID}:
                 continue
             variants.append(("+".join(f"{k}={v}" for k, v in kv.items()), kv))
-    tag = ("2" if args.round2 else "3" if args.round3 else "4" if args.round4 else "5" if args.round5 else "6" if args.round6 else "7" if args.round7 else "8" if args.round8 else "9" if args.round9 else "10" if args.round10 else "11" if args.round11 else "12" if args.round12 else "13" if args.round13 else "14" if args.round14 else "15" if args.round15 else "16" if args.round16 else "") + args.tag
+    tag = ("2" if args.round2 else "3" if args.round3 else "4" if args.round4 else "5" if args.round5 else "6" if args.round6 else "7" if args.round7 else "8" if args.round8 else "9" if args.round9 else "10" if args.round10 else "11" if args.round11 else "12" if args.round12 else "13" if args.round13 else "14" if args.round14 else "15" if args.round15 else "16" if args.round16 else "17" if args.round17 else "") + args.tag
     run_info = {"kind": "sweep", "tag": tag, "total": len(variants), "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     t0 = time.time()
     results = evaluate(variants, common, args.workers, run_info, pool=pool, data=data)

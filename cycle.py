@@ -32,6 +32,7 @@ import liquidate
 import market
 import portfolio
 import score
+import snapshots
 import universe as universe_mod
 from agents import moderator
 
@@ -144,6 +145,7 @@ def main():
                                        "weights": ledger.latest_weights() or ensemble.initial_weights()})
             return 2
 
+    snapshots.take()                 # dated copy of the earnings-ai graph whenever it changed (point-in-time backtests later)
     universe = universe_mod.load()
     if args.tickers:
         keep = {t.strip().upper() for t in args.tickers.split(",")}

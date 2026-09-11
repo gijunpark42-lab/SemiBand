@@ -34,8 +34,8 @@ WEB_SEARCH_TICKERS = 30           # llm_news may run a live web search (Claude's
 # --- universe ---
 BENCHMARK = "SOXX"                # agents are scored on return minus this
 US_EXCHANGES = {"NASDAQ", "NYSE", "NYSE American", "AMEX"}
-MAX_MARKET_CAP = 400e9            # backtest 2026-09-10: no cap (112 names) +311%/Sharpe 1.97 vs cap 400B (96 names) +373%/2.28 -> keep the cap; no crypto ever
-LOOKBACK_DAYS = 260               # calendar days of closes fetched for the technical agent
+MAX_MARKET_CAP = None             # 2026-09-11 (user): cover every US-listed name in the graph, no cap. (2026-09-10 test, weekly refits: no cap 112 names +311%/1.97 vs cap 400B 96 names +373%/2.28 — re-baselined with the 151-name graph, see RESEARCH.md); no crypto ever
+LOOKBACK_DAYS = 420               # calendar days of closes fetched for the technical agent (~290 trading days: the 200-day average is real live, as in the backtest; 260 gave ~178 rows so it silently fell back to the 50-day)
 
 # --- agents in the ensemble (names match agents/<name>.py) ---
 AGENTS = [

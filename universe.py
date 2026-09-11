@@ -42,7 +42,7 @@ def refresh():
     not_tradable = sorted(set(mapping) - ok)
     mapping = {t: c for t, c in mapping.items() if t in ok}
     caps = _market_caps(list(mapping))
-    too_big = sorted(t for t, cap in caps.items() if cap and cap > config.MAX_MARKET_CAP)
+    too_big = sorted(t for t, cap in caps.items() if config.MAX_MARKET_CAP and cap and cap > config.MAX_MARKET_CAP)
     mapping = {t: c for t, c in mapping.items() if t not in too_big}
     CACHE.write_text(json.dumps({
         "date": date.today().isoformat(),
@@ -74,5 +74,5 @@ if __name__ == "__main__":
     m = refresh()
     info = json.loads(CACHE.read_text(encoding="utf-8"))
     print(len(m), "in universe:", " ".join(sorted(m)))
-    print("too big (> $%.0fB):" % (config.MAX_MARKET_CAP / 1e9), " ".join(info["too_big"]))
+    print("too big (> $%.0fB):" % ((config.MAX_MARKET_CAP or 0) / 1e9), " ".join(info["too_big"]) or "(no cap)")
     print("not tradable:", info["not_tradable"], "| cap unknown:", info["cap_unknown"])

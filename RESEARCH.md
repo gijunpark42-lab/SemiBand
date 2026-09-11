@@ -239,3 +239,19 @@ Ordered by expected value per hour, all to be run through the same search harnes
 4. **Turnover**: entry/exit hysteresis (enter at 0.10, exit at 0.04 is already asymmetric) and a minimum holding period; the
    EWMA idea failed, hysteresis is the cheaper version of the same wish.
 5. Point-in-time snapshots of the earnings-ai graph (monthly copies), so `neighbors` / `supply_chain` stop seeing today's edges.
+
+## 2026-09-11 — universe to every US-listed name, live lookback fixed, graph snapshots, filings
+
+- **Universe** (user decision): `MAX_MARKET_CAP = None`. The refreshed earnings-ai graph has 151 US-listed tickers, 150
+  tradable on Alpaca (was 96 under the $400B cap). Baseline with v2.3 rules on the new universe: run `_u150` below.
+- **Live lookback** `LOOKBACK_DAYS` 260 → 420 calendar days. Live had ~178 trading rows, so `technical`'s 200-day average
+  silently fell back to the 50-day while the backtest (full history) used the real one — an engine/live mismatch, now closed.
+- **Graph snapshots** (`snapshots.py`): every cycle copies the earnings-ai graph files into `state/graph_snapshots/<date>/`
+  when their content changed (first one 2026-09-11). `backtest.py --graph-asof DATE` builds the supply-chain map from the
+  newest snapshot dated <= DATE. Per-day switching inside one run comes once enough snapshots exist; until then the
+  structure-is-today's caveat stands.
+- **10-K / 10-Q / 8-K**: earnings-ai now carries 1,002 filing-derived rows for 137 companies (434 10-K, 255 10-Q, 313 8-K),
+  dated in the `quarter` label like call statements, with `counterparty` / `counterparty_role` (91 customer, 54 supplier
+  relations), `slot` and `capex` fields. They already flow through the existing agents: `supply_chain` scores their text as
+  dated signals, `neighbors` reads customers' statements, `llm_guidance` reads the latest statements. 93% of the rows are
+  dated Feb-Sep 2026, so a filings-specific agent could only be judged in-sample; not built today (see Next).

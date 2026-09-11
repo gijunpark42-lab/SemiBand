@@ -4,14 +4,14 @@ Eleven agents each give an opinion on every stock in the universe. The opinions 
 trust weights, the blend is traded in an Alpaca paper account, and every prediction is scored
 10 / 20 trading days later against SOXX (the 5-day horizon was dropped in v2.3: it scored noise). Agents that were right gain weight; agents that
 were wrong lose it. LLM work runs through the Claude Max subscription (`claude -p`) — no API key.
-The universe is the US-listed slice of the earnings-ai supply-chain graph (market cap ≤ $400B; the backtest showed the mega-caps dilute returns).
+The universe is every US-listed, Alpaca-tradable name in the earnings-ai supply-chain graph (150 tickers, no market-cap cap since 2026-09-11).
 
 ## One cycle a day (`cycle.py`, 05:50 PT, orders at the 09:30 ET open)
 
 1. If `state/liquidate_pending` exists, liquidate everything first (fresh start).
 2. Abort if orders without our `sb2-` client-order prefix appeared in the last 24h — another bot is
    trading this account. `--force` overrides.
-3. Universe (`universe.py`) → daily closes (`market.py`, yfinance).
+3. Graph snapshot (`snapshots.py`, dated copy of earnings-ai when it changed) → universe (`universe.py`) → daily closes (`market.py`, yfinance).
 4. Score matured predictions and update weights (`score.py`, `ensemble.hedge_update`). Everything
    lives in `state/ledger.sqlite`.
 5. Run the agents (`agents/`), each with its own information source:

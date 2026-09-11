@@ -49,6 +49,7 @@ import learner
 import market
 import portfolio
 import robustness
+import snapshots
 import universe as universe_mod
 from agents import macro, mean_reversion, ml_ranker, momentum, risk, sue, technical, events
 from agents.base import Signal, clip
@@ -423,8 +424,15 @@ if __name__ == "__main__":
     p.add_argument("--exec", dest="exec_mode", choices=("close", "open"), default="close",
                    help="close = trade at the signal day's close (optimistic); open = trade at the next open like the live cycle")
     p.add_argument("--no-publish", action="store_true", help="do not upload progress (equivalence tests, scratch runs)")
+    p.add_argument("--graph-asof", default=None, help="ISO date: build the supply-chain map from the newest graph snapshot dated <= this (state/graph_snapshots) instead of today's graph")
     args = p.parse_args()
     PUBLISH = not args.no_publish
+    if args.graph_asof:
+        snap = snapshots.dir_for(args.graph_asof)
+        if snap is None:
+            raise SystemExit(f"no graph snapshot dated <= {args.graph_asof} under {snapshots.ROOT}")
+        config.EARNINGS_AI_DIR = snap
+        print("graph snapshot:", snap)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     r = run(days=args.days, refit_every=args.refit_every, tag=args.tag, extra=tuple(x for x in args.extra.split(",") if x), cap=args.cap,
             exec_mode=args.exec_mode)

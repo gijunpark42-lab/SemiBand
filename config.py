@@ -58,7 +58,8 @@ AGENTS = [
     "llm_guidance",    # reads the company's own latest call signals: guidance momentum
     "llm_news",        # reads three weeks of headlines: catalysts
 ]
-HORIZONS = (5, 10, 20)            # trading days after which a prediction is scored
+HORIZONS = (10, 20)               # trading days after which a prediction is scored. v2.3 (2026-09-11 search, daily refits): dropping the 5-day
+                                  # horizon was the biggest single gain (5-day abnormal returns are mostly noise): OOS Sharpe 0.92 -> 1.4-1.7
 
 # --- learning ---
 WARM_START_WEIGHT = 0.5           # backtest rows (state/backtest.sqlite) count this much vs live rows in learner.fit; 0 = off
@@ -72,9 +73,10 @@ WEIGHT_FLOOR = 0.02               # no agent is ever silenced completely (11 age
 # --- portfolio (long-only, margin allowed up to GROSS_TARGET) ---
 CAPITAL = 1_000_000               # starting equity of the new paper account (2026-09-10); sizing uses live equity
 TOP_N = 15                        # max names held
-MIN_CONVICTION = 0.15             # enter only above this (sweep round 6: 0.15 beat 0.10 and 0.20 on return and Sharpe)
+MIN_CONVICTION = 0.10             # enter only above this. 0.15 won sweep round 6 (220 days, weekly refits); the 2026-09-11 search (500 days,
+                                  # daily refits, both windows) preferred 0.10 with horizons 10/20 (v2.3)
 EXIT_CONVICTION = 0.04            # exit when conviction falls below this
-MAX_POSITION_PCT = 0.10           # per-name cap as a share of equity
+MAX_POSITION_PCT = 0.15           # per-name cap as a share of equity (v2.3: 0.15, search gen 3; 0.10 is nearly as good)
 SIZE_PER_CONVICTION = 0.60        # position = conviction x this (conviction 0.17 -> 10% = the cap); sweep round 8: 0.60/top15 +447% Sharpe 2.50 (best return)
 DEMEAN_CONVICTION = False         # subtract the day's cross-sectional mean conviction (pick relative winners, less beta)
 GROSS_TARGET = 1.50               # CEILING on gross exposure (150% of equity = 50% margin); not a target, cash is a position

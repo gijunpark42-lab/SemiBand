@@ -43,6 +43,18 @@ def closes(symbols, lookback_days=config.LOOKBACK_DAYS, cache=True) -> pd.DataFr
     return df[symbols]
 
 
+def opens(symbols, lookback_days) -> pd.DataFrame:
+    """Adjusted daily OPENS (no cache); the backtest's --exec open mode trades at the next open
+    like the live cycle does, instead of at the close the signals were computed on."""
+    symbols = sorted(set(symbols))
+    start = date.today() - timedelta(days=lookback_days)
+    raw = yf.download(symbols, start=start.isoformat(), auto_adjust=True, progress=False, threads=True)
+    df = raw["Open"] if isinstance(raw.columns, pd.MultiIndex) else raw[["Open"]].rename(columns={"Open": symbols[0]})
+    df = df.dropna(how="all")
+    df.index = pd.to_datetime(df.index).tz_localize(None).normalize()
+    return df
+
+
 def news(symbol, limit=10, max_age_days=21):
     """[{title, publisher, when}] newest first; empty list if yfinance has nothing."""
     try:

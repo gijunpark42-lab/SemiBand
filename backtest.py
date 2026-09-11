@@ -21,7 +21,14 @@ What it cannot do
     structure (edges) is today's; only its dated signals are filtered by time.
 
 Run:  python backtest.py --days 250
+      python backtest.py --days 250 --exec open --tag _open   # trade at the NEXT open, like the live cycle
 The live learner warm-starts from these rows at half weight (config.WARM_START_WEIGHT).
+
+Progress: every refit the run writes state/backtest_progress.json (and uploads it to the
+Blob store as semiband-v2/backtest_progress.json) with the curve so far, monthly returns,
+agent IC per horizon and an ETA; the website's /backtest page polls it. The final report
+also carries robustness.summary(): bootstrap Sharpe CI, deflated Sharpe for the number of
+sweep trials, calendar tables, cost sensitivity and a rolling Sharpe.
 """
 import argparse
 import json
@@ -30,16 +37,18 @@ import math
 import re
 import sqlite3
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import numpy as np
 import pandas as pd
 
 import config
+import journal
 import ledger
 import learner
 import market
 import portfolio
+import robustness
 import universe as universe_mod
 from agents import macro, mean_reversion, ml_ranker, momentum, risk, sue, technical, events
 from agents.base import Signal, clip
@@ -49,6 +58,9 @@ from agents.neighbors import _EXPAND
 log = logging.getLogger("backtest")
 DB = config.STATE_DIR / "backtest.sqlite"
 REPORT = config.STATE_DIR / "backtest_report.json"
+PROGRESS = config.STATE_DIR / "backtest_progress.json"
+PROGRESS_BLOB = "semiband-v2/backtest_progress.json"
+CURVE_POINTS = 300                                   # the live page gets the curve thinned to this many points
 _DATE = re.compile(r"\((\d{2})-(\d{2})-(\d{4})\)")
 PIT_AGENTS = ["supply_chain", "neighbors", "technical", "mean_reversion", "events", "risk", "macro"]
 EXTRA_AGENTS = {"momentum": None, "sue": None, "ml_ranker": None}   # re-testable with --extra momentum,sue,ml_ranker
@@ -152,9 +164,28 @@ def _init_db():
     con.close()
 
 
-def run(days=250, refit_every=5, warmup=30, tag="", extra=(), cap=None):
+def thin(curve, n=CURVE_POINTS):
+    step = max(1, len(curve) // n)
+    out = curve[::step]
+    return out + ([curve[-1]] if curve and (len(curve) - 1) % step else [])
+
+
+def publish_progress(payload):
+    """state/backtest_progress.json + the Blob copy the website polls. Never raises."""
+    try:
+        payload = dict(payload, updated=datetime.now(timezone.utc).isoformat(timespec="seconds"))
+        body = json.dumps(payload, ensure_ascii=False)
+        PROGRESS.write_text(body, encoding="utf-8")
+        journal._upload(PROGRESS_BLOB, body)
+    except Exception as exc:
+        log.warning("progress publish failed: %s", exc)
+
+
+def run(days=250, refit_every=5, warmup=30, tag="", extra=(), cap=None, exec_mode="close"):
     """tag: suffix for the output files (state/backtest<tag>.sqlite / backtest_report<tag>.json)
-    so a long build can run while sweeps read the default files."""
+    so a long build can run while sweeps read the default files.
+    exec_mode: 'close' = trade at the close the signals were computed on (optimistic);
+               'open'  = trade at the NEXT open and hold to the following open (what the live cycle does)."""
     global DB, REPORT, PIT_AGENTS
     extra_mods = [{"momentum": momentum, "sue": sue, "ml_ranker": ml_ranker}[e] for e in extra]
     PIT_AGENTS = PIT_AGENTS + list(extra)
@@ -162,9 +193,20 @@ def run(days=250, refit_every=5, warmup=30, tag="", extra=(), cap=None):
         DB = config.STATE_DIR / f"backtest{tag}.sqlite"
         REPORT = config.STATE_DIR / f"backtest_report{tag}.json"
     config.STATE_DIR.mkdir(exist_ok=True)
-    if cap:
-        config.MAX_MARKET_CAP = cap
-        universe_mod.CACHE = config.STATE_DIR / f"universe_cap{int(cap / 1e9)}B.json"
+    run_info = {"kind": "backtest", "tag": tag, "days": days, "exec": exec_mode, "extra": list(extra), "cap": cap,
+                "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    publish_progress(dict(run_info, status="loading", pct=0.0, message="downloading prices and earnings"))
+    try:
+        return _run(days, refit_every, warmup, extra_mods, exec_mode, run_info)
+    except Exception as exc:
+        publish_progress(dict(run_info, status="failed", message=f"{type(exc).__name__}: {exc}"))
+        raise
+
+
+def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
+    if run_info["cap"]:
+        config.MAX_MARKET_CAP = run_info["cap"]
+        universe_mod.CACHE = config.STATE_DIR / f"universe_cap{int(run_info['cap'] / 1e9)}B.json"
         universe = universe_mod.refresh()
     else:
         universe = universe_mod.load()
@@ -174,6 +216,12 @@ def run(days=250, refit_every=5, warmup=30, tag="", extra=(), cap=None):
     closes = closes[closes[config.BENCHMARK].notna() & closes["SPY"].notna()]   # drop holiday rows that only ^VIX/^TNX filled
     idx = closes.index
     bench = closes[config.BENCHMARK]
+    # execution prices: close mode trades at close t; open mode buys at open t+1 and marks at open t+2
+    if exec_mode == "open":
+        px = market.opens(tickers + [config.BENCHMARK, "SPY"], lookback_days=int(days * 1.6) + 400).reindex(idx)
+        shift = 1
+    else:
+        px, shift = closes, 0
     earnings = market.earnings(tickers, limit=40)
     pit = PointInTimeMap()
 
@@ -186,6 +234,8 @@ def run(days=250, refit_every=5, warmup=30, tag="", extra=(), cap=None):
     end = len(idx) - 21                              # need +20 trading days for scoring
     start = max(260, end - days)
     log.info("backtest %s -> %s (%d days), %d tickers", idx[start].date(), idx[end - 1].date(), end - start, len(tickers))
+    run_info = dict(run_info, period={"start": idx[start].date().isoformat(), "end": idx[end - 1].date().isoformat(),
+                                      "trading_days": end - start}, tickers=len(tickers), agents=PIT_AGENTS)
 
     equity, curve, turnover_total = 1.0, [], 0.0
     equity_rank = 1.0                                # signal-quality line: top-15 by conviction, equal weight, 100% gross
@@ -193,6 +243,7 @@ def run(days=250, refit_every=5, warmup=30, tag="", extra=(), cap=None):
     model = None
     ic_learned, ic_prior = [], []
     t0 = time.time()
+    base = start + warmup + shift                    # benchmark curves are rebased to the first traded day
     for i in range(start, end):
         t = idx[i].date()
         window = closes.iloc[: i + 1]
@@ -243,12 +294,13 @@ def run(days=250, refit_every=5, warmup=30, tag="", extra=(), cap=None):
         if len(common) >= 10:
             ic_learned.append(learner.ic(np.array([conv[tk] for tk in common]), np.array([y10[tk] for tk in common])))
             ic_prior.append(learner.ic(np.array([conv_prior[tk] for tk in common]), np.array([y10[tk] for tk in common])))
-        # portfolio: same sizing as live; next-day return from close t to close t+1
+        # portfolio: same sizing as live; next-day return from close t to close t+1 (close mode)
+        # or from open t+1 to open t+2 (open mode, what the live cycle actually gets)
         targets = portfolio.targets(conv, config.CAPITAL)      # dollars, same rules as live
         w = {tk: v / config.CAPITAL for tk, v in targets.items()}   # -> weights
         turnover = sum(abs(w.get(tk, 0) - prev_w.get(tk, 0)) for tk in set(w) | set(prev_w))
         def day_ret(tk):
-            c0, c1 = closes[tk].iloc[i], closes[tk].iloc[i + 1]
+            c0, c1 = px[tk].iloc[i + shift], px[tk].iloc[i + 1 + shift]
             return None if (pd.isna(c0) or pd.isna(c1) or c0 <= 0) else float(c1 / c0) - 1
         ret = sum(w_i * r for tk, w_i in w.items() if (r := day_ret(tk)) is not None)
         ret -= turnover * config.COST_BPS / 10_000
@@ -260,10 +312,24 @@ def run(days=250, refit_every=5, warmup=30, tag="", extra=(), cap=None):
         rank_ret = float(np.mean(rank_rets)) if rank_rets else 0.0
         equity_rank *= 1 + rank_ret - 0.1 * config.COST_BPS / 10_000    # ~10% daily turnover assumed
         curve.append({"date": t.isoformat(), "portfolio": equity, "rank": equity_rank, "gross": sum(w.values()), "n": len(w),
-                      "soxx": float(bench.iloc[i + 1] / bench.iloc[start + warmup]),
-                      "spy": float(closes["SPY"].iloc[i + 1] / closes["SPY"].iloc[start + warmup])})
+                      "ret": ret, "turnover": turnover,
+                      "soxx": float(px[config.BENCHMARK].iloc[i + 1 + shift] / px[config.BENCHMARK].iloc[base]),
+                      "spy": float(px["SPY"].iloc[i + 1 + shift] / px["SPY"].iloc[base])})
         if (i - start) % 50 == 0:
             log.info("  %s equity %.3f soxx %.3f (%.0fs)", t, equity, curve[-1]["soxx"], time.time() - t0)
+        if (i - start) % refit_every == 0 or i == end - 1:
+            done, total, elapsed = i - start + 1, end - start, time.time() - t0
+            publish_progress(dict(run_info, status="running", pct=round(done / total, 4), day=done, total_days=total,
+                                  date=t.isoformat(), elapsed_s=round(elapsed), eta_s=round(elapsed / done * (total - done)),
+                                  equity=round(equity, 4), rank=round(equity_rank, 4), soxx=round(curve[-1]["soxx"], 4),
+                                  spy=round(curve[-1]["spy"], 4), gross=round(sum(w.values()), 3), names=len(w),
+                                  turnover_per_day=round(turnover_total / len(curve), 3),
+                                  ic_10d={"learned": round(float(np.mean(ic_learned)), 4) if ic_learned else None,
+                                          "equal_prior": round(float(np.mean(ic_prior)), 4) if ic_prior else None},
+                                  model={h: {k: v.get(k) for k in ("n_obs", "cv_ic", "agent_ic", "w_conf")}
+                                         for h, v in model["horizons"].items()},
+                                  holdings=sorted(w, key=lambda tk: -w[tk]),
+                                  monthly=robustness.calendar(curve)["monthly"], curve=thin(curve)))
 
     ledger.DB = config.STATE_DIR / "ledger.sqlite"   # restore the live ledger path
     learner.MODEL_FILE = config.STATE_DIR / "model.json"
@@ -276,6 +342,7 @@ def run(days=250, refit_every=5, warmup=30, tag="", extra=(), cap=None):
     report = {
         "generated": date.today().isoformat(),
         "period": {"start": curve[0]["date"], "end": curve[-1]["date"], "trading_days": n},
+        "execution": exec_mode,
         "agents": PIT_AGENTS,
         "portfolio": {
             "total_return": round(curve[-1]["portfolio"] - 1, 4),
@@ -301,14 +368,27 @@ def run(days=250, refit_every=5, warmup=30, tag="", extra=(), cap=None):
                    "days": len(ic_learned)},
         "model_final": {h: {k: v.get(k) for k in ("n_obs", "lambda", "cv_ic", "agent_ic", "w_conf")}
                         for h, v in (model or {"horizons": {}})["horizons"].items()},
+        "robustness": robustness.summary(curve),
         "curve": curve,
         "caveats": [
             "fundamentals and the three Claude agents are not simulated (no point-in-time data / too costly); they enter the live model at the equal prior",
             "universe = today's list (survivorship bias); supply-chain edges are today's structure, only dated call signals are time-filtered",
-            "trades assumed at the close of day t (live trades at the next open); 5 bps cost per unit turnover",
+            ("trades at the NEXT open, marked open to open (what the live cycle does)" if exec_mode == "open"
+             else "trades assumed at the close of day t (live trades at the next open: run --exec open for that)")
+            + f"; {config.COST_BPS} bps cost per unit turnover",
+            "the sizing knobs were chosen by sweeps on the 2025-09 -> 2026-08 window: numbers on that window are in-sample (see robustness.deflated)",
         ],
     }
     REPORT.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    publish_progress(dict(run_info, status="done", pct=1.0, day=n, total_days=n, date=curve[-1]["date"],
+                          elapsed_s=round(time.time() - t0), eta_s=0, equity=round(curve[-1]["portfolio"], 4),
+                          rank=round(curve[-1]["rank"], 4), soxx=round(curve[-1]["soxx"], 4), spy=round(curve[-1]["spy"], 4),
+                          gross=round(curve[-1]["gross"], 3), names=curve[-1]["n"], turnover_per_day=report["portfolio"]["turnover_per_day"],
+                          ic_10d=report["ic_10d"], model=report["model_final"], holdings=[],
+                          monthly=report["robustness"]["calendar"]["monthly"], curve=thin(curve),
+                          portfolio=report["portfolio"], rank_portfolio=report["rank_portfolio"],
+                          robustness={k: v for k, v in report["robustness"].items() if k != "calendar"},
+                          quarterly=report["robustness"]["calendar"]["quarterly"], caveats=report["caveats"]))
     return report
 
 
@@ -319,7 +399,10 @@ if __name__ == "__main__":
     p.add_argument("--tag", default="", help="output suffix, e.g. _500")
     p.add_argument("--extra", default="", help="comma list of optional agents to include: momentum,sue,ml_ranker")
     p.add_argument("--cap", type=float, default=None, help="override MAX_MARKET_CAP (e.g. 1e13 for no cap)")
+    p.add_argument("--exec", dest="exec_mode", choices=("close", "open"), default="close",
+                   help="close = trade at the signal day's close (optimistic); open = trade at the next open like the live cycle")
     args = p.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    r = run(days=args.days, refit_every=args.refit_every, tag=args.tag, extra=tuple(x for x in args.extra.split(",") if x), cap=args.cap)
+    r = run(days=args.days, refit_every=args.refit_every, tag=args.tag, extra=tuple(x for x in args.extra.split(",") if x), cap=args.cap,
+            exec_mode=args.exec_mode)
     print(json.dumps({k: v for k, v in r.items() if k != "curve"}, indent=2)[:4000])

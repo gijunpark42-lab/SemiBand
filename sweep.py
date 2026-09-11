@@ -9,21 +9,28 @@ the same signals:
     python sweep.py --apply              # also write the winner's knobs into state/sweep_best.json
 
 Every variant is scored on the same 220 days: total return, excess vs SOXX,
-Sharpe, max drawdown, turnover, and the 10-day IC of its convictions.
+Sharpe, max drawdown, turnover, and the 10-day IC of its convictions. Each
+variant's daily returns are stored too, and the round ends with the probability
+of backtest overfitting (robustness.pbo, CSCV): with ~160 variants tried on one
+window, a winner whose in-sample rank does not survive out of sample is noise.
+Progress (variants done, table so far) is published to the website's /backtest page.
 """
 import argparse
 import itertools
 import json
 import math
 import sqlite3
-from datetime import date
+import time
+from datetime import date, datetime, timezone
 
 import numpy as np
 import pandas as pd
 
+import backtest
 import config
 import learner
 import market
+import robustness
 from agents.base import Signal
 
 DB = config.STATE_DIR / "backtest.sqlite"
@@ -167,6 +174,7 @@ def simulate(by_date, closes, params, refit_every=5, warmup=30):
     n = len(curve)
     return {
         "params": {k: (list(v) if isinstance(v, tuple) else v) for k, v in p.items()},
+        "rets": [round(float(r), 5) for r in rets],      # daily log returns, kept for the PBO test across variants
         "total_return": round(float(eq[-1] - 1), 4),
         "soxx_return": round(float(curve[-1]["soxx"] - 1), 4),
         "excess_vs_soxx": round(float(eq[-1] - curve[-1]["soxx"]), 4),
@@ -309,24 +317,36 @@ def main():
             if kv == {k: BASE[k] for k in GRID}:
                 continue
             variants.append(("+".join(f"{k}={v}" for k, v in kv.items()), kv))
+    tag = ("2" if args.round2 else "3" if args.round3 else "4" if args.round4 else "5" if args.round5 else "6" if args.round6 else "7" if args.round7 else "8" if args.round8 else "9" if args.round9 else "") + args.tag
+    run_info = {"kind": "sweep", "tag": tag, "total": len(variants), "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     results = []
-    for name, kv in variants:
+    t0 = time.time()
+    for k, (name, kv) in enumerate(variants, 1):
         r = simulate(by_date, closes, kv)
         r["name"] = name
         results.append(r)
         print(f"{name:60s} ret {r['total_return']:+.3f} excess {r['excess_vs_soxx']:+.3f} sharpe {r['sharpe']:5.2f} "
               f"dd {r['max_drawdown']:.3f} gross {r['avg_gross']:.2f} turn {r['turnover_per_day']:.3f} ic {r['ic_10d']}", flush=True)
+        elapsed = time.time() - t0
+        backtest.publish_progress(dict(run_info, status="running" if k < len(variants) else "done", pct=round(k / len(variants), 4),
+                                       done=k, elapsed_s=round(elapsed), eta_s=round(elapsed / k * (len(variants) - k)),
+                                       results=[{kk: v for kk, v in x.items() if kk != "rets"} for x in results]))
     config.AGENTS, config.HORIZONS = live_agents, live_h
     # robust ranking: Sharpe first, then excess vs SOXX, penalise turnover
     for r in results:
         r["score"] = round(r["sharpe"] + 0.5 * r["excess_vs_soxx"] - 0.5 * r["turnover_per_day"], 3)
     results.sort(key=lambda r: -r["score"])
-    tag = ("2" if args.round2 else "3" if args.round3 else "4" if args.round4 else "5" if args.round5 else "6" if args.round6 else "7" if args.round7 else "8" if args.round8 else "9" if args.round9 else "") + args.tag
+    # probability of backtest overfitting across this round's variants (CSCV on their daily returns)
+    T = min(len(r["rets"]) for r in results)
+    overfit = robustness.pbo(np.array([r["rets"][:T] for r in results]).T) if len(results) >= 2 else None
     out = OUT if not tag else config.STATE_DIR / f"backtest_sweep{tag}.json"
-    out.write_text(json.dumps({"generated": date.today().isoformat(), "results": results}, indent=2), encoding="utf-8")
+    out.write_text(json.dumps({"generated": date.today().isoformat(), "pbo": overfit, "results": results}, indent=2), encoding="utf-8")
     print("\nTOP 5 by score (sharpe + 0.5*excess - 0.5*turnover):")
     for r in results[:5]:
         print(f"  {r['score']:6.3f} {r['name']}")
+    print("PBO (probability the in-sample winner is below the out-of-sample median):", overfit)
+    backtest.publish_progress(dict(run_info, status="done", pct=1.0, done=len(results), elapsed_s=round(time.time() - t0), eta_s=0,
+                                   pbo=overfit, results=[{kk: v for kk, v in x.items() if kk != "rets"} for x in results]))
     if args.apply:
         (config.STATE_DIR / "sweep_best.json").write_text(json.dumps(results[0], indent=2), encoding="utf-8")
 

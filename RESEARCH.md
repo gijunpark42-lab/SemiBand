@@ -386,3 +386,21 @@ statement, writing 16,551 dated rows into a copy of the 150-name ledger. `sweep.
   point-in-time, out-of-sample positive contribution.
 - Live it runs on Opus at high effort (stronger than the Sonnet-low proxy), so the real contribution is plausibly >= this.
   Verdict: keep it, and keep paying for it. `llm_supply` and `llm_news` still cannot be backtested (no dated inputs).
+
+## 2026-09-11 — first live cycle on v2.3 / 150 names / Opus high (what happened)
+
+03:30 start (moved from 05:50); restarted twice while switching the Claude agents from Fable max (55 s, ~10k tokens per
+call) to Opus max (105 s) to Opus HIGH (16 s, ~1k output tokens; 60 names today, 100 from tomorrow). LLM stage done 05:08,
+orders at the 09:30 ET open, all 17 fills: the 15 names bought on 2026-09-10 were closed and the only name above the
+0.10 entry bar was SHEL (two limit slices at 96.11 / 96.40, 7.5% of equity). Equity $1,006,625, cash 92%.
+
+Why so defensive: the rule agents were bearish (technical negative on 64% of names, risk negative on 62), and under the
+learned weights every other conviction fell below 0.10 (2nd: APD 0.089). The equal-weight prior would have bought
+DELL / MU / SMCI / MRVL — the learner does not trust that mix. This matches the backtest, whose last simulated day
+(2026-08-11) also held one name at 9% gross after the August drawdown: the strategy has been in its cash regime since
+August, live simply inherited it. The Claude agents were mildly positive (mean direction +0.06 to +0.29), not the cause.
+
+Two things to watch rather than fix: (1) the wide universe brings non-semiconductor graph members into the ranking
+(SHEL, APD, MMM, utilities — data-centre power/materials suppliers), and today the top pick was one of them; (2) a long
+cash regime forfeits any SOXX rebound. Both are the model's rules working as validated; if the user wants a floor on
+exposure or a semiconductor-only universe, that is a config decision to test, not a bug.

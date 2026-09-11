@@ -40,7 +40,11 @@ PIT_AGENTS = ["supply_chain", "neighbors", "technical", "mean_reversion", "event
 BASE = dict(min_conv=0.10, size_k=0.30, cap=0.10, gross=1.50, band=0.15, top_n=15,
             half_life=90, demean=False, horizons=(5, 10, 20), learn=True, agents_only=None, lam=None,
             stop_loss=None, cooldown=5, vol_scale=False, rebalance_every=1, swap_margin=None,
-            short_k=0, short_gross=0.0, hedge=None, hedge_size=0.3)
+            short_k=0, short_gross=0.0, hedge=None, hedge_size=0.3,
+            vol_target=None,      # portfolio-level: scale the book down when trailing 20-day realised vol exceeds this (annualised)
+            ewma_halflife=None,   # smooth each name's conviction with this half-life (days) before sizing: less churn
+            exec="close",         # 'open' = buy at the next open, mark open-to-open (the live rule)
+            oos_end=None)         # date: rows before it are reported as out-of-sample, from it as in-sample (the tuning window)
 
 
 def load_signals():
@@ -54,7 +58,7 @@ def load_signals():
     return by_date
 
 
-def simulate(by_date, closes, params, refit_every=5, warmup=30):
+def simulate(by_date, closes, params, refit_every=5, warmup=30, opens=None):
     p = dict(BASE, **params)
     learner.HALF_LIFE_DAYS = p["half_life"]
     learner.LAMBDA_GRID = (p["lam"],) if p["lam"] else tuple(config.LEARNER_LAMBDA_GRID)
@@ -64,8 +68,16 @@ def simulate(by_date, closes, params, refit_every=5, warmup=30):
     idx = closes.index
     pos_of = {d.date().isoformat(): i for i, d in enumerate(idx)}
     bench = closes[config.BENCHMARK]
+    # execution prices: close mode marks close t -> close t+1; open mode buys at open t+1 and marks to open t+2
+    if p["exec"] == "open":
+        if opens is None:
+            raise ValueError("exec='open' needs the opens frame (pass --exec open to main)")
+        px, shift = opens.reindex(idx), 1
+    else:
+        px, shift = closes, 0
     equity, prev_w, turnover_total, curve, ics = 1.0, {}, 0.0, [], []
-    entry, banned = {}, {}
+    entry, banned, smooth = {}, {}, {}
+    quint = [[] for _ in range(5)]                    # 10-day abnormal return by conviction quintile (signal monotonicity)
     model = None
     for k, d in enumerate(dates):
         if k < warmup or d not in pos_of:
@@ -80,6 +92,10 @@ def simulate(by_date, closes, params, refit_every=5, warmup=30):
         if p["demean"]:
             m = float(np.mean(list(conv.values())))
             conv = {t: c - m for t, c in conv.items()}
+        if p["ewma_halflife"]:
+            a = 1 - 0.5 ** (1 / p["ewma_halflife"])
+            conv = {t: a * c + (1 - a) * smooth.get(t, c) for t, c in conv.items()}
+            smooth = dict(conv)
         # IC of today's convictions vs 10-day outcome
         y = {}
         for t in conv:
@@ -88,6 +104,11 @@ def simulate(by_date, closes, params, refit_every=5, warmup=30):
                 y[t] = float(c1 / c0 - 1) - float(b1 / b0 - 1)
         if len(y) >= 10:
             ics.append(learner.ic(np.array([conv[t] for t in y]), np.array(list(y.values()))))
+            order = sorted(y, key=lambda t: conv[t])
+            for q in range(5):
+                part = order[q * len(order) // 5:(q + 1) * len(order) // 5]
+                if part:
+                    quint[q].append(float(np.mean([y[t] for t in part])))
         # stop-loss (evaluated on closes): drop a name that fell stop_loss below its entry, sit out `cooldown` days
         if p["stop_loss"]:
             for t in list(prev_w):
@@ -143,6 +164,11 @@ def simulate(by_date, closes, params, refit_every=5, warmup=30):
         g = sum(w.values())
         if g > p["gross"]:
             w = {t: x * p["gross"] / g for t, x in w.items()}
+        # portfolio vol targeting: trailing 20-day realised vol of the book itself; scale down only, never lever up
+        if p["vol_target"] and len(curve) >= 20:
+            realised = float(np.std([c["ret"] for c in curve[-20:]])) * math.sqrt(252)
+            if realised > p["vol_target"]:
+                w = {t: x * p["vol_target"] / realised for t, x in w.items()}
         # rebalance band: keep the old weight when the target moved less than band x target
         for t in list(w):
             if t in prev_w and abs(w[t] - prev_w[t]) < p["band"] * w[t]:
@@ -157,7 +183,7 @@ def simulate(by_date, closes, params, refit_every=5, warmup=30):
         ret = 0.0
         for t, wt in w.items():
             sym = config.BENCHMARK if t == "__HEDGE__" else t
-            c0, c1 = closes[sym].iloc[i], closes[sym].iloc[i + 1]
+            c0, c1 = px[sym].iloc[i + shift], px[sym].iloc[i + 1 + shift]
             if not (pd.isna(c0) or pd.isna(c1)):
                 ret += wt * (float(c1 / c0) - 1)
             if wt < 0:
@@ -166,13 +192,14 @@ def simulate(by_date, closes, params, refit_every=5, warmup=30):
         equity *= 1 + ret
         turnover_total += turnover
         prev_w = w
-        curve.append({"date": d, "portfolio": equity, "gross": sum(abs(x) for x in w.values()), "n": len(w),
-                      "soxx": float(bench.iloc[i + 1] / bench.iloc[pos_of[dates[warmup]]])})
+        b0 = pos_of[dates[warmup]] + shift
+        curve.append({"date": d, "portfolio": equity, "gross": sum(abs(x) for x in w.values()), "n": len(w), "ret": ret,
+                      "soxx": float(px[config.BENCHMARK].iloc[i + 1 + shift] / px[config.BENCHMARK].iloc[b0])})
     rets = np.diff(np.log([1.0] + [c["portfolio"] for c in curve]))
     eq = np.array([c["portfolio"] for c in curve])
     dd = 1 - eq / np.maximum.accumulate(eq)
     n = len(curve)
-    return {
+    out = {
         "params": {k: (list(v) if isinstance(v, tuple) else v) for k, v in p.items()},
         "rets": [round(float(r), 5) for r in rets],      # daily log returns, kept for the PBO test across variants
         "total_return": round(float(eq[-1] - 1), 4),
@@ -185,8 +212,28 @@ def simulate(by_date, closes, params, refit_every=5, warmup=30):
         "avg_names": round(float(np.mean([c["n"] for c in curve])), 1),
         "turnover_per_day": round(turnover_total / n, 3),
         "ic_10d": round(float(np.mean(ics)), 4) if ics else None,
+        "quintiles_10d": [round(float(np.mean(q)), 4) if q else None for q in quint],   # Q1 (lowest conviction) .. Q5
         "days": n,
     }
+    if p["oos_end"]:
+        out["oos"] = _segment([c for c in curve if c["date"] < p["oos_end"]], 1.0, 1.0)
+        first_is = next((j for j, c in enumerate(curve) if c["date"] >= p["oos_end"]), None)
+        base = curve[first_is - 1] if first_is else None
+        out["is"] = _segment(curve[first_is:], base["portfolio"], base["soxx"]) if base else None
+    return out
+
+
+def _segment(seg, base_eq, base_soxx):
+    """Return / SOXX / Sharpe / max drawdown of one slice of a curve, rebased to its first day."""
+    if len(seg) < 5:
+        return None
+    eq = np.array([c["portfolio"] for c in seg]) / base_eq
+    rets = np.diff(np.log(np.r_[1.0, eq]))
+    dd = 1 - eq / np.maximum.accumulate(eq)
+    return {"start": seg[0]["date"], "end": seg[-1]["date"], "days": len(seg),
+            "total_return": round(float(eq[-1] - 1), 4), "soxx_return": round(float(seg[-1]["soxx"] / base_soxx - 1), 4),
+            "sharpe": round(float(np.mean(rets) / (np.std(rets) or 1e-9) * math.sqrt(252)), 2),
+            "max_drawdown": round(float(dd.max()), 4)}
 
 
 GRID = {
@@ -210,7 +257,10 @@ def main():
     ap.add_argument("--round7", action="store_true", help="seventh round: contribution of momentum and SUE agents (use with --tag _v2)")
     ap.add_argument("--round8", action="store_true", help="eighth round: final sizing combos on the chosen agent set")
     ap.add_argument("--round9", action="store_true", help="ninth round: short book and index hedge")
+    ap.add_argument("--round10", action="store_true", help="tenth round (2026-09-11): vol targeting, EWMA smoothing, no-learning, drop-one agents; run on _open500 with --exec open --oos-end 2025-09-24")
     ap.add_argument("--tag", default="", help="read state/backtest<tag>.sqlite instead of the default")
+    ap.add_argument("--exec", dest="exec_mode", choices=("close", "open"), default="close", help="open = next-open execution (the live rule)")
+    ap.add_argument("--oos-end", default=None, help="ISO date: report rows before it as out-of-sample, from it as in-sample")
     args = ap.parse_args()
 
     live_agents, live_h = config.AGENTS, config.HORIZONS
@@ -226,8 +276,29 @@ def main():
     tickers = sorted({s.ticker for sigs in by_date.values() for s in sigs})
     closes = market.closes(tickers + [config.BENCHMARK, "SPY"], lookback_days=800, cache=False)
     closes = closes[closes[config.BENCHMARK].notna()]
+    opens = market.opens(tickers + [config.BENCHMARK, "SPY"], lookback_days=800) if args.exec_mode == "open" else None
+    common = {"exec": args.exec_mode, "oos_end": args.oos_end}
 
-    if args.round2:
+    if args.round10:
+        v21 = {"lam": 150.0, "min_conv": 0.15, "size_k": 0.60, "top_n": 15, "band": 0.30}
+        variants = [("v21", dict(v21)),
+                    ("no_learning", dict(v21, learn=False)),
+                    ("lam400", dict(v21, lam=400.0)),
+                    ("lam1000", dict(v21, lam=1000.0)),
+                    ("voltarget0.30", dict(v21, vol_target=0.30)),
+                    ("voltarget0.40", dict(v21, vol_target=0.40)),
+                    ("voltarget0.50", dict(v21, vol_target=0.50)),
+                    ("ewma2", dict(v21, ewma_halflife=2)),
+                    ("ewma3", dict(v21, ewma_halflife=3)),
+                    ("ewma5", dict(v21, ewma_halflife=5)),
+                    ("ewma3_voltarget0.40", dict(v21, ewma_halflife=3, vol_target=0.40)),
+                    ("k0.45", dict(v21, size_k=0.45)),
+                    ("cap0.15", dict(v21, cap=0.15)),
+                    ("top20", dict(v21, top_n=20)),
+                    ("h10_20", dict(v21, horizons=(10, 20)))]
+        for a in PIT_AGENTS:
+            variants.append((f"drop_{a}", dict(v21, agents_only=tuple(x for x in PIT_AGENTS if x != a))))
+    elif args.round2:
         variants = [("hl90_base", {})]
         for lam in (20.0, 50.0, 150.0, 400.0):
             variants.append((f"hl90_lam{int(lam)}", {"lam": lam}))
@@ -311,22 +382,23 @@ def main():
                 ("technical_only", {"learn": False, "agents_only": ("technical",)}),
                 ("no_neighbors", {"agents_only": ("supply_chain", "technical", "mean_reversion", "events", "risk", "macro")}),
                 ("price_agents_only", {"agents_only": ("technical", "mean_reversion", "risk", "macro")})]
-    if not args.quick and not (args.round2 or args.round3 or args.round4 or args.round5 or args.round6 or args.round7 or args.round8 or args.round9):
+    if not args.quick and not (args.round2 or args.round3 or args.round4 or args.round5 or args.round6 or args.round7 or args.round8 or args.round9 or args.round10):
         for combo in itertools.product(*GRID.values()):
             kv = dict(zip(GRID.keys(), combo))
             if kv == {k: BASE[k] for k in GRID}:
                 continue
             variants.append(("+".join(f"{k}={v}" for k, v in kv.items()), kv))
-    tag = ("2" if args.round2 else "3" if args.round3 else "4" if args.round4 else "5" if args.round5 else "6" if args.round6 else "7" if args.round7 else "8" if args.round8 else "9" if args.round9 else "") + args.tag
+    tag = ("2" if args.round2 else "3" if args.round3 else "4" if args.round4 else "5" if args.round5 else "6" if args.round6 else "7" if args.round7 else "8" if args.round8 else "9" if args.round9 else "10" if args.round10 else "") + args.tag
     run_info = {"kind": "sweep", "tag": tag, "total": len(variants), "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     results = []
     t0 = time.time()
     for k, (name, kv) in enumerate(variants, 1):
-        r = simulate(by_date, closes, kv)
+        r = simulate(by_date, closes, dict(common, **kv), opens=opens)
         r["name"] = name
         results.append(r)
-        print(f"{name:60s} ret {r['total_return']:+.3f} excess {r['excess_vs_soxx']:+.3f} sharpe {r['sharpe']:5.2f} "
-              f"dd {r['max_drawdown']:.3f} gross {r['avg_gross']:.2f} turn {r['turnover_per_day']:.3f} ic {r['ic_10d']}", flush=True)
+        oos = f" | OOS ret {r['oos']['total_return']:+.3f} sharpe {r['oos']['sharpe']:5.2f} dd {r['oos']['max_drawdown']:.3f}" if r.get("oos") else ""
+        print(f"{name:32s} ret {r['total_return']:+.3f} excess {r['excess_vs_soxx']:+.3f} sharpe {r['sharpe']:5.2f} "
+              f"dd {r['max_drawdown']:.3f} gross {r['avg_gross']:.2f} turn {r['turnover_per_day']:.3f} ic {r['ic_10d']}{oos}", flush=True)
         elapsed = time.time() - t0
         backtest.publish_progress(dict(run_info, status="running" if k < len(variants) else "done", pct=round(k / len(variants), 4),
                                        done=k, elapsed_s=round(elapsed), eta_s=round(elapsed / k * (len(variants) - k)),

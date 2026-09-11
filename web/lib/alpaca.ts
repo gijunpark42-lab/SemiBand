@@ -144,6 +144,9 @@ export type SweepResult = {
   name: string; params: Record<string, unknown>; total_return: number; soxx_return: number; excess_vs_soxx: number;
   sharpe: number; max_drawdown: number; ann_vol: number; avg_gross: number; avg_names: number; turnover_per_day: number;
   ic_10d: number | null; days: number; score?: number;
+  quintiles_10d?: (number | null)[];
+  oos?: { start: string; end: string; days: number; total_return: number; soxx_return: number; sharpe: number; max_drawdown: number } | null;
+  is?: { start: string; end: string; days: number; total_return: number; soxx_return: number; sharpe: number; max_drawdown: number } | null;
 };
 export type Robustness = {
   sharpe: number; sharpe_ci95: [number, number] | null;
@@ -162,6 +165,7 @@ export type BacktestProgress = {
   day?: number; total_days?: number; date?: string; elapsed_s?: number; eta_s?: number;
   equity?: number; rank?: number; soxx?: number; spy?: number; gross?: number; names?: number; turnover_per_day?: number;
   ic_10d?: { learned: number | null; equal_prior: number | null };
+  quintiles_10d?: (number | null)[];      // mean 10-day abnormal return by conviction quintile, Q1 (lowest) .. Q5
   model?: Record<string, { n_obs: number; cv_ic: number | null; agent_ic: Record<string, number | null>; w_conf: Record<string, number> }>;
   holdings?: string[];
   monthly?: CalendarRow[]; quarterly?: CalendarRow[];

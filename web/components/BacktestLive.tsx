@@ -89,6 +89,11 @@ function BacktestView({ p }: { p: BacktestProgress }) {
         <div className="tile"><div className="label">IC (10d) learned vs equal prior</div>
           <div className="value">{p.ic_10d?.learned == null ? "—" : p.ic_10d.learned.toFixed(3)}</div>
           <div className="delta muted">equal prior {p.ic_10d?.equal_prior == null ? "—" : p.ic_10d.equal_prior.toFixed(3)}</div></div>
+        {p.quintiles_10d && p.quintiles_10d.some((q) => q != null) && (
+          <div className="tile"><div className="label">10d abnormal return by conviction quintile</div>
+            <div className="quint">{p.quintiles_10d.map((q, i) => <span key={i} className={q != null && q < 0 ? "down" : "up"} title={`Q${i + 1}`}>{q == null ? "—" : pct(q)}</span>)}</div>
+            <div className="delta muted">Q1 (lowest) → Q5 (highest) · monotone = the ranking works, not just the top 15</div></div>
+        )}
         {p.portfolio && (
           <div className="tile"><div className="label">Sharpe · max drawdown</div>
             <div className="value">{p.portfolio.sharpe}</div>
@@ -231,6 +236,7 @@ function Sparkline({ points, labels }: { points: number[]; labels: string[] }) {
 
 function SweepView({ p }: { p: BacktestProgress }) {
   const results = useMemo(() => (p.results ?? []).slice().sort((a, b) => (b.score ?? b.sharpe) - (a.score ?? a.sharpe)), [p.results]);
+  const hasOos = results.some((r) => r.oos);
   // heatmap over the two swept parameters with the most distinct values
   const grid = useMemo(() => {
     if (results.length < 4) return null;
@@ -264,11 +270,14 @@ function SweepView({ p }: { p: BacktestProgress }) {
       <h2>Variants · {results.length} of {p.total} scored</h2>
       <div className="card scroll">
         <table>
-          <thead><tr><th>Variant</th><th className="num">Return</th><th className="num">vs SOXX</th><th className="num">Sharpe</th><th className="num">Max DD</th><th className="num">Gross</th><th className="num">Turnover</th><th className="num">IC 10d</th><th className="num">Score</th></tr></thead>
+          <thead><tr><th>Variant</th><th className="num">Return</th><th className="num">vs SOXX</th><th className="num">Sharpe</th><th className="num">Max DD</th><th className="num">Gross</th><th className="num">Turnover</th><th className="num">IC 10d</th>
+            {hasOos && <><th className="num">OOS return</th><th className="num">OOS Sharpe</th><th className="num">IS Sharpe</th></>}<th className="num">Score</th></tr></thead>
           <tbody>{results.map((r: SweepResult) => (
             <tr key={r.name}><td><b>{r.name}</b></td><td className={`num ${cls(r.total_return)}`}>{pct(r.total_return)}</td><td className={`num ${cls(r.excess_vs_soxx)}`}>{pct(r.excess_vs_soxx)}</td>
               <td className="num">{r.sharpe}</td><td className="num down">{(r.max_drawdown * 100).toFixed(1)}%</td><td className="num">{(r.avg_gross * 100).toFixed(0)}%</td>
-              <td className="num">{(r.turnover_per_day * 100).toFixed(0)}%</td><td className="num">{r.ic_10d == null ? "—" : r.ic_10d.toFixed(3)}</td><td className="num">{r.score ?? "—"}</td></tr>
+              <td className="num">{(r.turnover_per_day * 100).toFixed(0)}%</td><td className="num">{r.ic_10d == null ? "—" : r.ic_10d.toFixed(3)}</td>
+              {hasOos && <><td className={`num ${cls(r.oos?.total_return ?? 0)}`}>{r.oos ? pct(r.oos.total_return) : "—"}</td><td className="num">{r.oos?.sharpe ?? "—"}</td><td className="num">{r.is?.sharpe ?? "—"}</td></>}
+              <td className="num">{r.score ?? "—"}</td></tr>
           ))}</tbody>
         </table>
       </div>

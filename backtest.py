@@ -242,6 +242,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
     prev_w = {}
     model = None
     ic_learned, ic_prior = [], []
+    quint = [[] for _ in range(5)]
     t0 = time.time()
     base = start + warmup + shift                    # benchmark curves are rebased to the first traded day
     for i in range(start, end):
@@ -294,6 +295,11 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
         if len(common) >= 10:
             ic_learned.append(learner.ic(np.array([conv[tk] for tk in common]), np.array([y10[tk] for tk in common])))
             ic_prior.append(learner.ic(np.array([conv_prior[tk] for tk in common]), np.array([y10[tk] for tk in common])))
+            order = sorted(common, key=lambda tk: conv[tk])       # signal monotonicity: 10-day abnormal return by conviction quintile
+            for q in range(5):
+                part = order[q * len(order) // 5:(q + 1) * len(order) // 5]
+                if part:
+                    quint[q].append(float(np.mean([y10[tk] for tk in part])))
         # portfolio: same sizing as live; next-day return from close t to close t+1 (close mode)
         # or from open t+1 to open t+2 (open mode, what the live cycle actually gets)
         targets = portfolio.targets(conv, config.CAPITAL)      # dollars, same rules as live
@@ -326,6 +332,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
                                   turnover_per_day=round(turnover_total / len(curve), 3),
                                   ic_10d={"learned": round(float(np.mean(ic_learned)), 4) if ic_learned else None,
                                           "equal_prior": round(float(np.mean(ic_prior)), 4) if ic_prior else None},
+                                  quintiles_10d=[round(float(np.mean(q)), 4) if q else None for q in quint],
                                   model={h: {k: v.get(k) for k in ("n_obs", "cv_ic", "agent_ic", "w_conf")}
                                          for h, v in model["horizons"].items()},
                                   holdings=sorted(w, key=lambda tk: -w[tk]),
@@ -366,6 +373,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
         "ic_10d": {"learned": round(float(np.mean(ic_learned)), 4) if ic_learned else None,
                    "equal_prior": round(float(np.mean(ic_prior)), 4) if ic_prior else None,
                    "days": len(ic_learned)},
+        "quintiles_10d": [round(float(np.mean(q)), 4) if q else None for q in quint],   # Q1 (lowest conviction) .. Q5: mean 10d abnormal return
         "model_final": {h: {k: v.get(k) for k in ("n_obs", "lambda", "cv_ic", "agent_ic", "w_conf")}
                         for h, v in (model or {"horizons": {}})["horizons"].items()},
         "robustness": robustness.summary(curve),
@@ -384,7 +392,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
                           elapsed_s=round(time.time() - t0), eta_s=0, equity=round(curve[-1]["portfolio"], 4),
                           rank=round(curve[-1]["rank"], 4), soxx=round(curve[-1]["soxx"], 4), spy=round(curve[-1]["spy"], 4),
                           gross=round(curve[-1]["gross"], 3), names=curve[-1]["n"], turnover_per_day=report["portfolio"]["turnover_per_day"],
-                          ic_10d=report["ic_10d"], model=report["model_final"], holdings=[],
+                          ic_10d=report["ic_10d"], quintiles_10d=report["quintiles_10d"], model=report["model_final"], holdings=[],
                           monthly=report["robustness"]["calendar"]["monthly"], curve=thin(curve),
                           portfolio=report["portfolio"], rank_portfolio=report["rank_portfolio"],
                           robustness={k: v for k, v in report["robustness"].items() if k != "calendar"},

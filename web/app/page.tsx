@@ -101,7 +101,7 @@ export default async function Page() {
             <>
               <div className="muted" style={{ fontSize: 12, marginBottom: 10 }}>
                 {bt.period.start} → {bt.period.end} · {bt.period.trading_days} trading days · agents simulated: {bt.agents.join(", ")} ·
-                learner refit weekly on outcomes known at the time · 5 bps per unit turnover
+                learner refit daily on outcomes known at the time · 5 bps per unit turnover
               </div>
               <div className="tiles">
                 <div className="tile"><div className="label">Live rules (sim)</div>

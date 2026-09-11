@@ -45,10 +45,10 @@ export default function Research({ markdown }: { markdown: string }) {
         </div>);
       continue;
     }
-    if (/^\s*[-*] /.test(line)) {
+    if (/^\s*([-*]|\d+\.) /.test(line)) {
       const items: string[] = [];
-      while (i < lines.length && (/^\s*[-*] /.test(lines[i]) || (/^\s{2,}\S/.test(lines[i]) && items.length))) {
-        if (/^\s*[-*] /.test(lines[i])) items.push(lines[i].replace(/^\s*[-*] /, ""));
+      while (i < lines.length && (/^\s*([-*]|\d+\.) /.test(lines[i]) || (/^\s{2,}\S/.test(lines[i]) && items.length))) {
+        if (/^\s*([-*]|\d+\.) /.test(lines[i])) items.push(lines[i].replace(/^\s*([-*]|\d+\.) /, ""));
         else items[items.length - 1] += " " + lines[i].trim();
         i++;
       }
@@ -57,7 +57,7 @@ export default function Research({ markdown }: { markdown: string }) {
     }
     if (line.trim() === "") { i++; continue; }
     const para: string[] = [];
-    while (i < lines.length && lines[i].trim() !== "" && !lines[i].startsWith("#") && !lines[i].trim().startsWith("|") && !/^\s*[-*] /.test(lines[i])) {
+    while (i < lines.length && lines[i].trim() !== "" && !lines[i].startsWith("#") && !lines[i].trim().startsWith("|") && !/^\s*([-*]|\d+\.) /.test(lines[i])) {
       para.push(lines[i].trim()); i++;
     }
     blocks.push(<p key={k++}>{inline(para.join(" "), `p${k}`)}</p>);

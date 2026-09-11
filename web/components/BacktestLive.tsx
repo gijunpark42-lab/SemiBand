@@ -114,7 +114,7 @@ function BacktestView({ p }: { p: BacktestProgress }) {
         <div className="muted" style={{ fontSize: 11, marginTop: 6 }}>Colour saturates at ±30% a month. A strategy that is one good quarter is not a strategy — look for many mildly green cells, not one dark one.</div>
       </div>
 
-      <h2>Agents · information coefficient and learned weight per horizon (refit weekly, walk-forward)</h2>
+      <h2>Agents · information coefficient and learned weight per horizon (refit daily, walk-forward)</h2>
       <div className="card">
         {horizons.length ? (
           <div className="two">

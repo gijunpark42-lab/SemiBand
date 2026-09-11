@@ -45,7 +45,9 @@ AGENTS = [
     "fundamentals",    # growth, margins, valuation, analyst target (yfinance)
     "technical",       # 20/60-day momentum vs SOXX, trend, RSI
     "mean_reversion",  # 5-day overextension: fades what technical chases
-    "events",          # earnings in the next week (risk) / just reported (drift)
+    # "events" (earnings within 7 days = risk / reported within 14 days = drift) was REMOVED 2026-09-11: negative IC at every
+    # horizon and sweep rounds 10-11 (500 days, next-open execution) were better without it in both windows (OOS Sharpe 1.27 -> 1.40
+    # with vol targeting). The module stays in agents/ and the backtest still records its opinions for future re-tests.
     "risk",            # volatility and drawdown brake: speaks only when risk is elevated
     "macro",           # market regime (SOXX/SPY trend, VIX, 10y yield) expressed through each name's beta
     # Tested 2026-09-10 and NOT enabled: "momentum" (12-1m), "sue" (PEAD), "ml_ranker" (LightGBM) — each has a small
@@ -76,6 +78,10 @@ MAX_POSITION_PCT = 0.10           # per-name cap as a share of equity
 SIZE_PER_CONVICTION = 0.60        # position = conviction x this (conviction 0.17 -> 10% = the cap); sweep round 8: 0.60/top15 +447% Sharpe 2.50 (best return)
 DEMEAN_CONVICTION = False         # subtract the day's cross-sectional mean conviction (pick relative winners, less beta)
 GROSS_TARGET = 1.50               # CEILING on gross exposure (150% of equity = 50% margin); not a target, cash is a position
+VOL_TARGET = 0.50                 # portfolio vol targeting: when the book's trailing realised vol (annualised) exceeds this, scale every
+                                  # target down by VOL_TARGET / realised (never up). Sweep round 10 (2026-09-11, 500 days, next-open execution):
+                                  # OOS Sharpe 0.92 -> 1.27, full-window Sharpe 1.63 -> 1.91, max drawdown 39% -> 30%; None = off (see RESEARCH.md)
+VOL_LOOKBACK_DAYS = 20            # trading days of the account's own daily returns behind that realised vol (no scaling until they exist)
 COMPARE_TICKERS = ("SOXX", "SPY", "QQQ")   # benchmarks shown against the portfolio on the dashboard
 MIN_ORDER_USD = 250               # ignore rebalancing dust below this
 REBALANCE_BAND = 0.30             # only resize a held name when the target moved by more than 30% of it (sweep: same Sharpe, less churn)

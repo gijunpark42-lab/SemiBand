@@ -62,7 +62,8 @@ PROGRESS = config.STATE_DIR / "backtest_progress.json"
 PROGRESS_BLOB = "semiband-v2/backtest_progress.json"
 CURVE_POINTS = 300                                   # the live page gets the curve thinned to this many points
 _DATE = re.compile(r"\((\d{2})-(\d{2})-(\d{4})\)")
-PIT_AGENTS = ["supply_chain", "neighbors", "technical", "mean_reversion", "events", "risk", "macro"]
+SIM_AGENTS = ["supply_chain", "neighbors", "technical", "mean_reversion", "events", "risk", "macro"]   # everything the replay can compute; all recorded
+PIT_AGENTS = [a for a in SIM_AGENTS if a in config.AGENTS]   # the roster the learner and the sizing see = the live roster minus the unsimulated agents
 EXTRA_AGENTS = {"momentum": None, "sue": None, "ml_ranker": None}   # re-testable with --extra momentum,sue,ml_ranker
 
 
@@ -302,7 +303,9 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
                     quint[q].append(float(np.mean([y10[tk] for tk in part])))
         # portfolio: same sizing as live; next-day return from close t to close t+1 (close mode)
         # or from open t+1 to open t+2 (open mode, what the live cycle actually gets)
-        targets = portfolio.targets(conv, config.CAPITAL)      # dollars, same rules as live
+        realized = (float(np.std([c["ret"] for c in curve[-config.VOL_LOOKBACK_DAYS:]])) * math.sqrt(252)
+                    if config.VOL_TARGET and len(curve) >= config.VOL_LOOKBACK_DAYS else None)
+        targets = portfolio.targets(conv, config.CAPITAL, realized_vol=realized)   # dollars, same rules as live
         w = {tk: v / config.CAPITAL for tk, v in targets.items()}   # -> weights
         turnover = sum(abs(w.get(tk, 0) - prev_w.get(tk, 0)) for tk in set(w) | set(prev_w))
         def day_ret(tk):

@@ -23,6 +23,23 @@ def clock():
     return _client.get_clock()
 
 
+def realized_vol(days=20):
+    """Annualised std of the account's last `days` daily equity returns (portfolio history),
+    or None when fewer days exist (a new account) or the request fails. Feeds config.VOL_TARGET."""
+    from alpaca.trading.requests import GetPortfolioHistoryRequest
+    try:
+        hist = _client.get_portfolio_history(GetPortfolioHistoryRequest(period="3M", timeframe="1D"))
+        eq = [float(v) for v in (hist.equity or []) if v and float(v) > 0]
+    except Exception as exc:
+        log.warning("portfolio history: %s", exc)
+        return None
+    rets = [b / a - 1 for a, b in zip(eq[:-1], eq[1:])][-days:]
+    if len(rets) < days:
+        return None
+    mean = sum(rets) / len(rets)
+    return (sum((r - mean) ** 2 for r in rets) / len(rets)) ** 0.5 * 252 ** 0.5
+
+
 def is_market_open():
     return _client.get_clock().is_open
 

@@ -185,7 +185,12 @@ def main():
         convictions_for_sizing = {t: c for t, c in convictions.items() if t not in blocked}
     else:
         convictions_for_sizing = convictions
-    target_usd = portfolio.targets(convictions_for_sizing, equity)
+    realized = broker.realized_vol(config.VOL_LOOKBACK_DAYS) if config.VOL_TARGET else None
+    if realized is not None:
+        scaled = realized > config.VOL_TARGET
+        notes.append(f"realised vol {realized:.0%} ({config.VOL_LOOKBACK_DAYS}d) vs target {config.VOL_TARGET:.0%}: "
+                     + (f"book scaled x{config.VOL_TARGET / realized:.2f}" if scaled else "no scaling"))
+    target_usd = portfolio.targets(convictions_for_sizing, equity, realized_vol=realized)
     orders = portfolio.plan(target_usd, positions, convictions, universe, equity, buying_power)
     log.info("equity $%.0f cash $%.0f buying power $%.0f positions %d targets %d orders %d",
              equity, cash, buying_power, len(positions), len(target_usd), len(orders))

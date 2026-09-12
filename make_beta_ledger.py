@@ -10,6 +10,7 @@ the training target changes.
 import argparse
 import shutil
 import sqlite3
+from datetime import date
 
 import numpy as np
 import pandas as pd
@@ -22,13 +23,18 @@ import universe as universe_mod
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ledger", default="_v24")
+    ap.add_argument("--output-tag", default="_beta")
     ap.add_argument("--window", type=int, default=60)
     args = ap.parse_args()
     src = config.STATE_DIR / f"backtest{args.ledger}.sqlite"
-    dst = config.STATE_DIR / "backtest_beta.sqlite"
+    dst = config.STATE_DIR / f"backtest{args.output_tag}.sqlite"
     shutil.copy2(src, dst)
     tickers = list(universe_mod.load())
-    closes = market.closes(tickers + [config.BENCHMARK], lookback_days=1000, cache=False)
+    con = sqlite3.connect(src)
+    first_date = con.execute("SELECT MIN(date) FROM predictions").fetchone()[0]
+    con.close()
+    lookback = max(1000, (date.today() - date.fromisoformat(first_date)).days + 400)
+    closes = market.closes(tickers + [config.BENCHMARK], lookback_days=lookback, cache=False)
     closes = closes[closes[config.BENCHMARK].notna()]
     rets = closes.pct_change()
     bench = rets[config.BENCHMARK]

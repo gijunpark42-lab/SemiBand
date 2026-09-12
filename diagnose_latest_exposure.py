@@ -44,7 +44,7 @@ def main():
                                'No guardian exclusion, account volatility scaling, rebalance band or execution.',
                                'Illustrative intended targets, not realized returns or future orders.'],
                'results': results}
-    out = Path(__file__).parents[2] / 'outputs' / 'latest_exposure_diagnostic.json'
+    out = Path('C:/Users/calif/Documents/Codex/2026-09-12/semiband-research/outputs/latest_exposure_diagnostic.json')
     out.write_text(json.dumps(payload, indent=2), encoding='utf-8')
     print(json.dumps(payload, indent=2))
 

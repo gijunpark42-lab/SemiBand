@@ -26,8 +26,7 @@ volatility behavior. Actual portfolio vol targeting waits for 20 account-return 
 
 ## Implementation
 
-- `config.py`: requested destination is `LEARNER_TARGET_MODE = "beta"`, `VOL_TARGET = 0.50`.
-  Raw is temporarily retained while the operational migration's specific approval is pending.
+- `config.py`: `LEARNER_TARGET_MODE = "beta"`, `VOL_TARGET = 0.50`; active for the scheduled paper cycle.
 - `learning_targets.py`: shared rolling 60-session beta to SOXX, minimum 40 return observations, clip [0,3],
   fallback 1 for unavailable estimates. Benchmark sessions only; no implicit filling of missing price returns.
   New pre-open predictions capture the beta available strictly before the prediction date.
@@ -68,11 +67,29 @@ Each model uses 72,930 date/ticker observations per horizon across 500 dates. La
 models (beta −0.073/−0.045; raw −0.021/−0.009); historical superiority is not a claim of a currently positive IC.
 
 The code was integrated in the operational feature branch by merge `386ca33`, and its 15 tests passed there too.
-Automatic approval review rejected the warm-start migration, citing the repository's no-overwrite rule and
-requiring specific authorization for the operational database migration. The user was asked to authorize backups
-and additive beta columns in `state/backtest.sqlite` and `state/ledger.sqlite`. No operational database mutation
-occurred. Raw mode is retained until that pending approval arrives and migration/verification finish. Beta is not
-active yet; do not confuse the completed full-data rehearsal with an operational state change.
+Automatic review initially required specific authorization for the operational database migration; the user
+explicitly approved it, including both backups and additive beta columns. The migration then completed at 14:52 PT.
+Full operational-data preservation, SQLite integrity, exact raw/beta array parity and candidate refits all passed.
+The beta candidate was promoted to `state/model.json`, raw to `state/model_raw_shadow.json`, and effective weights
+were saved at 14:54 PT. PAPER=True and VOL_TARGET=0.50. No trading cycle, order, liquidation, schedule change or LLM
+call was executed during activation. The existing next weekday cycle will generate fresh opinions and refit both
+models before using beta for its paper orders. Current holdings were not rebalanced by this maintenance step.
+
+Operational backups (all under `C:/Users/calif/Desktop/Trading/state/`):
+
+- `backtest.sqlite.pre-beta-20260912-145223-511235.bak` (95,694,848 bytes; original warm start).
+- `ledger.sqlite.pre-beta-20260912-145246-945071.bak` (417,792 bytes; original paper predictions/orders).
+- `model.json.pre-beta-20260912-145454.bak` (original raw model).
+
+Verification: `state/beta_activation_verification.json`. Original historical scores are preserved in `abnormal`;
+577,944 exact researched beta targets are stored in the parallel column. Live predictions have 2,036 frozen betas;
+there are still no matured live scores. Some unscored historical predictions have NULL beta because no target
+exists from which to infer it; they never enter a fitted dataset. Future historical rebuilds compute beta directly.
+
+The user subsequently requested higher-exposure/leverage testing. That is a separate research task; activation
+above retains gross1.50, size0.60 and existing entry rules. Do not claim the account has been made fully invested
+or increased to 200% exposure. At the read-only check, equity was $1,006,860.73, cash $930,739.31, SHEL market value
+$76,121.42, buying power $3,936,097.22. Low investment reflected signal-based sizing, not lack of borrowing capacity.
 
 ## Rollback
 

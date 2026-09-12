@@ -91,6 +91,15 @@ only, and their real test is the live scoreboard (RESEARCH.md, "data coverage").
 - Portfolio vol targeting (`VOL_TARGET`, round 10): the book is scaled down when its own trailing 20-day realised vol exceeds
   50% annualised; live, the realised vol comes from the Alpaca portfolio history, so it is off until the new account has 20 days.
 
+### Learning target modes
+
+The learner stores two labels side by side. `abnormal` remains the original stock return minus SOXX return, while
+`beta_abnormal` is stock return minus the prediction-time 60-day beta times SOXX return. `LEARNER_TARGET_MODE` selects
+the active model; the other mode is still fitted and its intended 0.50-vol targets are written to `shadow_targets` for
+forward comparison. Raw labels are never overwritten. Before enabling beta mode on an existing ledger, run
+`python migrate_beta_targets.py --apply`; it backs up and migrates both `state/ledger.sqlite` and
+`state/backtest.sqlite`. The cycle refuses to trade from beta mode when beta-label coverage is incomplete.
+
 ## Execution and the intraday guardian
 
 - Orders: exits go out in full at the open; buys and trims are split into `EXECUTION_SLICES` (2) orders 10 minutes

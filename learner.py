@@ -12,7 +12,7 @@ ensemble (which would memorise two weeks of one regime).
 
 The model, per horizon h in {5, 10, 20} trading days:
 
-    y = abnormal_return_h / scale_h                     (target in "conviction units")
+    y = selected_return_target_h / scale_h              (target in "conviction units")
     x = [dir_i * conf_i for each agent i] + [dir_i for each agent i]   (0 when silent)
     y ~ N(x . w, sigma^2),  w ~ N(w0, I / lambda)       (Gaussian prior on the weights)
 
@@ -21,7 +21,7 @@ The model, per horizon h in {5, 10, 20} trading days:
 where D is an exponential time decay (recent days count more) and the prior
 mean w0 is the equal-weight blend we started with. So on day one the model IS
 the old ensemble; as scored rows arrive the posterior moves toward whatever
-combination actually predicted abnormal returns. lambda is the prior strength
+combination actually predicted the selected return target. lambda is the prior strength
 in pseudo-observations; once enough days exist it is chosen by walk-forward
 cross-validation on the information coefficient (rank correlation between
 prediction and realised abnormal return, the standard quant yardstick).
@@ -79,7 +79,7 @@ def features(per_agent: dict, names: list) -> np.ndarray:
     return x
 
 
-def _rows(db_path, horizon, asof, since_scored=None, dates=None):
+def _rows(db_path, horizon, asof, since_scored=None, dates=None, target_mode="raw"):
     """Scored rows from one ledger file. since_scored: only rows scored on/after that date (what changed since
     the last load); dates: only these prediction dates. With asof, only predictions whose outcome was known by then."""
     import sqlite3
@@ -87,7 +87,8 @@ def _rows(db_path, horizon, asof, since_scored=None, dates=None):
         return []
     con = sqlite3.connect(db_path)
     con.row_factory = sqlite3.Row
-    base = ("SELECT p.date, p.ticker, p.agent, p.direction, p.confidence, s.abnormal, s.scored_date "
+    target = "s.beta_abnormal" if target_mode == "beta" else "s.abnormal"
+    base = (f"SELECT p.date, p.ticker, p.agent, p.direction, p.confidence, {target} AS target, s.scored_date "
             "FROM predictions p JOIN scores s ON s.prediction_id = p.id AND s.horizon = ?")
     try:
         if dates is not None:
@@ -104,7 +105,7 @@ def _rows(db_path, horizon, asof, since_scored=None, dates=None):
         con.close()
     if asof is not None:
         rows = [r for r in rows if r["scored_date"] <= asof.isoformat()]
-    return rows
+    return [r for r in rows if r["target"] is not None]
 
 
 def _touched_dates(db_path, horizon, since_scored):
@@ -127,28 +128,28 @@ def _stamp(path):
     return (str(path), st.st_mtime_ns, st.st_size)
 
 
-def _load_source(db_path, sw, horizon, names):
+def _load_source(db_path, sw, horizon, names, target_mode="raw"):
     """All scored rows of one ledger file as arrays, one row per (date, ticker), ordered by (date, ticker).
 
     Cached per file. When the file changed since the last call, only the prediction dates that received new
     scores are re-read and rebuilt (a backtest adds one date per day, live scoring a few matured dates per
     cycle), so a refit costs O(new rows) instead of rebuilding tens of thousands of feature rows every day.
     The arrays are the same values in the same order as a full rebuild would give."""
-    key = (str(db_path), horizon, tuple(names))
+    key = (str(db_path), horizon, tuple(names), target_mode)
     stamp = _stamp(db_path)[1:]
     ent = _CACHE.get(key)
     if ent is None:
         ent = _CACHE[key] = {"stamp": None, "by_date": {}, "last_scored": None, "arrays": None}
     if ent["stamp"] != stamp:
         if ent["last_scored"] is None:
-            rows = _rows(db_path, horizon, None)
+            rows = _rows(db_path, horizon, None, target_mode=target_mode)
         else:
             touched = _touched_dates(db_path, horizon, ent["last_scored"])
-            rows = _rows(db_path, horizon, None, dates=touched) if touched else []
+            rows = _rows(db_path, horizon, None, dates=touched, target_mode=target_mode) if touched else []
         per = {}
         for r in rows:
             g = per.setdefault(r["date"], {}).setdefault(
-                r["ticker"], {"agents": {}, "y": r["abnormal"], "scored_date": r["scored_date"]})
+                r["ticker"], {"agents": {}, "y": r["target"], "scored_date": r["scored_date"]})
             g["agents"][r["agent"]] = {"direction": r["direction"], "confidence": r["confidence"]}
             if ent["last_scored"] is None or r["scored_date"] > ent["last_scored"]:
                 ent["last_scored"] = r["scored_date"]
@@ -175,7 +176,7 @@ def _load_source(db_path, sw, horizon, names):
     return X, y, dates, scored_dates, np.full(len(y), sw)
 
 
-def dataset(horizon: int, names: list, asof=None):
+def dataset(horizon: int, names: list, asof=None, target_mode="raw"):
     """-> (X, y_raw, prediction_dates, scored_dates, source_weight) at this horizon.
 
     Live rows come from state/ledger.sqlite (weight 1). If state/backtest.sqlite exists and
@@ -189,7 +190,9 @@ def dataset(horizon: int, names: list, asof=None):
     # ledger.DB to their own replay; mixing in state/backtest.sqlite would duplicate or contaminate that trial.
     if ledger.DB == live and bt.exists() and config.WARM_START_WEIGHT > 0:
         sources.append((bt, config.WARM_START_WEIGHT))
-    parts = [_load_source(p, sw, horizon, names) for p, sw in sources if p.exists()]
+    if target_mode not in ("raw", "beta"):
+        raise ValueError(f"unknown learner target mode: {target_mode}")
+    parts = [_load_source(p, sw, horizon, names, target_mode) for p, sw in sources if p.exists()]
     if not parts:
         return np.zeros((0, 2 * len(names))), np.zeros(0), [], [], np.zeros(0)
     X = np.concatenate([p[0] for p in parts]); y = np.concatenate([p[1] for p in parts])
@@ -274,16 +277,18 @@ def walk_forward_ic(X, y_raw, dates, scored_dates, source_weight, w0, lam, today
     return float(np.mean(ics)) if ics else None
 
 
-def fit(today: date | None = None, asof: date | None = None) -> dict:
+def fit(today: date | None = None, asof: date | None = None, target_mode: str | None = None,
+        model_file=None) -> dict:
     """Refit all horizons from the ledger(s) and save MODEL_FILE. Returns the model.
     asof: only use rows whose outcome was known by that date (walk-forward backtests)."""
     today = today or date.today()
+    target_mode = target_mode or config.LEARNER_TARGET_MODE
     names = agents()
     n = len(names)
     w0 = prior_weights(n)
-    model = {"fitted": today.isoformat(), "agents": names, "horizons": {}}
+    model = {"fitted": today.isoformat(), "target_mode": target_mode, "agents": names, "horizons": {}}
     for h in config.HORIZONS:
-        X, y_raw, dates, scored_dates, sw = dataset(h, names, asof)
+        X, y_raw, dates, scored_dates, sw = dataset(h, names, asof, target_mode)
         ords = _ordinals(dates)
         scale = float(np.std(y_raw)) if len(y_raw) >= 40 else DEFAULT_SCALE[h]
         scale = max(scale, 0.01)
@@ -312,18 +317,22 @@ def fit(today: date | None = None, asof: date | None = None) -> dict:
         }
     model["effective_weights"] = effective_weights(model)
     config.STATE_DIR.mkdir(exist_ok=True)
-    MODEL_FILE.write_text(json.dumps(model, indent=2), encoding="utf-8")
+    path = model_file or (MODEL_FILE if target_mode == config.LEARNER_TARGET_MODE
+                          else config.STATE_DIR / f"model_{target_mode}_shadow.json")
+    path.write_text(json.dumps(model, indent=2), encoding="utf-8")
     return model
 
 
-def load() -> dict | None:
-    if not MODEL_FILE.exists():
+def load(target_mode: str | None = None) -> dict | None:
+    target_mode = target_mode or config.LEARNER_TARGET_MODE
+    path = MODEL_FILE if target_mode == config.LEARNER_TARGET_MODE else config.STATE_DIR / f"model_{target_mode}_shadow.json"
+    if not path.exists():
         return None
     try:
-        m = json.loads(MODEL_FILE.read_text(encoding="utf-8"))
+        m = json.loads(path.read_text(encoding="utf-8"))
     except ValueError:
         return None
-    return m if m.get("agents") == agents() else None   # roster changed -> refit from the prior
+    return m if m.get("agents") == agents() and m.get("target_mode", "raw") == target_mode else None
 
 
 def _blend(model):

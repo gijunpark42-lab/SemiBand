@@ -168,6 +168,8 @@ summary { padding: 10px 0; }
 .chart-readout strong { color: var(--ink); font-size: 18px; font-variant-numeric: tabular-nums; margin-left: 8px; }
 .chart-scrubber { display: flex; align-items: center; gap: 16px; color: var(--ink-3); font-size: 11px; margin-top: 12px; }
 .chart-scrubber input { flex: 1; min-width: 0; accent-color: var(--line); cursor: pointer; }
+.performance-context { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; margin-bottom: 16px; font-size: 12px; color: var(--ink-2); }
+.data-notice { padding: 12px; border-left: 3px solid var(--line); background: var(--bg); color: var(--ink-2); font-size: 12px; }
 
 @media (max-width: 760px) {
   main { padding: 0 16px 40px; }

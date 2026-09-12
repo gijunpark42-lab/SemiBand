@@ -24,7 +24,7 @@ export default function Convictions({ rows, agentNames }: { rows: Conviction[]; 
       <div className="ranking-toolbar">
         <div className="search-field">
           <label htmlFor={`${id}-search`}>Find a symbol</label>
-          <input id={`${id}-search`} type="search" placeholder="Search the full universe, e.g. NVDA"
+          <input id={`${id}-search`} type="search" placeholder="Search published symbols, e.g. NVDA"
             value={query} onChange={(e) => { setQuery(e.target.value); setLimit(40); }} autoComplete="off" />
         </div>
         <label className="filter-check">

@@ -4,6 +4,7 @@ import Performance from "@/components/Performance";
 import Pipeline, { ROLES } from "@/components/Pipeline";
 import SiteHeader from "@/components/SiteHeader";
 import Convictions from "@/components/Convictions";
+import { getBenchmarks } from "@/lib/benchmarks";
 import { getAccount, getDashboard, getHistory, getPositions, getTrades } from "@/lib/alpaca";
 
 export const dynamic = "force-dynamic";
@@ -51,6 +52,7 @@ export default async function Page() {
   const weights = dash ? Object.entries(dash.weights).sort((a, b) => b[1] - a[1]) : [];
   const convictions = dash?.convictions ?? [];
   const agentNames = weights.map(([a]) => a);
+  const benchmarkData = await getBenchmarks();
 
   return (
     <main id="main-content">
@@ -94,9 +96,9 @@ export default async function Page() {
 
       <h2>Benchmark comparison <span>Since the study started</span></h2>
       <div className="card">
-        {dash?.benchmarks && (dash.history ?? []).length > 0 ? (
-          <Performance equity={points} benchmarks={dash.benchmarks}
-            startDate={(dash.history ?? []).map((h) => h.date).sort()[0]} />
+        {points.length ? (
+          <Performance equity={points} benchmarks={benchmarkData.series} openingPrices={benchmarkData.openingPrices}
+            source={benchmarkData.source} unavailable={benchmarkData.unavailable} />
         ) : (
           <div className="empty">Benchmarks appear after the first cycle publishes</div>
         )}

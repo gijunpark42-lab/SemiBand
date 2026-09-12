@@ -153,7 +153,8 @@ def simulate(by_date, closes, params, refit_every=1, warmup=30, opens=None):
         if i + 10 >= len(idx):
             break
         if p["learn"] and (model is None or k % refit_every == 0):
-            model = learner.fit(date.fromisoformat(d), asof=date.fromisoformat(d))
+            model = learner.fit(date.fromisoformat(d), asof=date.fromisoformat(d),
+                                target_mode=params.get("target_mode", "raw"), model_file=learner.MODEL_FILE)
             if p["learn"] == "ic":
                 # IC-weighted blend: w_conf_i = max(IC_i, 0) normalised to sum 1 per horizon, no direction-only terms,
                 # horizons blended equally. Zero fitted parameters beyond the per-agent IC itself.
@@ -539,6 +540,8 @@ def main():
     ap.add_argument("--round13", action="store_true", help="thirteenth round (2026-09-11): horizons 10/20/40, 20/40, 20, 40 and the learner without direction-only terms (ledger _h40)")
     ap.add_argument("--round12", action="store_true", help="twelfth round (2026-09-11): inverse-vol sizing, drawdown brake, exit hysteresis, min hold, IC-weighted blend (150-name ledger _u150b)")
     ap.add_argument("--tag", default="", help="read state/backtest<tag>.sqlite instead of the default")
+    ap.add_argument("--target-mode", choices=("raw", "beta"), default="raw",
+                    help="raw preserves legacy ledger replays; beta reads the parallel migrated labels")
     ap.add_argument("--exec", dest="exec_mode", choices=("close", "open"), default="close", help="open = next-open execution (the live rule)")
     ap.add_argument("--oos-end", default=None, help="ISO date: report rows before it as out-of-sample, from it as in-sample")
     ap.add_argument("--workers", type=int, default=1, help="processes evaluating variants in parallel (16 cores here; 10 is comfortable)")
@@ -568,7 +571,7 @@ def main():
         closes = closes[closes[config.BENCHMARK].notna()]
         opens = market.opens(tickers + [config.BENCHMARK, "SPY"], lookback_days=lb) if args.exec_mode == "open" else None
         data = (by_date, closes, opens)
-    common = {"exec": args.exec_mode, "oos_end": args.oos_end}
+    common = {"exec": args.exec_mode, "oos_end": args.oos_end, "target_mode": args.target_mode}
 
     if args.search:
         if not args.oos_end:

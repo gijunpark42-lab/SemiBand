@@ -83,6 +83,8 @@ def _rows(db_path, horizon, asof, since_scored=None, dates=None, target_mode="ra
     """Scored rows from one ledger file. since_scored: only rows scored on/after that date (what changed since
     the last load); dates: only these prediction dates. With asof, only predictions whose outcome was known by then."""
     import sqlite3
+    if target_mode not in ("raw", "beta"):
+        raise ValueError(f"unknown learner target mode: {target_mode}")
     if not db_path.exists():
         return []
     con = sqlite3.connect(db_path)
@@ -105,6 +107,8 @@ def _rows(db_path, horizon, asof, since_scored=None, dates=None, target_mode="ra
         con.close()
     if asof is not None:
         rows = [r for r in rows if r["scored_date"] <= asof.isoformat()]
+    if target_mode == "beta" and any(r["target"] is None or not math.isfinite(r["target"]) for r in rows):
+        raise RuntimeError(f"incomplete beta targets in {db_path.name} at {horizon}d; run migration before fitting")
     return [r for r in rows if r["target"] is not None]
 
 
@@ -319,8 +323,18 @@ def fit(today: date | None = None, asof: date | None = None, target_mode: str | 
     config.STATE_DIR.mkdir(exist_ok=True)
     path = model_file or (MODEL_FILE if target_mode == config.LEARNER_TARGET_MODE
                           else config.STATE_DIR / f"model_{target_mode}_shadow.json")
-    path.write_text(json.dumps(model, indent=2), encoding="utf-8")
+    save_model(model, path)
     return model
+
+
+def save_model(model, path):
+    """Publish a complete model atomically; interrupted fits leave the previous model readable."""
+    import os
+    from pathlib import Path
+    path = Path(path)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(model, indent=2, allow_nan=False), encoding="utf-8")
+    tmp.replace(path)
 
 
 def load(target_mode: str | None = None) -> dict | None:

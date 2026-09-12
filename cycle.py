@@ -166,7 +166,7 @@ def main():
 
     ctx = {"closes": closes, "today": today}
     signals = run_agents(universe, ctx, model, positions, use_llm=not args.no_llm)
-    prediction_betas = learning_targets.latest_betas(closes, {s.ticker for s in signals})
+    prediction_betas = learning_targets.latest_betas(closes, {s.ticker for s in signals}, today)
     ledger.add_predictions(today, signals, last_close, prediction_betas)
     convictions, breakdown = learner.predict(signals, model)
     shadow_mode = "raw" if config.LEARNER_TARGET_MODE == "beta" else "beta"

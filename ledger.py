@@ -33,9 +33,17 @@ CREATE TABLE IF NOT EXISTS shadow_targets(
 """
 
 
+class _Connection(sqlite3.Connection):
+    def __exit__(self, exc_type, exc_value, traceback):
+        try:
+            return super().__exit__(exc_type, exc_value, traceback)
+        finally:
+            self.close()
+
+
 def connect():
     config.STATE_DIR.mkdir(exist_ok=True)
-    con = sqlite3.connect(DB)
+    con = sqlite3.connect(DB, factory=_Connection)
     con.row_factory = sqlite3.Row
     con.executescript(SCHEMA)
     _migrate(con)

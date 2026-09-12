@@ -18,6 +18,7 @@ import pandas as pd
 
 import config
 import ledger
+import learning_targets
 import market
 import universe as universe_mod
 
@@ -30,6 +31,8 @@ def main():
     args = ap.parse_args()
     src = config.STATE_DIR / f"backtest{args.ledger}.sqlite"
     dst = config.STATE_DIR / f"backtest{args.output_tag}.sqlite"
+    if dst.exists() or not args.output_tag or dst.resolve().parent != config.STATE_DIR.resolve():
+        raise SystemExit("choose a new output tag; existing and live ledgers are never overwritten")
     shutil.copy2(src, dst)
     tickers = list(universe_mod.load())
     con = sqlite3.connect(src)
@@ -38,12 +41,8 @@ def main():
     lookback = max(1000, (date.today() - date.fromisoformat(first_date)).days + 400)
     closes = market.closes(tickers + [config.BENCHMARK], lookback_days=lookback, cache=False)
     closes = closes[closes[config.BENCHMARK].notna()]
-    rets = closes.pct_change()
-    bench = rets[config.BENCHMARK]
-    # rolling beta per name, aligned so beta at date d uses returns up to and including d
-    cov = rets.rolling(args.window, min_periods=40).cov(bench)
-    var = bench.rolling(args.window, min_periods=40).var()
-    beta = cov.div(var, axis=0)
+    # Same function as newly scored predictions and historical migration.
+    beta = learning_targets.rolling_beta(closes, args.window)
     pos = {d.date().isoformat(): i for i, d in enumerate(closes.index)}
     con = sqlite3.connect(dst)
     con.row_factory = sqlite3.Row

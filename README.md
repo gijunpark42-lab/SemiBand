@@ -96,9 +96,16 @@ only, and their real test is the live scoreboard (RESEARCH.md, "data coverage").
 The learner stores two labels side by side. `abnormal` remains the original stock return minus SOXX return, while
 `beta_abnormal` is stock return minus the prediction-time 60-day beta times SOXX return. `LEARNER_TARGET_MODE` selects
 the active model; the other mode is still fitted and its intended 0.50-vol targets are written to `shadow_targets` for
-forward comparison. Raw labels are never overwritten. Before enabling beta mode on an existing ledger, run
-`python migrate_beta_targets.py --apply`; it backs up and migrates both `state/ledger.sqlite` and
-`state/backtest.sqlite`. The cycle refuses to trade from beta mode when beta-label coverage is incomplete.
+forward comparison. Raw labels are never overwritten. `migrate_beta_targets.py` makes consistent SQLite backups and
+adds parallel beta columns. It automatically uses prices strictly before the date for `ledger.sqlite` (pre-open
+predictions), and through the date for historical post-close predictions. Existing researched beta scores can be
+imported with `--beta-source` after exact source identity checks. The learner rejects any missing/nonfinite beta
+label before replacing its model. See `BETA_IMPLEMENTATION.md` for activation, verification and rollback.
+
+`sweep.py --target-mode raw` remains the default for legacy research ledgers; migrated parallel beta columns require
+`--target-mode beta`. This prevents the paper default from silently changing old research commands. The raw shadow
+records intended allocations using the active account's equity/volatility and the same agent opinions; it is a
+controlled signal comparison, not a separately executed or independently financed paper account.
 
 ## Execution and the intraday guardian
 

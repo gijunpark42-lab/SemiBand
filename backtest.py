@@ -46,6 +46,7 @@ import config
 import journal
 import ledger
 import learner
+import learning_targets
 import market
 import portfolio
 import robustness
@@ -263,6 +264,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
     # per-ticker full-history series for risk / macro (the agents slice them as of each day: same pandas
     # operations on the same values as recomputing from the day's prefix, computed once instead of daily)
     bench_ret_full = closes[config.BENCHMARK].pct_change()
+    rolling_betas = learning_targets.rolling_beta(closes)
     hist = {}
     for tk in list(tickers) + [config.BENCHMARK]:
         if tk not in closes.columns:
@@ -307,7 +309,8 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
                     signals.append(s)
         # record predictions + realised outcomes (known only later; the learner filters by maturity)
         last = {tk: float(C[i, col[tk]]) for tk in tickers if not np.isnan(C[i, col[tk]])}
-        ledger.add_predictions(t.isoformat(), signals, last)
+        prediction_betas = {tk: learning_targets.beta_at(rolling_betas, tk, idx[i]) for tk in last}
+        ledger.add_predictions(t.isoformat(), signals, last, prediction_betas)
         with ledger.connect() as con:
             rows = con.execute("SELECT id, ticker, direction FROM predictions WHERE date = ?", (t.isoformat(),)).fetchall()
             batch = []
@@ -318,10 +321,15 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
                     b0, b1 = B[i], B[i + h]
                     if any(np.isnan(v) for v in (c0, c1, b0, b1)):
                         continue
-                    abn = float(c1 / c0 - 1) - float(b1 / b0 - 1)
+                    ret = float(c1 / c0 - 1)
+                    bench_ret = float(b1 / b0 - 1)
+                    abn = ret - bench_ret
+                    beta_abn = learning_targets.adjusted_return(ret, bench_ret, prediction_betas.get(r["ticker"], 1.0))
                     hit = None if abs(r["direction"]) < 0.1 else int((r["direction"] > 0) == (abn > 0))
-                    batch.append((r["id"], h, idx[i + h].date().isoformat(), float(c1 / c0 - 1), float(b1 / b0 - 1), abn, hit))
-            con.executemany("INSERT OR REPLACE INTO scores VALUES (?,?,?,?,?,?,?)", batch)
+                    batch.append((r["id"], h, idx[i + h].date().isoformat(), ret, bench_ret, abn, beta_abn, hit))
+            con.executemany(
+                "INSERT OR REPLACE INTO scores(prediction_id,horizon,scored_date,ret,bench_ret,abnormal,beta_abnormal,hit) "
+                "VALUES (?,?,?,?,?,?,?,?)", batch)
         if i - start < warmup:
             continue
         if model is None or (i - start) % refit_every == 0:

@@ -28,6 +28,7 @@ import ensemble
 import journal
 import learner
 import ledger
+import learning_targets
 import liquidate
 import market
 import portfolio
@@ -122,7 +123,8 @@ def main():
     for noisy in ("primp", "ddgs", "ddgs.ddgs", "httpx", "urllib3"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
     today = datetime.now(ET).date().isoformat()
-    notes = []
+    vol_label = f"{config.VOL_TARGET:.0%}" if config.VOL_TARGET is not None else "off"
+    notes = [f"learner target mode: {config.LEARNER_TARGET_MODE}; portfolio vol target: {vol_label}"]
     log.info("=== cycle %s dry_run=%s llm=%s ===", today, dry, not args.no_llm)
 
     # Signals are computed before the open (yesterday's closes, today's news and
@@ -164,12 +166,19 @@ def main():
 
     ctx = {"closes": closes, "today": today}
     signals = run_agents(universe, ctx, model, positions, use_llm=not args.no_llm)
-    ledger.add_predictions(today, signals, last_close)
+    prediction_betas = learning_targets.latest_betas(closes, {s.ticker for s in signals}, today)
+    ledger.add_predictions(today, signals, last_close, prediction_betas)
     convictions, breakdown = learner.predict(signals, model)
+    shadow_mode = "raw" if config.LEARNER_TARGET_MODE == "beta" else "beta"
+    shadow_model = learner.load(shadow_mode)
+    shadow_convictions, _ = learner.predict(signals, shadow_model) if shadow_model else ({}, {})
     if config.DEMEAN_CONVICTION and convictions:
         mean_conv = sum(convictions.values()) / len(convictions)
         convictions = {t: c - mean_conv for t, c in convictions.items()}
         notes.append(f"convictions demeaned by {mean_conv:+.3f}")
+    if config.DEMEAN_CONVICTION and shadow_convictions:
+        shadow_mean = sum(shadow_convictions.values()) / len(shadow_convictions)
+        shadow_convictions = {t: c - shadow_mean for t, c in shadow_convictions.items()}
 
     if not dry and not wait_for_open(max_minutes=120):
         log.info("market did not open (holiday?) — predictions recorded, no orders")
@@ -185,14 +194,21 @@ def main():
     if blocked:
         notes.append("guardian cooldown (no rebuy): " + ", ".join(sorted(blocked)))
         convictions_for_sizing = {t: c for t, c in convictions.items() if t not in blocked}
+        shadow_for_sizing = {t: c for t, c in shadow_convictions.items() if t not in blocked}
     else:
         convictions_for_sizing = convictions
+        shadow_for_sizing = shadow_convictions
     realized = broker.realized_vol(config.VOL_LOOKBACK_DAYS) if config.VOL_TARGET else None
     if realized is not None:
         scaled = realized > config.VOL_TARGET
         notes.append(f"realised vol {realized:.0%} ({config.VOL_LOOKBACK_DAYS}d) vs target {config.VOL_TARGET:.0%}: "
                      + (f"book scaled x{config.VOL_TARGET / realized:.2f}" if scaled else "no scaling"))
     target_usd = portfolio.targets(convictions_for_sizing, equity, realized_vol=realized)
+    shadow_targets = portfolio.targets(shadow_for_sizing, equity, realized_vol=realized) if shadow_for_sizing else {}
+    ledger.save_shadow_targets(today, config.LEARNER_TARGET_MODE, convictions, target_usd, last_close,
+                               config.VOL_TARGET, active=True)
+    ledger.save_shadow_targets(today, shadow_mode, shadow_convictions, shadow_targets, last_close,
+                               config.VOL_TARGET, active=False)
     orders = portfolio.plan(target_usd, positions, convictions, universe, equity, buying_power)
     log.info("equity $%.0f cash $%.0f buying power $%.0f positions %d targets %d orders %d",
              equity, cash, buying_power, len(positions), len(target_usd), len(orders))
@@ -292,7 +308,8 @@ def main():
         except ValueError:
             history = []
     history = [h for h in history if h.get("date") != today]
-    history.append({"date": today, "dry_run": dry, "weights": weights, "notes": notes, "decisions": decisions})
+    history.append({"date": today, "dry_run": dry, "target_mode": config.LEARNER_TARGET_MODE,
+                    "weights": weights, "notes": notes, "decisions": decisions})
     history = history[-30:]
 
     backtest = None
@@ -316,6 +333,8 @@ def main():
         "equity": equity,
         "cash": cash,
         "universe_size": len(universe),
+        "target_mode": config.LEARNER_TARGET_MODE,
+        "shadow_target_mode": shadow_mode,
         "weights": weights,
         "weights_hedge": weights_hedge,
         "model": {h: {k: v.get(k) for k in ("n_obs", "n_dates", "lambda", "scale", "cv_ic", "reliability", "agent_ic")}

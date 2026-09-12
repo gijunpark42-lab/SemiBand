@@ -29,6 +29,8 @@ import numpy as np
 import pandas as pd
 
 import config
+import learning_targets
+import ledger
 import market
 import universe as universe_mod
 from agents import llm
@@ -83,6 +85,7 @@ def main():
     closes = market.closes(tickers + [config.BENCHMARK], lookback_days=800, cache=False)
     closes = closes[closes[config.BENCHMARK].notna()]
     idx = closes.index
+    rolling_betas = learning_targets.rolling_beta(closes)
     C = closes.to_numpy(dtype=float)
     col = {tk: j for j, tk in enumerate(closes.columns)}
     B = C[:, col[config.BENCHMARK]]
@@ -149,6 +152,7 @@ def main():
     # --- write the held opinions into a copy of the ledger, scored like the rule agents ---
     shutil.copy2(src, dst)
     con = sqlite3.connect(dst)
+    ledger._migrate(con)
     con.execute("DELETE FROM scores WHERE prediction_id IN (SELECT id FROM predictions WHERE agent = 'llm_guidance')")
     con.execute("DELETE FROM predictions WHERE agent = 'llm_guidance'")
     ledger_set = set(ledger_dates)
@@ -167,8 +171,12 @@ def main():
                 i = int(idx.get_loc(ts))
                 if np.isnan(C[i, col[tk]]):
                     continue
-                cur = con.execute("INSERT INTO predictions(date, agent, ticker, direction, confidence, horizon, reason, price_at) VALUES (?,?,?,?,?,?,?,?)",
-                                  (t, "llm_guidance", tk, o["direction"], o["confidence"], o["horizon"], o["reason"], float(C[i, col[tk]])))
+                beta = learning_targets.beta_at(rolling_betas, tk, ts)
+                cur = con.execute(
+                    "INSERT INTO predictions(date, agent, ticker, direction, confidence, horizon, reason, price_at, benchmark_beta) "
+                    "VALUES (?,?,?,?,?,?,?,?,?)",
+                    (t, "llm_guidance", tk, o["direction"], o["confidence"], o["horizon"], o["reason"],
+                     float(C[i, col[tk]]), beta))
                 pid = cur.lastrowid
                 for h in config.HORIZONS:
                     if i + h >= len(idx):
@@ -176,10 +184,15 @@ def main():
                     c0, c1, b0, b1 = C[i, col[tk]], C[i + h, col[tk]], B[i], B[i + h]
                     if any(np.isnan(v) for v in (c0, c1, b0, b1)):
                         continue
-                    abn = float(c1 / c0 - 1) - float(b1 / b0 - 1)
+                    ret = float(c1 / c0 - 1)
+                    bench_ret = float(b1 / b0 - 1)
+                    abn = ret - bench_ret
+                    beta_abn = learning_targets.adjusted_return(ret, bench_ret, beta)
                     hit = None if abs(o["direction"]) < 0.1 else int((o["direction"] > 0) == (abn > 0))
-                    con.execute("INSERT OR REPLACE INTO scores VALUES (?,?,?,?,?,?,?)",
-                                (pid, h, idx[i + h].date().isoformat(), float(c1 / c0 - 1), float(b1 / b0 - 1), abn, hit))
+                    con.execute(
+                        "INSERT OR REPLACE INTO scores(prediction_id,horizon,scored_date,ret,bench_ret,abnormal,beta_abnormal,hit) "
+                        "VALUES (?,?,?,?,?,?,?,?)",
+                        (pid, h, idx[i + h].date().isoformat(), ret, bench_ret, abn, beta_abn, hit))
                 n_rows += 1
     con.commit()
     con.close()

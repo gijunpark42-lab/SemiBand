@@ -51,7 +51,8 @@ def convictions_by_date(by_date, refit_every=5, warmup=30):
         if k < warmup:
             continue
         if model is None or k % refit_every == 0:
-            model = learner.fit(date.fromisoformat(d), asof=date.fromisoformat(d))
+            model = learner.fit(date.fromisoformat(d), asof=date.fromisoformat(d),
+                                target_mode="raw", model_file=learner.MODEL_FILE)
         conv, _ = learner.predict(by_date[d], model)
         out[d] = conv
     return out

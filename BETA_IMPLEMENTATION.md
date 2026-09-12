@@ -26,7 +26,8 @@ volatility behavior. Actual portfolio vol targeting waits for 20 account-return 
 
 ## Implementation
 
-- `config.py`: `LEARNER_TARGET_MODE = "beta"`, `VOL_TARGET = 0.50`.
+- `config.py`: requested destination is `LEARNER_TARGET_MODE = "beta"`, `VOL_TARGET = 0.50`.
+  Raw is temporarily retained while the operational migration's specific approval is pending.
 - `learning_targets.py`: shared rolling 60-session beta to SOXX, minimum 40 return observations, clip [0,3],
   fallback 1 for unavailable estimates. Benchmark sessions only; no implicit filling of missing price returns.
   New pre-open predictions capture the beta available strictly before the prediction date.
@@ -66,8 +67,12 @@ cycles and weights matched their references. All raw/beta learner arrays matched
 Each model uses 72,930 date/ticker observations per horizon across 500 dates. Latest CV IC is negative for both
 models (beta −0.073/−0.045; raw −0.021/−0.009); historical superiority is not a claim of a currently positive IC.
 
-Operational installation and model promotion are pending at this commit. The final activation entry below will
-record actual checks and backups; do not mistake this code-ready checkpoint for completed activation.
+The code was integrated in the operational feature branch by merge `386ca33`, and its 15 tests passed there too.
+Automatic approval review rejected the warm-start migration, citing the repository's no-overwrite rule and
+requiring specific authorization for the operational database migration. The user was asked to authorize backups
+and additive beta columns in `state/backtest.sqlite` and `state/ledger.sqlite`. No operational database mutation
+occurred. Raw mode is retained until that pending approval arrives and migration/verification finish. Beta is not
+active yet; do not confuse the completed full-data rehearsal with an operational state change.
 
 ## Rollback
 

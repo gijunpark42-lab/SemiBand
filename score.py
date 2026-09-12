@@ -10,6 +10,7 @@ Two learners run on the scored rows:
 """
 import logging
 import math
+import sqlite3
 from collections import defaultdict
 from datetime import date
 
@@ -76,7 +77,7 @@ def run(closes: pd.DataFrame, today: str):
     model = learner.fit(date.fromisoformat(today), asof=date.fromisoformat(today), target_mode=active_mode)
     try:
         learner.fit(date.fromisoformat(today), asof=date.fromisoformat(today), target_mode=shadow_mode)
-    except (RuntimeError, ValueError) as exc:
+    except (RuntimeError, ValueError, sqlite3.OperationalError) as exc:
         # A failed experimental shadow must not prevent an authorized rollback to the raw model.
         if active_mode != "raw":
             raise

@@ -594,3 +594,55 @@ whether removing it changes where the learner puts its weight.
 - Warm start: `state/backtest.sqlite` (live) should be replaced by the `_nbfix` ledger (backup the old one as
   `backtest_prenbfix.sqlite`) so the live learner stops warming up on the fake rows. Not done automatically from this
   session (shared live state); see the commit message / report for the copy commands.
+
+## 2026-09-12 — rounds 23–25: corrected causal replay, external gate rejected, beta target retained
+
+Before comparison, tagged replays were isolated from the operational warm start, score eligibility was corrected
+to exact stored maturity dates, and CV target scaling/source weights were made fold-local. These correctness fixes
+change the baseline relative to older rounds. All comparisons below use next-open execution, daily refits and the
+same 2025-09-24 OOS boundary. The already repeatedly inspected OOS segment is exploratory, not untouched evidence.
+The frozen protocol and full results are in the dated `semiband-research/outputs/` directory.
+
+Round 23 tested exactly one external gate: two of SPY>SMA200, SOXX/SPY>SMA200 and HYG/LQD>SMA200 permit full exposure;
+otherwise use 25%. Recent return +538.2%, Sharpe 1.67, DD 26.9%, OOS Sharpe 1.94, score 3.506 versus corrected raw
+baseline +631.6%, 1.67, 27.8%, 1.89, score 3.962. Stress return −11.2%, Sharpe −0.10, DD 37.6%; a constant
+matched-exposure control had −12.8%, −0.13, DD 34.8%. PBO 0.979 recent / 0.706 stress. Rejected; do not retune.
+
+Round 24's distinct pre-registered hypothesis was beta-adjusted SOXX labels with the existing lower vol0.40 setting;
+raw0.40 and beta0.50 separated risk and target effects. Original raw labels remain available in the source ledgers.
+
+| Recent 2024–26 | Return | Sharpe | Max DD | Turn/day | Score | OOS return | OOS Sharpe |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Raw / vol0.50 | +631.61% | 1.67 | 27.84% | 39.3% | 3.962 | +210.51% | 1.89 |
+| Raw / vol0.40 | +550.34% | 1.75 | 24.13% | 35.7% | 3.653 | +196.14% | 1.99 |
+| Beta / vol0.50 | +775.83% | 2.02 | 32.62% | 35.9% | 5.050 | +296.79% | 2.21 |
+| Beta / vol0.40 | +631.13% | 2.05 | 28.74% | 33.5% | 4.368 | +259.31% | 2.27 |
+
+| Stress 2019–23 | Return | Sharpe | Max DD |
+|---|---:|---:|---:|
+| Raw / vol0.50 | −18.29% | −0.17 | 40.59% |
+| Raw / vol0.40 | −18.0% | −0.17 | 39.2% |
+| Beta / vol0.50 | +17.15% | 0.14 | 36.98% |
+| Beta / vol0.40 | +13.85% | 0.12 | 36.37% |
+
+Round 25 fixed trading costs at 30bps: recent beta0.40 +424.0%, Sharpe1.71, OOS1.96 versus raw0.40 +362.5%,
+1.43, OOS1.64. Candidate DD was higher (32.6% vs25.2%). Paired 40/80-day block-bootstrap intervals for beta0.40
+delta Sharpe cross zero; no statistical superiority claim. These cost tests omit borrowing costs, impact,
+partial fills and operational account-history startup behavior. Current-universe survivorship and sparse early
+graph history remain limitations. Original conclusion: retain beta0.40 as exploratory offline candidate only.
+
+### Subsequent authorized operational decision (not a retroactive change to the protocol)
+
+After discussing the 0.03 Sharpe gap versus materially higher return at beta0.50, the user selected beta0.50 for
+active PAPER use, with raw preserved as a comparison/rollback model. End-to-end label consistency was implemented
+for both warm start and future scores, then 15 regression tests and full-data rehearsal passed. After explicit
+authorization, both operational ledgers were backed up and additively migrated, 577,944 researched beta scores
+imported and 2,036 pre-open live prediction betas frozen; zero live scores had matured. Original records and exact
+raw/beta learner inputs were verified. Beta was activated at 14:54 PT; no orders, cycle, LLM calls or schedule changes
+were run. The next existing scheduled paper cycle uses beta. See `BETA_IMPLEMENTATION.md` for exact backups,
+verification, current negative CV IC, shadow limitations and safe rollback without deleting later observations.
+
+User subsequently requested testing higher deployment/exposure toward a $2m book on approximately $1m equity.
+That is a separate predeclared experiment; gross1.50, size0.60 and entry0.10 remain unchanged pending its verdict.
+Raising a ceiling alone does not force investment. Record the next experiment below when complete, including
+financing, stress, cash exposure and whether its result actually addresses the current low-investment state.

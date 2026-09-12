@@ -9,7 +9,7 @@ const H = 220, PAD = { l: 86, r: 12, t: 12, b: 24 };
 const money = (v: number) =>
   v.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 const day = (t: number) =>
-  new Date(t * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  new Date(t * 1000).toLocaleDateString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric" });
 
 export default function EquityChart({ points }: { points: Point[] }) {
   const [hover, setHover] = useState<number | null>(null);

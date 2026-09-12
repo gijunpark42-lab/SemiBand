@@ -4,6 +4,15 @@ Written by Claude (Fable 5.1) on 2026-09-12, at commit `fe7b998` on `main`. Purp
 can read this file, know exactly where the project stands, continue, and hand back. Sections 1–5 describe the state as
 of the date above and are rewritten only by the agent that changes the state. Section 6 is append-only.
 
+**Current-state override, 2026-09-12 afternoon:** the baseline narrative in sections 1–5 below is the original
+morning snapshot, not the active setting. Beta-adjusted learning with VOL_TARGET=0.50 is now active for the next
+scheduled PAPER cycle; raw labels/model, ledger backups and verification are preserved. Both website UI releases
+and SemiBand's September 10 opening-price benchmark repair are deployed and verified. Read `BETA_IMPLEMENTATION.md`
+and the newest session-log entries first. The user explicitly approved publishing the full source and operational
+handoff to this PUBLIC GitHub repository, and `42c30af` was pushed on `codex/semiband-ui-clarity`; main is unchanged.
+The user subsequently chose to KEEP the signal-sized cash-holding structure: gross1.50 and size0.60 have not been
+increased. Higher-exposure research is being finalized/checkpointed only, with no further active-setting change.
+
 ## 1. What this is, in five lines
 
 SemiBand v2.3: eleven agents (8 rule agents, 3 Claude agents) each give a direction × confidence opinion on every stock in
@@ -138,3 +147,21 @@ touched since, `git status`, the tail of `RESEARCH.md`, and `state/run_daily.log
 - Deployment safety / reproduction: do NOT deploy directly from the Desktop repository root with its present ignore file. A read-only dry run found it would include root `.env` and many locked `.claude/worktrees` sources; that unsafe upload was never performed. The authorized production upload instead used 22 explicitly selected web source/config files, no secrets/state/trading files, from `C:/Users/calif/Documents/Codex/2026-09-12/semiband-research/work/semiband-ui-deploy-20260912`, with existing `.vercel/project.json` metadata. Workflow: `vercel deploy --prod --skip-domain --yes`, inspect the READY build and authorized staged response, then `vercel promote <deployment-url> --yes`. Staging deliberately excluded tests and all unrelated root changes. Vercel CLI generated its standard deployment-protection bypass token for authenticated staged inspection; no token value was exposed. Existing build warning about broad local-file tracing in `web/lib/alpaca.ts` remains, but the isolated upload contained no strategy/state/credential files.
 - Rollback / local caveats: the immediately preceding benchmark-capable production build is https://semiband-2o2jrhsv9-gijun42.vercel.app (`dpl_HJunfpwYm8MopyuWcYxK66C7S6bg`); it predates only the equity chart timezone fix. The UI-only release https://semiband-66dqrzo3f-gijun42.vercel.app (`dpl_CQNLQoCccVv5duu8xXEMTiBXUhiT`) predates the benchmark fix and would restore that known zero-return problem. Use Vercel promote only with an intended rollback authorization. The local `web/.env.local` Alpaca keys returned 401, whereas existing root process credentials and production credentials worked; no environment file was edited. Local validation loaded working credentials into the server process only and did not print them. All temporary Next preview servers were stopped.
 - Unfinished / next: no unfinished web edits or deployments. The original root `HANDOFF.md` and agent instruction files were already untracked; this log was appended without deleting/replacing those original documents. The feature branch is ready for the user/root's normal review and push, never a main merge. Benchmark baseline is intentionally fixed to the user-confirmed Sep 10 opening; future date-convention changes need explicit product intent. Do not mistake subsequent closing-price changes for trading decisions.
+
+### 2026-09-12 afternoon — Codex root → Claude / anyone: final user decision and public publication
+- Did: verified the configured SemiBand GitHub repository is PUBLIC and the authenticated user has ADMIN access.
+  Automatic review initially blocked exporting account figures/operational handoff. After that exact risk was
+  explained, the user explicitly approved publishing the full current code and records. Pushed feature branch
+  `codex/semiband-ui-clarity` through `42c30af`; remote/local equality verified. Main was not changed. The complete
+  original HANDOFF history is now tracked, preserving all prior entries. Added the current-state override above
+  sections1–5 so the old morning snapshot cannot be mistaken for active raw settings.
+- Final decision: the user explicitly chose to keep the signal-sized/cash-holding structure after discussing low
+  deployment. Active PAPER beta0.50 remains; gross1.50, size0.60, entry0.10, cap0.15, top15 and band0.30 stay unchanged.
+  No forced 200% deployment or exposure floor was applied. Current models rechecked: beta active and raw shadow
+  both load, with matching target identities. Fifteen regression tests passed again. No orders/cycle/LLM/schedule
+  changes were run. Existing unrelated untracked instruction files and empty files were preserved.
+- Records: dated user-facing summary is `C:/Users/calif/Documents/Codex/2026-09-12/semiband-research/outputs/FINAL_HANDOFF.md`;
+  detailed implementation/rollback is `implementation_report.md` beside it. Both website deployments and benchmark
+  returns remain verified as in the preceding entry. Higher-exposure research is being finalized below, not deployed.
+- Next: keep this final user decision; inspect normal next-cycle beta/raw-shadow logs when that scheduled cycle
+  occurs. Do not start an extra order-producing cycle or resume parameter tuning without a new request.

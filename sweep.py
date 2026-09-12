@@ -63,7 +63,9 @@ BASE = dict(min_conv=0.10, size_k=0.30, cap=0.10, gross=1.50, band=0.15, top_n=1
             hedge_mode="fixed",   # 'fixed' = hedge_size whenever the regime is weak; 'prop' = min(hedge_size, long gross): a hedge, never a net short
             ic_gate=None,         # (threshold, floor): when the learner's walk-forward IC (mean over horizons) is below threshold, run the book at floor x size
             bag=None,             # list of sizing overrides {min_conv, size_k, top_n, cap}: trade the AVERAGE book of several configurations (bagging)
-            perf_gate=None)       # (window, threshold, floor): when the book's own trailing `window`-day return is below threshold, run at floor x size
+            perf_gate=None,       # (window, threshold, floor): when the book's own trailing `window`-day return is below threshold, run at floor x size
+            external_gate=False,  # preregistered 2-of-3 SPY / SOXX:SPY / HYG:LQD 200d regime vote; weak regime -> 25% exposure
+            constant_scale=None)  # research control; 'matched_external' uses the gate's mean multiplier without timing
 
 
 def load_signals():
@@ -94,6 +96,21 @@ def _cost_bps(ticker, model):
     return 5 if cap >= 50e9 else (10 if cap >= 5e9 else 20)
 
 
+def _external_regime(closes, i):
+    """Causal external regime vote at close i: (multiplier, positive votes)."""
+    required = (config.BENCHMARK, "SPY", "HYG", "LQD")
+    if i < 199 or any(t not in closes.columns for t in required):
+        return 0.25, 0
+    window = closes.iloc[i - 199:i + 1]
+    spy = window["SPY"].dropna()
+    semi = (window[config.BENCHMARK] / window["SPY"]).dropna()
+    credit = (window["HYG"] / window["LQD"]).dropna()
+    if min(len(spy), len(semi), len(credit)) < 180:
+        return 0.25, 0
+    votes = int(spy.iloc[-1] > spy.mean()) + int(semi.iloc[-1] > semi.mean()) + int(credit.iloc[-1] > credit.mean())
+    return (1.0 if votes >= 2 else 0.25), votes
+
+
 def simulate(by_date, closes, params, refit_every=1, warmup=30, opens=None):
     p = dict(BASE, **params)
     learner.HALF_LIFE_DAYS = p["half_life"]
@@ -116,9 +133,14 @@ def simulate(by_date, closes, params, refit_every=1, warmup=30, opens=None):
         px, shift = opens.reindex(idx), 1
     else:
         px, shift = closes, 0
+    matched_scale = None
+    if p["constant_scale"] == "matched_external":
+        eligible_i = [pos_of[d] for k, d in enumerate(dates) if k >= warmup and d in pos_of and pos_of[d] + 10 < len(idx)]
+        matched_scale = float(np.mean([_external_regime(closes, i)[0] for i in eligible_i])) if eligible_i else 1.0
     equity, prev_w, turnover_total, curve, ics = 1.0, {}, 0.0, [], []
     entry, banned, smooth = {}, {}, {}
     entry_day, peak, braked = {}, 1.0, False
+    defensive_days, defensive_episodes, was_defensive = 0, 0, False
     quint = [[] for _ in range(5)]                    # 10-day abnormal return by conviction quintile (signal monotonicity)
     model = None
     for k, d in enumerate(dates):
@@ -277,6 +299,20 @@ def simulate(by_date, closes, params, refit_every=1, warmup=30, opens=None):
             realised = float(np.std([c["ret"] for c in curve[-20:]])) * math.sqrt(252)
             if realised > p["vol_target"]:
                 w = {t: x * p["vol_target"] / realised for t, x in w.items()}
+        exposure_multiplier = 1.0
+        regime_votes = None
+        if p["external_gate"]:
+            exposure_multiplier, regime_votes = _external_regime(closes, i)
+        elif p["constant_scale"] is not None:
+            exposure_multiplier = matched_scale if p["constant_scale"] == "matched_external" else float(p["constant_scale"])
+        if exposure_multiplier < 1.0:
+            w = {t: x * exposure_multiplier for t, x in w.items()}
+            defensive_days += 1
+            if not was_defensive:
+                defensive_episodes += 1
+            was_defensive = True
+        else:
+            was_defensive = False
         # drawdown brake: once the book is `trigger` below its own high, run at `factor` of size until it is back within `release`
         if p["dd_brake"]:
             trigger, factor, release = p["dd_brake"]
@@ -312,7 +348,8 @@ def simulate(by_date, closes, params, refit_every=1, warmup=30, opens=None):
         prev_w = w
         b0 = pos_of[dates[warmup]] + shift
         curve.append({"date": d, "portfolio": equity, "gross": sum(abs(x) for x in w.values()), "n": len(w), "ret": ret,
-                      "soxx": float(px[config.BENCHMARK].iloc[i + 1 + shift] / px[config.BENCHMARK].iloc[b0])})
+                      "soxx": float(px[config.BENCHMARK].iloc[i + 1 + shift] / px[config.BENCHMARK].iloc[b0]),
+                      "exposure_multiplier": exposure_multiplier, "regime_votes": regime_votes})
     rets = np.diff(np.log([1.0] + [c["portfolio"] for c in curve]))
     eq = np.array([c["portfolio"] for c in curve])
     dd = 1 - eq / np.maximum.accumulate(eq)
@@ -332,6 +369,10 @@ def simulate(by_date, closes, params, refit_every=1, warmup=30, opens=None):
         "ic_10d": round(float(np.mean(ics)), 4) if ics else None,
         "quintiles_10d": [round(float(np.mean(q)), 4) if q else None for q in quint],   # Q1 (lowest conviction) .. Q5
         "days": n,
+        "defensive_days": defensive_days,
+        "defensive_fraction": round(defensive_days / n, 4),
+        "defensive_episodes": defensive_episodes,
+        "mean_exposure_multiplier": round(float(np.mean([c["exposure_multiplier"] for c in curve])), 4),
     }
     if p["oos_end"]:
         out["oos"] = _segment([c for c in curve if c["date"] < p["oos_end"]], 1.0, 1.0)
@@ -387,7 +428,7 @@ def _init_worker(db_path, exec_mode, roster):
     by_date = load_signals()
     tickers = sorted({s.ticker for sigs in by_date.values() for s in sigs})
     lb = _lookback(by_date)
-    closes = market.closes(tickers + [config.BENCHMARK, "SPY"], lookback_days=lb, cache=False)
+    closes = market.closes(tickers + [config.BENCHMARK, "SPY", "HYG", "LQD"], lookback_days=lb, cache=False)
     _W["by_date"], _W["closes"] = by_date, closes[closes[config.BENCHMARK].notna()]
     _W["opens"] = market.opens(tickers + [config.BENCHMARK, "SPY"], lookback_days=lb) if exec_mode == "open" else None
 
@@ -479,6 +520,7 @@ def main():
     ap.add_argument("--round10", action="store_true", help="tenth round (2026-09-11): vol targeting, EWMA smoothing, no-learning, drop-one agents; run on _open500 with --exec open --oos-end 2025-09-24")
     ap.add_argument("--round11", action="store_true", help="eleventh round (2026-09-11): round-10 winners combined (vol target x no-events x horizons 10/20 x cap)")
     ap.add_argument("--round21", action="store_true", help="twenty-first round: self-monitoring exposure gates on a bad regime (2019-23 ledger) and a good one (2024-26)")
+    ap.add_argument("--round23", action="store_true", help="preregistered external 2-of-3 regime gate and matched constant-exposure control")
     ap.add_argument("--round20", action="store_true", help="twentieth round: price agents vs graph agents on 2024-26 (after the 2019-23 price-only stress test)")
     ap.add_argument("--round19", action="store_true", help="nineteenth round: bagging over sizing configs, IC-gated exposure (and the beta-adjusted ledger via --tag _beta)")
     ap.add_argument("--round18d", action="store_true", help="round 18d: fixed-size regime hedge vs a hedge capped at the long gross (never net short)")
@@ -516,7 +558,7 @@ def main():
         by_date = load_signals()
         tickers = sorted({s.ticker for sigs in by_date.values() for s in sigs})
         lb = _lookback(by_date)
-        closes = market.closes(tickers + [config.BENCHMARK, "SPY"], lookback_days=lb, cache=False)
+        closes = market.closes(tickers + [config.BENCHMARK, "SPY", "HYG", "LQD"], lookback_days=lb, cache=False)
         closes = closes[closes[config.BENCHMARK].notna()]
         opens = market.opens(tickers + [config.BENCHMARK, "SPY"], lookback_days=lb) if args.exec_mode == "open" else None
         data = (by_date, closes, opens)
@@ -553,7 +595,13 @@ def main():
         config.AGENTS, config.HORIZONS = live_agents, live_h
         return
 
-    if args.round10:
+    if args.round23:
+        v23 = {"lam": 150.0, "min_conv": 0.10, "size_k": 0.60, "top_n": 15, "cap": 0.15, "band": 0.30,
+               "vol_target": 0.50, "horizons": (10, 20), "cost_model": "cap"}
+        variants = [("baseline_exact_maturity", dict(v23)),
+                    ("external_vote_2of3", dict(v23, external_gate=True)),
+                    ("constant_matched_exposure", dict(v23, constant_scale="matched_external"))]
+    elif args.round10:
         v21 = {"lam": 150.0, "min_conv": 0.15, "size_k": 0.60, "top_n": 15, "band": 0.30}
         variants = [("v21", dict(v21)),
                     ("no_learning", dict(v21, learn=False)),
@@ -806,13 +854,13 @@ def main():
                 ("technical_only", {"learn": False, "agents_only": ("technical",)}),
                 ("no_neighbors", {"agents_only": ("supply_chain", "technical", "mean_reversion", "events", "risk", "macro")}),
                 ("price_agents_only", {"agents_only": ("technical", "mean_reversion", "risk", "macro")})]
-    if not args.quick and not (args.round2 or args.round3 or args.round4 or args.round5 or args.round6 or args.round7 or args.round8 or args.round9 or args.round10 or args.round11 or args.round12 or args.round13 or args.round14 or args.round15 or args.round16 or args.round17 or args.round18 or args.round18b or args.round18d or args.round19 or args.round20 or args.round21):
+    if not args.quick and not (args.round2 or args.round3 or args.round4 or args.round5 or args.round6 or args.round7 or args.round8 or args.round9 or args.round10 or args.round11 or args.round12 or args.round13 or args.round14 or args.round15 or args.round16 or args.round17 or args.round18 or args.round18b or args.round18d or args.round19 or args.round20 or args.round21 or args.round23):
         for combo in itertools.product(*GRID.values()):
             kv = dict(zip(GRID.keys(), combo))
             if kv == {k: BASE[k] for k in GRID}:
                 continue
             variants.append(("+".join(f"{k}={v}" for k, v in kv.items()), kv))
-    tag = ("2" if args.round2 else "3" if args.round3 else "4" if args.round4 else "5" if args.round5 else "6" if args.round6 else "7" if args.round7 else "8" if args.round8 else "9" if args.round9 else "10" if args.round10 else "11" if args.round11 else "12" if args.round12 else "13" if args.round13 else "14" if args.round14 else "15" if args.round15 else "16" if args.round16 else "17" if args.round17 else "18" if args.round18 else "18b" if args.round18b else "18d" if args.round18d else "19" if args.round19 else "20" if args.round20 else "21" if args.round21 else "") + args.tag
+    tag = ("2" if args.round2 else "3" if args.round3 else "4" if args.round4 else "5" if args.round5 else "6" if args.round6 else "7" if args.round7 else "8" if args.round8 else "9" if args.round9 else "10" if args.round10 else "11" if args.round11 else "12" if args.round12 else "13" if args.round13 else "14" if args.round14 else "15" if args.round15 else "16" if args.round16 else "17" if args.round17 else "18" if args.round18 else "18b" if args.round18b else "18d" if args.round18d else "19" if args.round19 else "20" if args.round20 else "21" if args.round21 else "23" if args.round23 else "") + args.tag
     run_info = {"kind": "sweep", "tag": tag, "total": len(variants), "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     t0 = time.time()
     results = evaluate(variants, common, args.workers, run_info, pool=pool, data=data)

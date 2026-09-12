@@ -148,14 +148,18 @@ def _load_source(db_path, sw, horizon, names):
             rows = _rows(db_path, horizon, None, dates=touched) if touched else []
         per = {}
         for r in rows:
-            g = per.setdefault(r["date"], {}).setdefault(r["ticker"], {"agents": {}, "y": r["abnormal"]})
+            g = per.setdefault(r["date"], {}).setdefault(
+                r["ticker"], {"agents": {}, "y": r["abnormal"], "scored_date": r["scored_date"]})
             g["agents"][r["agent"]] = {"direction": r["direction"], "confidence": r["confidence"]}
             if ent["last_scored"] is None or r["scored_date"] > ent["last_scored"]:
                 ent["last_scored"] = r["scored_date"]
         for d, groups in per.items():
             tks = sorted(groups)
-            ent["by_date"][d] = (np.array([features(groups[tk]["agents"], names) for tk in tks]),
-                                 np.array([float(np.clip(groups[tk]["y"], -WINSOR, WINSOR)) for tk in tks]))
+            ent["by_date"][d] = (
+                np.array([features(groups[tk]["agents"], names) for tk in tks]),
+                np.array([float(np.clip(groups[tk]["y"], -WINSOR, WINSOR)) for tk in tks]),
+                np.array([groups[tk]["scored_date"] for tk in tks]),
+            )
         ent["stamp"], ent["arrays"] = stamp, None
     if ent["arrays"] is None:
         ds = sorted(ent["by_date"])
@@ -163,15 +167,17 @@ def _load_source(db_path, sw, horizon, names):
             X = np.concatenate([ent["by_date"][d][0] for d in ds])
             y = np.concatenate([ent["by_date"][d][1] for d in ds])
             dates = np.concatenate([np.full(len(ent["by_date"][d][1]), d) for d in ds])
+            scored_dates = np.concatenate([ent["by_date"][d][2] for d in ds])
         else:
-            X, y, dates = np.zeros((0, 2 * len(names))), np.zeros(0), np.zeros(0, dtype=str)
-        ent["arrays"] = (X, y, dates)
-    X, y, dates = ent["arrays"]
-    return X, y, dates, np.full(len(y), sw)
+            X, y, dates, scored_dates = (np.zeros((0, 2 * len(names))), np.zeros(0),
+                                          np.zeros(0, dtype=str), np.zeros(0, dtype=str))
+        ent["arrays"] = (X, y, dates, scored_dates)
+    X, y, dates, scored_dates = ent["arrays"]
+    return X, y, dates, scored_dates, np.full(len(y), sw)
 
 
 def dataset(horizon: int, names: list, asof=None):
-    """-> (X, y_raw, dates, source_weight) from scored predictions at this horizon, one row per (date, ticker).
+    """-> (X, y_raw, prediction_dates, scored_dates, source_weight) at this horizon.
 
     Live rows come from state/ledger.sqlite (weight 1). If state/backtest.sqlite exists and
     WARM_START_WEIGHT > 0, its point-in-time rows are added at that weight so the model
@@ -179,19 +185,22 @@ def dataset(horizon: int, names: list, asof=None):
     outcome was known by then (walk-forward backtests and sweeps)."""
     sources = [(ledger.DB, 1.0)]
     bt = config.STATE_DIR / "backtest.sqlite"
-    if bt != ledger.DB and bt.exists() and config.WARM_START_WEIGHT > 0:
+    live = config.STATE_DIR / "ledger.sqlite"
+    # The historical ledger is a warm start only for the live learner. Tagged backtests and sweeps set
+    # ledger.DB to their own replay; mixing in state/backtest.sqlite would duplicate or contaminate that trial.
+    if ledger.DB == live and bt.exists() and config.WARM_START_WEIGHT > 0:
         sources.append((bt, config.WARM_START_WEIGHT))
     parts = [_load_source(p, sw, horizon, names) for p, sw in sources if p.exists()]
     if not parts:
-        return np.zeros((0, 2 * len(names))), np.zeros(0), [], np.zeros(0)
+        return np.zeros((0, 2 * len(names))), np.zeros(0), [], [], np.zeros(0)
     X = np.concatenate([p[0] for p in parts]); y = np.concatenate([p[1] for p in parts])
-    dates = np.concatenate([p[2] for p in parts]); sw = np.concatenate([p[3] for p in parts])
+    dates = np.concatenate([p[2] for p in parts]); scored_dates = np.concatenate([p[3] for p in parts])
+    sw = np.concatenate([p[4] for p in parts])
     if asof is not None:
-        cutoff = (asof - timedelta(days=int(math.ceil(horizon * 1.45)) + 1)).isoformat()
-        keep = dates <= cutoff
-        X, y, dates, sw = X[keep], y[keep], dates[keep], sw[keep]
+        keep = scored_dates <= asof.isoformat()
+        X, y, dates, scored_dates, sw = X[keep], y[keep], dates[keep], scored_dates[keep], sw[keep]
     order = np.argsort(dates, kind="stable")           # keep the (date, ticker) order the old code produced
-    return X[order], y[order], list(dates[order]), sw[order]
+    return X[order], y[order], list(dates[order]), list(scored_dates[order]), sw[order]
 
 
 _ORD = {}   # ISO date -> ordinal; a fit sees the same few hundred dates tens of thousands of times
@@ -240,7 +249,7 @@ def ic(pred, y):
     return float(np.corrcoef(rp, ry)[0, 1])
 
 
-def walk_forward_ic(X, y, dates, w0, lam, today, horizon, last_k=10, ords=None):
+def walk_forward_ic(X, y, dates, scored_dates, w0, lam, today, horizon, last_k=10, ords=None):
     """Mean IC over the last_k dates, each predicted from a model that only saw rows whose
     outcome was already known on that date (prediction date + horizon), so overlapping
     return windows cannot leak the answer into the training set."""
@@ -248,11 +257,11 @@ def walk_forward_ic(X, y, dates, w0, lam, today, horizon, last_k=10, ords=None):
     if len(uniq) < CV_MIN_DATES:
         return None
     ords = _ordinals(dates) if ords is None else ords
-    gap = int(math.ceil(horizon * 1.45)) + 1
+    scored_ords = _ordinals(scored_dates)
     ics = []
     for dt in uniq[-last_k:]:
         d0 = date.fromisoformat(dt)
-        train = ords <= float((d0 - timedelta(days=gap)).toordinal())   # same rows as the ISO-string comparison
+        train = scored_ords <= float(d0.toordinal())
         test = ords == float(d0.toordinal())
         if train.sum() < 20 or test.sum() < 5:
             continue
@@ -270,14 +279,14 @@ def fit(today: date | None = None, asof: date | None = None) -> dict:
     w0 = prior_weights(n)
     model = {"fitted": today.isoformat(), "agents": names, "horizons": {}}
     for h in config.HORIZONS:
-        X, y_raw, dates, sw = dataset(h, names, asof)
+        X, y_raw, dates, scored_dates, sw = dataset(h, names, asof)
         ords = _ordinals(dates)
         scale = float(np.std(y_raw)) if len(y_raw) >= 40 else DEFAULT_SCALE[h]
         scale = max(scale, 0.01)
         y = y_raw / scale
         lam, cv = PRIOR_STRENGTH, None
         if len(set(dates)) >= CV_MIN_DATES:
-            scores = {l: walk_forward_ic(X, y, dates, w0, l, today, h, ords=ords) for l in LAMBDA_GRID}
+            scores = {l: walk_forward_ic(X, y, dates, scored_dates, w0, l, today, h, ords=ords) for l in LAMBDA_GRID}
             scores = {l: s for l, s in scores.items() if s is not None}
             if scores:
                 lam = max(scores, key=scores.get)

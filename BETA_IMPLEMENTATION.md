@@ -86,8 +86,9 @@ Verification: `state/beta_activation_verification.json`. Original historical sco
 there are still no matured live scores. Some unscored historical predictions have NULL beta because no target
 exists from which to infer it; they never enter a fitted dataset. Future historical rebuilds compute beta directly.
 
-The user subsequently requested higher-exposure/leverage testing. That is a separate research task; activation
-above retains gross1.50, size0.60 and existing entry rules. Do not claim the account has been made fully invested
+The user subsequently requested higher-exposure/leverage testing, then explicitly chose to KEEP the existing
+signal-sized/cash-holding structure and requested final documentation/push. Activation retains gross1.50, size0.60
+and existing entry rules. No extra exposure change is authorized by the final decision. Do not claim the account has been made fully invested
 or increased to 200% exposure. At the read-only check, equity was $1,006,860.73, cash $930,739.31, SHEL market value
 $76,121.42, buying power $3,936,097.22. Low investment reflected signal-based sizing, not lack of borrowing capacity.
 

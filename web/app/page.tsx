@@ -2,6 +2,8 @@ import Link from "next/link";
 import EquityChart from "@/components/EquityChart";
 import Performance from "@/components/Performance";
 import Pipeline, { ROLES } from "@/components/Pipeline";
+import SiteHeader from "@/components/SiteHeader";
+import Convictions from "@/components/Convictions";
 import { getAccount, getDashboard, getHistory, getPositions, getTrades } from "@/lib/alpaca";
 
 export const dynamic = "force-dynamic";
@@ -21,13 +23,15 @@ export default async function Page() {
     [account, positions, history, trades, dash] = await Promise.all([
       getAccount(), getPositions(), getHistory(), getTrades(), getDashboard(),
     ]);
-  } catch (e) {
+  } catch {
     return (
-      <main>
-        <h1>SemiBand · paper</h1>
-        <div className="card empty">
-          Alpaca not reachable — set ALPACA_API_KEY / ALPACA_SECRET_KEY in the Vercel project env and redeploy.
-          <div className="muted" style={{ marginTop: 8, fontSize: 12 }}>{String(e)}</div>
+      <main id="main-content">
+        <SiteHeader page="dashboard" />
+        <div className="card connection-state">
+          <span className="eyebrow">Account connection</span>
+          <h1>Portfolio data is temporarily unavailable.</h1>
+          <p className="muted">We couldn&apos;t reach the paper account. Try again in a moment, or explore the latest backtest research.</p>
+          <div className="connection-actions"><a href="/" className="button">Try again</a><Link href="/backtest" className="text-button">View backtest →</Link></div>
         </div>
       </main>
     );
@@ -49,14 +53,21 @@ export default async function Page() {
   const agentNames = weights.map(([a]) => a);
 
   return (
-    <main>
-      <nav className="tabs"><Link href="/" className="active">Dashboard</Link><Link href="/backtest">Backtest</Link></nav>
-      <h1>SemiBand · paper</h1>
-      <p className="sub">Self-weighting agent ensemble on the earnings-ai supply-chain universe · Alpaca paper ·{" "}
-        {new Date().toLocaleString("en-US", { timeZone: "America/New_York" })} ET</p>
+    <main id="main-content">
+      <SiteHeader page="dashboard" />
+      <div className="page-heading">
+        <div><span className="eyebrow">Portfolio overview</span><h1>The portfolio, at a glance.</h1>
+          <p className="sub">A self-weighting agent ensemble across the AI supply chain.</p></div>
+        <div className="data-timestamp"><span>Account retrieved</span><time dateTime={new Date().toISOString()}>{when(new Date().toISOString())} ET</time>
+          <span>{dash ? `Published cycle · ${dash.date}${dash.dry_run ? " · dry run" : ""}` : "Awaiting a published cycle"}</span></div>
+      </div>
+      <nav className="section-nav" aria-label="Dashboard sections">
+        <a href="#overview">Overview</a><a href="#convictions">Convictions</a><a href="#positions">Positions</a>
+        <a href="#decisions">Decisions</a><a href="#agents">Agents</a><a href="#guardian">Guardian</a><a href="#trades">Trades</a>
+      </nav>
 
-      <div className="tiles">
-        <div className="tile">
+      <div className="tiles overview-tiles" id="overview">
+        <div className="tile primary-tile">
           <div className="label">Equity</div>
           <div className="value">{usd(equity)}</div>
           <div className={`delta ${cls(dayPl)}`}>{usd(dayPl)} ({pct(dayPct)}) today</div>
@@ -74,13 +85,14 @@ export default async function Page() {
         <div className="tile">
           <div className="label">Cash</div>
           <div className="value">{usd(Number(account.cash), 0)}</div>
+          <div className="delta muted">{equity > 0 ? `${(Number(account.cash) / equity * 100).toFixed(1)}% of equity` : "Available cash"}</div>
         </div>
       </div>
 
-      <h2>Equity · last 3 months</h2>
+      <h2>Account equity <span>Last 3 months</span></h2>
       <div className="card"><EquityChart points={points} /></div>
 
-      <h2>Performance · portfolio vs SOXX / SPY / QQQ since the study started</h2>
+      <h2>Benchmark comparison <span>Since the study started</span></h2>
       <div className="card">
         {dash?.benchmarks && (dash.history ?? []).length > 0 ? (
           <Performance equity={points} benchmarks={dash.benchmarks}
@@ -138,12 +150,12 @@ export default async function Page() {
         })()}
       </div>
 
-      <h2>How it works · data → 11 agents → weighted blend → orders → scoring</h2>
+      <h2>How it works <span>Data → agents → orders → scoring</span></h2>
       <div className="card">
-        <Pipeline />
+        <div className="scroll pipeline-wrap" tabIndex={0} role="region" aria-label="Ensemble pipeline"><Pipeline /></div>
         <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
-          Analysis starts at 05:50 PT every trading day and orders go out right after the 09:30 ET open. Agents do not talk to each other; each hands in its own opinion (direction -1..+1, confidence 0..1).
-          Weights start as an equal blend and are refit every day by Bayesian ridge stacking on the scored predictions (abnormal return vs SOXX at 5, 10 and 20 trading days); an agent that is reliably wrong ends up with a negative weight and is used as a contrarian signal. The minutes of every order are under Decisions.
+          Each trading day, agents hand in their own opinions (direction -1..+1, confidence 0..1), and orders go out at the 09:30 ET open.
+          Weights start as an equal blend and are refit daily on scored predictions; an agent that is reliably wrong can receive a negative weight and act as a contrarian signal. The minutes of every order are under Decisions.
         </div>
         <div className="scroll" style={{ marginTop: 12 }}>
           <table>
@@ -163,7 +175,7 @@ export default async function Page() {
         </div>
       </div>
 
-      <h2>Agents · who the ensemble trusts</h2>
+      <h2 id="agents">Agents <span>Who the ensemble trusts</span></h2>
       <div className="card">
         {!dash ? (
           <div className="empty">dashboard.json not connected — the cycle has not published yet</div>
@@ -255,7 +267,7 @@ export default async function Page() {
         })()}
       </div>
 
-      <h2>Decisions · how each order was made</h2>
+      <h2 id="decisions">Decisions <span>The minutes of every order</span></h2>
       <div className="card">
         {!dash || (dash.history ?? []).length === 0 ? (
           <div className="empty">No decisions recorded yet</div>
@@ -312,8 +324,8 @@ export default async function Page() {
         )}
       </div>
 
-      <h2>Guardian · hourly headline watch on holdings</h2>
-      <div className="card">
+      <h2 id="guardian">Guardian <span>Hourly headline watch on holdings</span></h2>
+      <div className="card scroll">
         {!dash?.guardian || dash.guardian.length === 0 ? (
           <div className="empty">No intraday checks yet (runs hourly during the session; a Claude call only when a holding has new headlines)</div>
         ) : (
@@ -339,37 +351,12 @@ export default async function Page() {
         )}
       </div>
 
-      <h2>Convictions · today&apos;s ranking</h2>
-      <div className="card scroll">
-        {convictions.length === 0 ? <div className="empty">No convictions published yet</div> : (
-          <table>
-            <thead><tr>
-              <th>#</th><th>Symbol</th><th className="num">Conviction</th><th className="num">Target</th>
-              {agentNames.map((a) => <th key={a} className="num">{a}</th>)}
-            </tr></thead>
-            <tbody>
-              {convictions.slice(0, 40).map((c, i) => (
-                <tr key={c.ticker}>
-                  <td className="muted">{i + 1}</td>
-                  <td><b>{c.ticker}</b></td>
-                  <td className={`num ${cls(c.conviction)}`}>{signed(c.conviction)}</td>
-                  <td className="num">{c.target_usd != null ? usd(c.target_usd, 0) : "—"}</td>
-                  {agentNames.map((a) => {
-                    const v = c.agents[a];
-                    return (
-                      <td key={a} className={`num ${v ? cls(v.direction) : "muted"}`} title={v?.reason ?? ""}>
-                        {v ? `${signed(v.direction)} · ${v.confidence.toFixed(2)}` : "—"}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+      <h2 id="convictions">Convictions <span>Explore the published ranking</span></h2>
+      <div className="card">
+        <Convictions rows={convictions} agentNames={agentNames} />
       </div>
 
-      <h2>Positions</h2>
+      <h2 id="positions">Positions <span>{positions.length} open</span></h2>
       <div className="card scroll">
         {positions.length === 0 ? <div className="empty">Flat</div> : (
           <table>
@@ -396,7 +383,7 @@ export default async function Page() {
         )}
       </div>
 
-      <h2>Trades · why</h2>
+      <h2 id="trades">Trade journal <span>What changed and why</span></h2>
       <div className="card scroll">
         {trades === null ? (
           <div className="empty">TRADES_URL / BLOB_READ_WRITE_TOKEN not set — the bot journal is not connected</div>

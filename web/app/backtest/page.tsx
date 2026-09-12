@@ -1,4 +1,4 @@
-import Link from "next/link";
+import SiteHeader from "@/components/SiteHeader";
 import BacktestLive from "@/components/BacktestLive";
 import Research from "@/components/Research";
 import { getBacktestProgress, getResearch } from "@/lib/alpaca";
@@ -9,12 +9,13 @@ export default async function BacktestPage() {
   let initial = null, research: string | null = null;
   try { [initial, research] = await Promise.all([getBacktestProgress(), getResearch()]); } catch { /* shown as empty */ }
   return (
-    <main>
-      <nav className="tabs"><Link href="/">Dashboard</Link><Link href="/backtest" className="active">Backtest</Link></nav>
-      <h1>SemiBand · backtest</h1>
-      <p className="sub">Walk-forward replay of the point-in-time agents on the research machine, streamed here as it runs ·
-        progress, equity curve, monthly heatmap, agent IC, the overfitting checks once a run finishes, and below that the log of every
-        experiment and the decision it led to</p>
+    <main id="main-content">
+      <SiteHeader page="backtest" />
+      <div className="page-heading"><div><span className="eyebrow">Research workspace</span>
+        <h1>Follow the evidence.</h1>
+        <p className="sub">Walk-forward results, agent performance, and the decisions behind each experiment.</p></div>
+        <a className="button" href="#decisions">Explore the research log ↓</a>
+      </div>
       <BacktestLive initial={initial} />
       <h2 id="decisions">Decisions · what each backtest round tested and what was adopted or rejected</h2>
       <div className="card">

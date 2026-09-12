@@ -69,7 +69,7 @@ WARM_START_WEIGHT = 0.5           # backtest rows (state/backtest.sqlite) count 
 LEARNER_HALF_LIFE_DAYS = 90       # time decay of scored rows (sweep 2026-09-10: 90 beat 45 and 20 on Sharpe and return)
 LEARNER_PRIOR_STRENGTH = 150.0    # lambda when walk-forward CV cannot run yet
 LEARNER_LAMBDA_GRID = (150.0,)    # fixed: walk-forward CV kept picking 1000 (too timid); sweep: fixed 150 -> Sharpe 2.2-2.3 vs 1.7
-LEARNER_TARGET_MODE = "raw"        # keep current mode until the approved beta migration is verified; then switch to "beta"
+LEARNER_TARGET_MODE = "beta"       # active paper model; original raw labels and comparison model remain available
 # (Hedge below is kept only as a dashboard reference)
 HEDGE_ETA = 0.5                   # step size: w_i *= exp(eta * gain_i)
 WEIGHT_FLOOR = 0.02               # no agent is ever silenced completely (11 agents -> 22% floor mass)

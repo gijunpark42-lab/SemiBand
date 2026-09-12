@@ -112,7 +112,14 @@ Beta reference: `state/backtest_research_good_beta.sqlite`, SHA256
 
 Earnings AI was deployed to https://gijun42.com with UI commit `a26a812` and handoff completion commit `f041fe0`.
 Its own `docs/HANDOFF.md` and web-state memory record all changes and live desktop/mobile verification.
-SemiBand UI initial commit is `856990e`; its agent is also repairing the SOXX/SPY 0% benchmark problem.
-The published benchmark snapshot had only the comparison-baseline price for those symbols. Intraday daily-cache
-reuse can leave existing SOXX/SPY columns ending earlier than later-fetched QQQ. User explicitly requested filling
-the missing price data; see the UI agent's final HANDOFF entry for the actual repair and release verification.
+SemiBand UI is live at https://semiband-dashboard.vercel.app. Its UI/benchmark commits are `856990e`, `2791b5a`
+and `a3e0d73`; the final promoted deployment is `dpl_ETfNTumhmi5znpGufWdzw1KJDAds`. Seven benchmark regression tests,
+production build and live desktop/mobile browser checks passed, with no console errors on the final reload.
+The old snapshot contained only the comparison-baseline price for SOXX/SPY: it falsely displayed missing returns
+as 0%. The repair fetches actual free delayed Alpaca SIP daily bars server-side with existing environment credentials
+and five-minute caching; no credential file or environment edits were needed. September 10, 2026 OPEN is the fixed
+baseline, followed by daily closes: SOXX $518.32→$527.07 (+1.69%), SPY $758.03→$764.29 (+0.83%), QQQ $707.55→$714.88
+(+1.04%) through September 11. Portfolio +0.69% is explicitly labeled as using the previous account-close opening
+proxy because exact opening account equity is unavailable. No invented opening-equity value is presented as actual.
+Deployment used a staged web-only upload, excluding the root credentials and unrelated Claude worktrees.
+The source HANDOFF records UI behavior, approvals, deployment verification and rollback in detail.

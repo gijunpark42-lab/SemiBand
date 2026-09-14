@@ -755,3 +755,47 @@ and backtest labels at the signal day's close, while fills happen at the open.
 
 Next: backtest the refresh (price agents see day t+1's open appended before trading at that open) against the next-open
 baseline, 500 days, and keep or turn off `OPEN_REFRESH_AGENTS` before the 2026-09-15 cycle.
+
+## 2026-09-14 — round 27: the open refresh backtested (verdict OFF) and the live label start checked
+
+Question (user, 2026-09-14): should the price-based agents see the price at order time instead of the previous close? The
+live cycle ran that refresh once the same morning (entry above). Five 500-day replays on the same code (`1b49fc1`), same
+data and universe: `--exec open`, daily refits, 5 bps, 150 names, no Claude calls; 470 traded days 2024-09-27 → 2026-08-13;
+OOS = before 2025-09-24.
+
+- `--open-refresh`: technical, mean_reversion, risk, macro and events see day t's closes plus a row dated t+1 holding that
+  day's opens, then trade at that open. The date-indexed fast paths (hist series, precomputed RSI) are bypassed for those
+  calls because they would hand back day t+1's close (`test_backtest_open_row.py`).
+- `--label-open`: labels start at the open the refreshed signal saw. `--label-next-close`: labels start at the close of the
+  order day, which is what the live scorer (`score.py`) does; the backtest default starts at the close the signals used.
+- Runs: tags `_orbase`, `_orrefresh`, `_orrefresh_ol`, `_orbase_nc`, `_orrefresh_nc`; comparison `python analyze_open_refresh.py`
+  (output `state/research_labels.txt`).
+
+| Run | Labels start at | Return | Sharpe | Max DD | OOS Sharpe | IS Sharpe | At 30 bps | Deflated Sharpe |
+|---|---|---|---|---|---|---|---|---|
+| No refresh | the signal close (backtest default) | +900% | 2.14 | 29.7% | 2.38 | 1.86 | +559% / 1.75 | 0.85 |
+| Refresh | the signal close | +895% | 2.14 | 31.0% | 2.25 | 2.03 | +558% / 1.75 | 0.85 |
+| Refresh | the open it saw | +560% | 1.76 | 38.3% | 1.86 | 1.66 | +341% / 1.38 | 0.69 |
+| No refresh | the order-day close (live scorer) | +919% | 2.16 | 26.3% | 2.48 | 1.74 | +572% / 1.77 | 0.85 |
+| **Refresh (the live setup of 2026-09-14)** | the order-day close (live scorer) | +712% | 1.96 | 34.0% | 2.03 | 1.89 | +445% / 1.58 | 0.78 |
+
+Paired daily return differences on the same dates:
+
+- Refresh minus no refresh, both with live-scorer labels: −4.88 bps/day, t = −1.18; OOS −11.18 bps/day, t = −2.17; IS +2.10, t = +0.32.
+- Refresh minus no refresh, both with signal-close labels: −0.06 bps/day, t = −0.01.
+- Refresh with open labels minus no refresh: −8.92 bps/day, t = −2.00; OOS t = −2.06.
+- Live-scorer labels minus signal-close labels, no refresh: +0.41 bps/day, t = +0.20.
+
+Reading:
+
+- The refresh matched the baseline only when its labels started at the signal close, so every label contained the overnight
+  gap the refreshed signal had already observed and the learner rewarded agents for a move they had seen. With labels that
+  start after the information time (the open it saw, or the live scorer's order-day close) it is worse on return, Sharpe,
+  drawdown and cost robustness, and significantly worse out of sample.
+- The live scorer's later label start is harmless (t = +0.20): `score.py` stays as it is.
+- **Verdict: `OPEN_REFRESH_AGENTS = ()` from the 2026-09-15 cycle.** The reuse marker (`state/reuse_signals`) and the backtest
+  flags stay. The single live refresh of 2026-09-14 (SHEL closed, book in cash) stands and is not reversed.
+
+Caveats: one 470-day window dominated by one regime; today's universe (survivorship); flat 5 bps; the replay trades exactly
+at the official open while the live refresh orders a few seconds later; fundamentals and the Claude agents are not
+simulated, so the fundamentals re-pricing that was part of the live refresh is untested.

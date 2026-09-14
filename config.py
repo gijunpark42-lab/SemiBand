@@ -69,13 +69,12 @@ AGENTS = [
 HORIZONS = (10, 20)               # trading days after which a prediction is scored. v2.3 (2026-09-11 search, daily refits): dropping the 5-day
                                   # horizon was the biggest single gain (5-day abnormal returns are mostly noise): OOS Sharpe 0.92 -> 1.4-1.7
 
-OPEN_REFRESH_AGENTS = ("technical", "mean_reversion", "risk", "macro", "fundamentals", "events")   # re-run right after the open on
-                                  # today's first trades so an overnight gap reaches every price-based signal the way it reaches the
-                                  # fills (user 2026-09-14; NOT backtested: the free daily data has no pre-market history).
-                                  # fundamentals re-prices forward P/E, P/S and analyst-target upside at the live price; events
-                                  # re-measures the post-earnings reaction. All read day caches, so the refresh takes seconds.
-                                  # Claude (its price line is a small part of the input; a re-run is ~450 calls), supply_chain and
-                                  # neighbors keep their pre-open signals. () = off
+OPEN_REFRESH_AGENTS = ()          # OFF since the 2026-09-14 backtest. When set, e.g. ("technical", "mean_reversion", "risk", "macro",
+                                  # "fundamentals", "events"), those agents re-run right after the open on today's first trades
+                                  # (fundamentals re-prices P/E, P/S and target upside) and replace their pre-open predictions.
+                                  # Live 2026-09-14 only. 500-day backtests (RESEARCH.md 2026-09-14 round 27): with the live scorer's
+                                  # labels the refresh made +712% / Sharpe 1.96 / DD 34% vs +919% / 2.16 / 26% without it, and it only
+                                  # looked neutral when the labels overlapped the gap the refreshed signal had already seen.
 
 # --- learning ---
 WARM_START_WEIGHT = 0.5           # backtest rows (state/backtest.sqlite) count this much vs live rows in learner.fit; 0 = off

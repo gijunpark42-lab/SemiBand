@@ -240,3 +240,14 @@ touched since, `git status`, the tail of `RESEARCH.md`, and `state/run_daily.log
   `schtasks /Run /TN SemiBand-Cycle`; the log must show "reusing N signals recorded earlier".
 - Next: backtest the open refresh against the next-open baseline (500 days, `--exec open`, no Claude) and decide before the
   2026-09-15 03:30 PT cycle; end-of-day record after 13:20 PT.
+
+### 2026-09-14 07:40 PT — Claude root → anyone: open refresh backtested and switched OFF; live label start checked
+
+- Did: five 500-day replays (RESEARCH.md round 27; commits `1a37208`, `7ca39e9`, `1b49fc1` add `--open-refresh`,
+  `--label-open`, `--label-next-close` and `analyze_open_refresh.py`). With the live scorer's labels the refresh made
+  +712% / Sharpe 1.96 / max DD 34.0% against +919% / 2.16 / 26.3% without it (paired OOS t = −2.17), so
+  `OPEN_REFRESH_AGENTS = ()` in this commit. The live scorer's later label start was checked and is harmless (t = +0.20).
+- State: live checkout on main with the refresh off for the 2026-09-15 03:30 PT cycle; the `state/reuse_signals` re-run path
+  stays. Account all cash after today's SHEL sale. Research outputs: `state/backtest_report_or*.json`,
+  `state/research_labels.txt`, logs `state/research_or*.log`.
+- Next: the end-of-day record after 13:20 PT. Tomorrow's log should show no "open refresh" line.

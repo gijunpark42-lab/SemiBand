@@ -208,7 +208,7 @@ def publish_progress(payload):
 
 
 def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mode="close", agents=None, end=None,
-        open_refresh=False):
+        open_refresh=False, label_open=False):
     """tag: suffix for the output files (state/backtest<tag>.sqlite / backtest_report<tag>.json)
     so a long build can run while sweeps read the default files.
     exec_mode: 'close' = trade at the close the signals were computed on (optimistic);
@@ -216,6 +216,8 @@ def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mod
     global DB, REPORT, PIT_AGENTS
     if open_refresh and exec_mode != "open":
         raise ValueError("--open-refresh needs --exec open: the refreshed row is the open the trade executes at")
+    if label_open and not open_refresh:
+        raise ValueError("--label-open only applies to --open-refresh")
     extra_mods = [{"momentum": momentum, "sue": sue, "ml_ranker": ml_ranker}[e] for e in extra]
     if agents:
         PIT_AGENTS = [a for a in SIM_AGENTS if a in agents]
@@ -225,7 +227,7 @@ def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mod
         REPORT = config.STATE_DIR / f"backtest_report{tag}.json"
     config.STATE_DIR.mkdir(exist_ok=True)
     run_info = {"kind": "backtest", "tag": tag, "days": days, "exec": exec_mode, "extra": list(extra), "cap": cap, "end": end,
-                "agents_requested": agents, "open_refresh": open_refresh,
+                "agents_requested": agents, "open_refresh": open_refresh, "label_open": label_open,
                 "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     publish_progress(dict(run_info, status="loading", pct=0.0, message="downloading prices and earnings"))
     try:
@@ -301,6 +303,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
     quint = [[] for _ in range(5)]
     t0 = time.time()
     base = start + warmup + shift                    # benchmark curves are rebased to the first traded day
+    label_open = bool(run_info.get("label_open"))      # refreshed signals saw day t+1's open: labels start there, not at close t
     for i in range(start, end):
         t = idx[i].date()
         window = closes.iloc[: i + 1]
@@ -345,6 +348,9 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
                 for h in config.HORIZONS:
                     c0, c1 = C[i, j], C[i + h, j]
                     b0, b1 = B[i], B[i + h]
+                    if label_open:
+                        jp = pcol.get(r["ticker"])
+                        c0, b0 = (P[i + 1, jp] if jp is not None else np.nan), P[i + 1, pcol[config.BENCHMARK]]
                     if any(np.isnan(v) for v in (c0, c1, b0, b1)):
                         continue
                     ret = float(c1 / c0 - 1)
@@ -368,6 +374,9 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
             j = col[tk]
             c0, c1 = C[i, j], C[i + 10, j]
             b0, b1 = B[i], B[i + 10]
+            if label_open:
+                jp = pcol.get(tk)
+                c0, b0 = (P[i + 1, jp] if jp is not None else np.nan), P[i + 1, pcol[config.BENCHMARK]]
             if not any(np.isnan(v) for v in (c0, c1, b0, b1)):
                 y10[tk] = float(c1 / c0 - 1) - float(b1 / b0 - 1)
         common = [tk for tk in y10 if tk in conv_prior]
@@ -441,6 +450,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
         "period": {"start": curve[0]["date"], "end": curve[-1]["date"], "trading_days": n},
         "execution": exec_mode,
         "open_refresh": bool(run_info.get("open_refresh")),
+        "label_open": bool(run_info.get("label_open")),
         "agents": PIT_AGENTS,
         "portfolio": {
             "total_return": round(curve[-1]["portfolio"] - 1, 4),
@@ -505,6 +515,7 @@ if __name__ == "__main__":
     p.add_argument("--end", default=None, help="ISO date: the window ends here instead of today (historical stress tests)")
     p.add_argument("--horizons", default=None, help="comma list overriding config.HORIZONS for this run, e.g. 10,20,40 (the ledger then carries all of them)")
     p.add_argument("--open-refresh", action="store_true", help="price agents see the next day's open appended before trading at that open, like the live open refresh (needs --exec open)")
+    p.add_argument("--label-open", action="store_true", help="with --open-refresh: learning labels start at the open the refreshed signal saw, not at the previous close")
     p.add_argument("--graph-asof", default=None, help="ISO date: build the supply-chain map from the newest graph snapshot dated <= this (state/graph_snapshots) instead of today's graph")
     args = p.parse_args()
     PUBLISH = not args.no_publish
@@ -519,5 +530,5 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     r = run(days=args.days, refit_every=args.refit_every, tag=args.tag, extra=tuple(x for x in args.extra.split(",") if x), cap=args.cap,
             exec_mode=args.exec_mode, agents=tuple(x for x in args.agents.split(",") if x) if args.agents else None, end=args.end,
-            open_refresh=args.open_refresh)
+            open_refresh=args.open_refresh, label_open=args.label_open)
     print(json.dumps({k: v for k, v in r.items() if k != "curve"}, indent=2)[:4000])

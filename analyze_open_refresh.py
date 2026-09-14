@@ -1,11 +1,12 @@
-"""Compare the open-refresh backtest with its next-open baseline (same code, same day, same universe and ledger inputs).
+"""Compare the open-refresh backtests with their next-open baseline (same code, same day, same universe and inputs).
 
     python backtest.py --days 500 --exec open --tag _orbase --no-publish
     python backtest.py --days 500 --exec open --open-refresh --tag _orrefresh --no-publish
+    python backtest.py --days 500 --exec open --open-refresh --label-open --tag _orrefresh_ol --no-publish
     python analyze_open_refresh.py
 
 Windows follow RESEARCH.md: OOS = before 2025-09-24, IS = from 2025-09-24. The paired test uses the daily return
-difference (refresh minus baseline) on the same dates.
+difference (variant minus baseline) on the same dates. IC is not comparable across label definitions; judge on returns.
 """
 import json
 import math
@@ -15,13 +16,16 @@ import numpy as np
 import config
 
 OOS_END = "2025-09-24"
-RUNS = {"baseline (next open)": "_orbase", "open refresh": "_orrefresh"}
+RUNS = {  # name: (tag, open_refresh, label_open)
+    "baseline (next open)": ("_orbase", False, False),
+    "open refresh": ("_orrefresh", True, False),
+    "open refresh, open labels": ("_orrefresh_ol", True, True),
+}
+WINDOWS = (("full", None, None), ("OOS", None, OOS_END), ("IS", OOS_END, None))
 
 
 def window_stats(curve, lo=None, hi=None):
     days = [(k, c) for k, c in enumerate(curve) if (lo is None or c["date"] >= lo) and (hi is None or c["date"] < hi)]
-    if not days:
-        return None
     rets = np.array([c["ret"] for _, c in days])
     logs = np.log1p(rets)
     equity = np.exp(np.cumsum(logs))
@@ -33,24 +37,37 @@ def window_stats(curve, lo=None, hi=None):
             "gross": float(np.mean([c["gross"] for _, c in days])), "turnover": float(np.mean([c["turnover"] for _, c in days]))}
 
 
-reports = {name: json.loads((config.STATE_DIR / f"backtest_report{tag}.json").read_text(encoding="utf-8"))
-           for name, tag in RUNS.items()}
-print(f"{'run':22} {'window':6} {'days':>4} {'return':>9} {'SOXX':>8} {'Sharpe':>6} {'maxDD':>6} {'gross':>6} {'turn':>5}")
-for name, rep in reports.items():
-    assert rep["execution"] == "open" and rep.get("open_refresh", False) == (name == "open refresh"), f"{name}: wrong run"
-    for label, lo, hi in (("full", None, None), ("OOS", None, OOS_END), ("IS", OOS_END, None)):
-        s = window_stats(rep["curve"], lo, hi)
-        print(f"{name:22} {label:6} {s['days']:>4} {s['return']:>+9.1%} {s['soxx']:>+8.1%} {s['sharpe']:>6.2f} {s['max_dd']:>6.1%} "
-              f"{s['gross']:>6.2f} {s['turnover']:>5.2f}")
-    print(f"{'':22} IC10 learned {rep['ic_10d']['learned']} / prior {rep['ic_10d']['equal_prior']}; quintiles {rep['quintiles_10d']}; "
-          f"deflated {rep['robustness'].get('deflated')}; Sharpe CI {rep['robustness'].get('sharpe_ci95')}")
+reports = {}
+for name, (tag, refresh, label_open) in RUNS.items():
+    path = config.STATE_DIR / f"backtest_report{tag}.json"
+    if not path.exists():
+        print(f"{name}: {path.name} missing, skipped")
+        continue
+    rep = json.loads(path.read_text(encoding="utf-8"))
+    assert rep["execution"] == "open" and bool(rep.get("open_refresh")) == refresh and bool(rep.get("label_open")) == label_open, name
+    reports[name] = rep
 
-base, refresh = (reports[n]["curve"] for n in RUNS)
-common = sorted(set(c["date"] for c in base) & set(c["date"] for c in refresh))
-b = {c["date"]: c["ret"] for c in base}
-r = {c["date"]: c["ret"] for c in refresh}
-for label, lo, hi in (("full", None, None), ("OOS", None, OOS_END), ("IS", OOS_END, None)):
-    d = np.array([r[x] - b[x] for x in common if (lo is None or x >= lo) and (hi is None or x < hi)])
-    t = d.mean() / (d.std(ddof=1) / math.sqrt(len(d))) if len(d) > 2 and d.std(ddof=1) > 0 else float("nan")
-    print(f"paired daily difference, {label}: {len(d)} days, mean {d.mean() * 1e4:+.2f} bps/day, t = {t:+.2f}, "
-          f"refresh better on {np.mean(d > 0):.0%} of days")
+print(f"{'run':27} {'window':6} {'days':>4} {'return':>9} {'SOXX':>8} {'Sharpe':>6} {'maxDD':>6} {'gross':>6} {'turn':>5}")
+for name, rep in reports.items():
+    for label, lo, hi in WINDOWS:
+        s = window_stats(rep["curve"], lo, hi)
+        print(f"{name:27} {label:6} {s['days']:>4} {s['return']:>+9.1%} {s['soxx']:>+8.1%} {s['sharpe']:>6.2f} {s['max_dd']:>6.1%} "
+              f"{s['gross']:>6.2f} {s['turnover']:>5.2f}")
+    rb = rep["robustness"]
+    print(f"{'':27} cost bps -> return/Sharpe {[(c['bps'], round(c['total_return'], 2), c['sharpe']) for c in rb['cost_sensitivity']]}; "
+          f"Sharpe CI {rb.get('sharpe_ci95')}; DSR {rb['deflated']['dsr'] if rb.get('deflated') else None}; best quarter {rb.get('best_quarter_share')}")
+    print(f"{'':27} IC10 learned {rep['ic_10d']['learned']} / prior {rep['ic_10d']['equal_prior']}; quintiles {rep['quintiles_10d']}")
+
+base_name = "baseline (next open)"
+if base_name in reports:
+    b = {c["date"]: c["ret"] for c in reports[base_name]["curve"]}
+    for name, rep in reports.items():
+        if name == base_name:
+            continue
+        v = {c["date"]: c["ret"] for c in rep["curve"]}
+        common = sorted(set(b) & set(v))
+        for label, lo, hi in WINDOWS:
+            d = np.array([v[x] - b[x] for x in common if (lo is None or x >= lo) and (hi is None or x < hi)])
+            t = d.mean() / (d.std(ddof=1) / math.sqrt(len(d))) if len(d) > 2 and d.std(ddof=1) > 0 else float("nan")
+            print(f"{name} minus baseline, {label}: {len(d)} days, mean {d.mean() * 1e4:+.2f} bps/day, t = {t:+.2f}, "
+                  f"better on {np.mean(d > 0):.0%} of days, correlation {np.corrcoef([v[x] for x in common], [b[x] for x in common])[0, 1]:.2f}")

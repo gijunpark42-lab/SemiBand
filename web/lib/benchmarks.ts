@@ -31,3 +31,34 @@ export async function getBenchmarks() {
     return { ...parseDailyBars({}, now), source: "Alpaca SIP", unavailable: true };
   }
 }
+
+export type LiveTrade = { p: number; t: string; feed: string };
+// Latest trade per symbol across the feeds this key can read: IEX (real-time, regular and extended hours), the consolidated
+// tape 15 minutes delayed (all exchanges, 04:00-20:00 ET) and the overnight session (20:00-04:00 ET). The newest print wins,
+// so regular hours come from IEX and evenings/nights from the delayed tape or the overnight session. Never cached.
+export async function getLivePrices(symbols: readonly string[]): Promise<{ trades: Record<string, LiveTrade | null>; unavailable: boolean }> {
+  const trades: Record<string, LiveTrade | null> = Object.fromEntries(symbols.map((symbol) => [symbol, null]));
+  const key = process.env.ALPACA_API_KEY, secret = process.env.ALPACA_SECRET_KEY;
+  if (!key || !secret || !symbols.length) return { trades, unavailable: true };
+  const pages = await Promise.allSettled(["iex", "delayed_sip", "overnight"].map(async (feed) => {
+    const url = new URL("https://data.alpaca.markets/v2/stocks/trades/latest");
+    url.searchParams.set("symbols", symbols.join(","));
+    url.searchParams.set("feed", feed);
+    const response = await fetch(url, { headers: { "APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret }, cache: "no-store", signal: AbortSignal.timeout(6000) });
+    if (!response.ok) throw new Error(`Latest trades ${feed}: HTTP ${response.status}`);
+    const page: { trades?: Record<string, { p?: number; t?: string }> } = await response.json();
+    return { feed, trades: page.trades ?? {} };
+  }));
+  let any = false;
+  for (const page of pages) {
+    if (page.status !== "fulfilled") continue;
+    for (const [symbol, trade] of Object.entries(page.value.trades)) {
+      const p = Number(trade?.p), t = String(trade?.t ?? "");
+      if (!(symbol in trades) || !Number.isFinite(p) || p <= 0 || !Number.isFinite(Date.parse(t))) continue;
+      any = true;
+      const current = trades[symbol];
+      if (!current || Date.parse(t) > Date.parse(current.t)) trades[symbol] = { p, t, feed: page.value.feed };
+    }
+  }
+  return { trades, unavailable: !any };
+}

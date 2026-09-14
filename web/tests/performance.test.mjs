@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildComparison, marketDate, parseDailyBars, sessionComplete } from "../lib/performance.ts";
+import { buildComparison, marketDate, parseDailyBars, sessionComplete, sessionLabel } from "../lib/performance.ts";
 
 const timestamp = (iso) => Date.parse(iso) / 1000;
 const equity = [
@@ -60,6 +60,32 @@ test("parser preserves the exact Sept 10 open and excludes unfinished daily bars
   assert.deepEqual(afterClose.series.SOXX, [["2026-09-10", 102], ["2026-09-11", 105]]);
   assert.equal(sessionComplete(new Date("2026-01-06T21:10:00Z")), false);
   assert.equal(sessionComplete(new Date("2026-01-06T21:20:00Z")), true);
+});
+
+test("a live mark is appended after the recorded closes and never replaces them", () => {
+  const closes = { SOXX: [["2026-09-10", 102], ["2026-09-11", 105]], SPY: [["2026-09-10", 101], ["2026-09-11", 102]], QQQ: [["2026-09-10", 101], ["2026-09-11", 102]] };
+  const opens = { SOXX: 100, SPY: 100, QQQ: 100 };
+  const live = { prices: { SOXX: 110, SPY: null, QQQ: 103 }, equity: 1010000, time: "2026-09-14T07:00:00Z" };
+  const result = buildComparison(equity, closes, opens, live);
+  assert.deepEqual(result.dates, ["2026-09-10", "2026-09-10", "2026-09-11", "live"]);
+  assert.ok(Math.abs(result.lines.SOXX.at(-1) - 0.10) < 1e-10);
+  assert.ok(Math.abs(result.lines.SOXX.at(-2) - 0.05) < 1e-10);
+  assert.equal(result.lines.SPY.at(-1), null);
+  assert.ok(Math.abs(result.lines.SPY.at(-2) - 0.02) < 1e-10);
+  assert.ok(Math.abs(result.lines.Portfolio.at(-1) - 0.01) < 1e-10);
+  assert.equal(result.endDate, "2026-09-11");
+  assert.equal(result.live, live);
+  const without = buildComparison(equity, closes, opens);
+  assert.deepEqual(without.dates, ["2026-09-10", "2026-09-10", "2026-09-11"]);
+  assert.equal(without.live, null);
+});
+
+test("the live mark is labelled by New York session", () => {
+  assert.equal(sessionLabel("2026-09-14T07:00:00Z"), "overnight session");
+  assert.equal(sessionLabel("2026-09-14T12:30:00Z"), "pre-market");
+  assert.equal(sessionLabel("2026-09-14T15:00:00Z"), "regular session");
+  assert.equal(sessionLabel("2026-09-14T22:00:00Z"), "after-hours");
+  assert.equal(sessionLabel("2026-01-06T15:00:00Z"), "regular session");
 });
 
 test("a real flat return is zero, but bad quotes and missing symbols are unavailable", () => {

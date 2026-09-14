@@ -4,7 +4,8 @@ import Performance from "@/components/Performance";
 import Pipeline, { ROLES } from "@/components/Pipeline";
 import SiteHeader from "@/components/SiteHeader";
 import Convictions from "@/components/Convictions";
-import { getBenchmarks } from "@/lib/benchmarks";
+import { getBenchmarks, getLivePrices } from "@/lib/benchmarks";
+import { BENCHMARKS, type LivePoint } from "@/lib/performance";
 import { getAccount, getDashboard, getHistory, getPositions, getTrades } from "@/lib/alpaca";
 
 export const dynamic = "force-dynamic";
@@ -52,7 +53,16 @@ export default async function Page() {
   const weights = dash ? Object.entries(dash.weights).sort((a, b) => b[1] - a[1]) : [];
   const convictions = dash?.convictions ?? [];
   const agentNames = weights.map(([a]) => a);
-  const benchmarkData = await getBenchmarks();
+  const [benchmarkData, liveTrades] = await Promise.all([getBenchmarks(), getLivePrices(BENCHMARKS)]);
+  // Live mark: the account's equity (Alpaca values positions at the latest trade, any session, including overnight)
+  // and the benchmarks' latest trades. Recorded closes stay as they are; this point only sits after them.
+  const liveTimes = Object.values(liveTrades.trades).flatMap((trade) => trade ? [Date.parse(trade.t)] : []);
+  const live: LivePoint | null = liveTrades.unavailable || !liveTimes.length ? null : {
+    prices: Object.fromEntries(BENCHMARKS.map((symbol) => [symbol, liveTrades.trades[symbol]?.p ?? null])),
+    equity: equity > 0 ? equity : null,
+    time: new Date(Math.max(...liveTimes)).toISOString(),
+  };
+  const livePoints = equity > 0 ? [...points, { t: Math.floor(Date.now() / 1000), v: equity }] : points;
 
   return (
     <main id="main-content">
@@ -73,6 +83,7 @@ export default async function Page() {
           <div className="label">Equity</div>
           <div className="value">{usd(equity)}</div>
           <div className={`delta ${cls(dayPl)}`}>{usd(dayPl)} ({pct(dayPct)}) today</div>
+          <div className="delta muted">Live mark · positions valued at the latest trade, any session</div>
         </div>
         <div className="tile">
           <div className="label">Invested</div>
@@ -91,14 +102,14 @@ export default async function Page() {
         </div>
       </div>
 
-      <h2>Account equity <span>Last 3 months</span></h2>
-      <div className="card"><EquityChart points={points} /></div>
+      <h2>Account equity <span>Last 3 months · live mark at the end</span></h2>
+      <div className="card"><EquityChart points={livePoints} /></div>
 
-      <h2>Benchmark comparison <span>Since the study started</span></h2>
+      <h2>Benchmark comparison <span>Since the study started · live mark at the end</span></h2>
       <div className="card">
         {points.length ? (
           <Performance equity={points} benchmarks={benchmarkData.series} openingPrices={benchmarkData.openingPrices}
-            source={benchmarkData.source} unavailable={benchmarkData.unavailable} />
+            source={benchmarkData.source} unavailable={benchmarkData.unavailable} live={live} />
         ) : (
           <div className="empty">Benchmarks appear after the first cycle publishes</div>
         )}

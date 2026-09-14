@@ -167,6 +167,16 @@ class PointInTimeMap:
         return Signal("neighbors", ticker, direction, confidence, 20, f"pit: customer heat {c_avg:.2f}, read-through {rt:+.2f}")
 
 
+def open_row_window(closes, px, i):
+    """Closes through day i plus one row dated day i+1 holding that day's OPEN where known (the last close elsewhere, e.g.
+    ^VIX / ^TNX or a name that did not open): what the live open refresh sees at 09:30 ET. Never reads day i+1's close."""
+    row = closes.iloc[: i + 1].ffill().iloc[-1].copy()
+    for symbol, value in px.iloc[i + 1].items():
+        if symbol in row.index and pd.notna(value) and value > 0:
+            row[symbol] = value
+    return pd.concat([closes.iloc[: i + 1], row.to_frame(name=closes.index[i + 1]).T])
+
+
 def _init_db():
     if DB.exists():
         DB.unlink()
@@ -197,12 +207,15 @@ def publish_progress(payload):
         log.warning("progress publish failed: %s", exc)
 
 
-def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mode="close", agents=None, end=None):
+def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mode="close", agents=None, end=None,
+        open_refresh=False):
     """tag: suffix for the output files (state/backtest<tag>.sqlite / backtest_report<tag>.json)
     so a long build can run while sweeps read the default files.
     exec_mode: 'close' = trade at the close the signals were computed on (optimistic);
                'open'  = trade at the NEXT open and hold to the following open (what the live cycle does)."""
     global DB, REPORT, PIT_AGENTS
+    if open_refresh and exec_mode != "open":
+        raise ValueError("--open-refresh needs --exec open: the refreshed row is the open the trade executes at")
     extra_mods = [{"momentum": momentum, "sue": sue, "ml_ranker": ml_ranker}[e] for e in extra]
     if agents:
         PIT_AGENTS = [a for a in SIM_AGENTS if a in agents]
@@ -212,7 +225,8 @@ def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mod
         REPORT = config.STATE_DIR / f"backtest_report{tag}.json"
     config.STATE_DIR.mkdir(exist_ok=True)
     run_info = {"kind": "backtest", "tag": tag, "days": days, "exec": exec_mode, "extra": list(extra), "cap": cap, "end": end,
-                "agents_requested": agents, "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+                "agents_requested": agents, "open_refresh": open_refresh,
+                "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     publish_progress(dict(run_info, status="loading", pct=0.0, message="downloading prices and earnings"))
     try:
         return _run(days, refit_every, warmup, extra_mods, exec_mode, run_info)
@@ -292,16 +306,28 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
         window = closes.iloc[: i + 1]
         ctx = {"closes": window, "asof": t, "earnings": earnings, "today": t.isoformat(), "hist": hist, "asof_ts": idx[i]}
         signals = []
-        for a in [m for m in (technical, mean_reversion, risk, macro) if m.NAME in PIT_AGENTS] + extra_mods:
-            try:
-                signals += a.run(universe, ctx)
-            except Exception as exc:
-                log.warning("%s @ %s: %s", a.NAME, t, exc)
-        if "events" in PIT_AGENTS:
-            try:
-                signals += events.run(universe, ctx)
-            except Exception as exc:
-                log.warning("events @ %s: %s", t, exc)
+        refresh = run_info.get("open_refresh")
+        if refresh:
+            # live open refresh: the price agents see day t+1's open before trading at it. No hist fast path and no
+            # precomputed RSI here: both are indexed by date and would hand back day t+1's CLOSE for the appended row.
+            price_ctx = {"closes": open_row_window(closes, px, i), "asof": t, "earnings": earnings, "today": t.isoformat()}
+            saved_rsi, indicators.PRECOMPUTED = indicators.PRECOMPUTED, {}
+        else:
+            price_ctx = ctx
+        try:
+            for a in [m for m in (technical, mean_reversion, risk, macro) if m.NAME in PIT_AGENTS] + extra_mods:
+                try:
+                    signals += a.run(universe, price_ctx)
+                except Exception as exc:
+                    log.warning("%s @ %s: %s", a.NAME, t, exc)
+            if "events" in PIT_AGENTS:
+                try:
+                    signals += events.run(universe, price_ctx)
+                except Exception as exc:
+                    log.warning("events @ %s: %s", t, exc)
+        finally:
+            if refresh:
+                indicators.PRECOMPUTED = saved_rsi
         for tk, company in universe.items():
             for s in ((pit.supply_chain(tk, company, t) if "supply_chain" in PIT_AGENTS else None),
                       (pit.neighbors(tk, company, t) if "neighbors" in PIT_AGENTS else None)):
@@ -414,6 +440,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
         "generated": date.today().isoformat(),
         "period": {"start": curve[0]["date"], "end": curve[-1]["date"], "trading_days": n},
         "execution": exec_mode,
+        "open_refresh": bool(run_info.get("open_refresh")),
         "agents": PIT_AGENTS,
         "portfolio": {
             "total_return": round(curve[-1]["portfolio"] - 1, 4),
@@ -477,6 +504,7 @@ if __name__ == "__main__":
     p.add_argument("--agents", default=None, help="comma list restricting the replayed roster, e.g. technical,mean_reversion,risk,macro,events (pre-2024 windows have no graph signals)")
     p.add_argument("--end", default=None, help="ISO date: the window ends here instead of today (historical stress tests)")
     p.add_argument("--horizons", default=None, help="comma list overriding config.HORIZONS for this run, e.g. 10,20,40 (the ledger then carries all of them)")
+    p.add_argument("--open-refresh", action="store_true", help="price agents see the next day's open appended before trading at that open, like the live open refresh (needs --exec open)")
     p.add_argument("--graph-asof", default=None, help="ISO date: build the supply-chain map from the newest graph snapshot dated <= this (state/graph_snapshots) instead of today's graph")
     args = p.parse_args()
     PUBLISH = not args.no_publish
@@ -490,5 +518,6 @@ if __name__ == "__main__":
         print("graph snapshot:", snap)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     r = run(days=args.days, refit_every=args.refit_every, tag=args.tag, extra=tuple(x for x in args.extra.split(",") if x), cap=args.cap,
-            exec_mode=args.exec_mode, agents=tuple(x for x in args.agents.split(",") if x) if args.agents else None, end=args.end)
+            exec_mode=args.exec_mode, agents=tuple(x for x in args.agents.split(",") if x) if args.agents else None, end=args.end,
+            open_refresh=args.open_refresh)
     print(json.dumps({k: v for k, v in r.items() if k != "curve"}, indent=2)[:4000])

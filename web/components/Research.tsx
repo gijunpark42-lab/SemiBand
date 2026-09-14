@@ -27,8 +27,16 @@ export default function Research({ markdown }: { markdown: string }) {
   let i = 0, k = 0;
   while (i < lines.length) {
     const line = lines[i];
-    if (line.startsWith("# ")) { blocks.push(<h3 key={k++}>{inline(line.slice(2), `h${k}`)}</h3>); i++; continue; }
-    if (line.startsWith("## ")) { blocks.push(<h4 key={k++} id={`r-${k}`}>{inline(line.slice(3), `h${k}`)}</h4>); i++; continue; }
+    const heading = /^(#{1,6}) (.*)$/.exec(line);
+    if (heading) {
+      // "# " -> h3, "## " -> h4 (anchored), deeper levels -> h5. Every line must advance `i`: a line the loop
+      // cannot consume (an unknown heading level once made this loop spin until the server ran out of memory).
+      const level = heading[1].length, text = inline(heading[2], `h${k + 1}`);
+      if (level === 1) blocks.push(<h3 key={k++}>{text}</h3>);
+      else if (level === 2) blocks.push(<h4 key={k++} id={`r-${k}`}>{text}</h4>);
+      else blocks.push(<h5 key={k++}>{text}</h5>);
+      i++; continue;
+    }
     if (line.trim().startsWith("|")) {
       const rows: string[][] = [];
       while (i < lines.length && lines[i].trim().startsWith("|")) {
@@ -36,6 +44,7 @@ export default function Research({ markdown }: { markdown: string }) {
         i++;
       }
       const [head, ...body] = rows;
+      if (!head) continue;                       // a separator-only block has nothing to render
       blocks.push(
         <div className="scroll" key={k++}>
           <table className="md">
@@ -56,8 +65,9 @@ export default function Research({ markdown }: { markdown: string }) {
       continue;
     }
     if (line.trim() === "") { i++; continue; }
-    const para: string[] = [];
-    while (i < lines.length && lines[i].trim() !== "" && !lines[i].startsWith("#") && !lines[i].trim().startsWith("|") && !/^\s*([-*]|\d+\.) /.test(lines[i])) {
+    const para: string[] = [line.trim()];       // always consume the current line, whatever it looks like
+    i++;
+    while (i < lines.length && lines[i].trim() !== "" && !/^#{1,6} /.test(lines[i]) && !lines[i].trim().startsWith("|") && !/^\s*([-*]|\d+\.) /.test(lines[i])) {
       para.push(lines[i].trim()); i++;
     }
     blocks.push(<p key={k++}>{inline(para.join(" "), `p${k}`)}</p>);

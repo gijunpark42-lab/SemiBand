@@ -194,3 +194,13 @@ touched since, `git status`, the tail of `RESEARCH.md`, and `state/run_daily.log
   is beta and the raw-shadow allocations were recorded; do not start an extra order-producing cycle. Open question the
   user raised 2026-09-13: feed `llm_guidance` earnings-call statements only (10-K/8-K rows crowd the 12-row window in
   127/149 universe names and push out 504 call statements); decision pending, no code change yet.
+- Incident (2026-09-13 23:05–23:40 PT): pushing main triggered a Vercel git deployment; at the same time the newly
+  uploaded RESEARCH.md contained one `### ` heading, which the /backtest markdown renderer could not consume — its
+  paragraph loop never advanced, the function ran out of heap (runtime logs: "JavaScript heap out of memory") and,
+  because one Fluid instance serves every route, the dashboard root returned 500 too. Fixed in three steps: rolled
+  production back to Codex's verified deployment `dpl_ETfNTumhmi5znpGufWdzw1KJDAds`; re-uploaded the log with that
+  heading demoted (site back at 23:35); committed a renderer fix (`6811d7d`: any heading level renders, every branch
+  advances, separator-only tables skipped) and pushed it to main so the next git deployment carries it. Note: every
+  push to GitHub `main` now auto-deploys production (`semiband-git-main-gijun42.vercel.app` alias) — the project's
+  Production env already holds TRADES_URL, BLOB_READ_WRITE_TOKEN, BLOB_STORE_ID and the Alpaca keys, so git deploys
+  do not need the local `.env.local`.

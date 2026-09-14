@@ -251,3 +251,17 @@ touched since, `git status`, the tail of `RESEARCH.md`, and `state/run_daily.log
   stays. Account all cash after today's SHEL sale. Research outputs: `state/backtest_report_or*.json`,
   `state/research_labels.txt`, logs `state/research_or*.log`.
 - Next: the end-of-day record after 13:20 PT. Tomorrow's log should show no "open refresh" line.
+
+### 2026-09-14 13:35 PT — Claude root → anyone: end of day, book in cash, the site's Sep 14 close pending Alpaca's daily point
+
+- Close: account all cash, equity $1,007,151.78 against last_equity $1,006,860.73, day P/L +$291.05 (+0.03%), no positions.
+  Since the Sep 10 open: Portfolio +0.72%, SOXX −4.04% (today −5.63%, nearly all of it the overnight gap: open to close
+  +0.05%), SPY +0.38%, QQQ +0.23%. The seven names the pre-open plan would have bought (ES, EXC, SHEL, APD, D, MMM, ADBE)
+  averaged −0.56% open to close; one day, no evidence either way.
+- Guardian: ran hourly 07:35–12:35 PT, "no holdings" every time; no exits, no Claude calls.
+- Site: https://semiband-dashboard.vercel.app returns 200 with published cycle 2026-09-14. The benchmark comparison and risk
+  table still end at the Sep 11 close because Alpaca's daily portfolio history has no 2026-09-14 point yet (its daily points
+  are stamped 20:00 ET); the live marks show after-hours prices. Check tomorrow that the Sep 14 close appears.
+- State: live checkout on main, refresh off (`OPEN_REFRESH_AGENTS = ()`), effort xhigh, 3 workers, beta target, PAPER.
+  Next cycle 2026-09-15 03:30 PT: expect "reusing" and "open refresh" lines to be absent and the Claude stage to finish before
+  06:30 PT.

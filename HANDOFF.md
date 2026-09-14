@@ -176,3 +176,21 @@ touched since, `git status`, the tail of `RESEARCH.md`, and `state/run_daily.log
   the generated image in the Codex conversation; originals remain in the generated-images folder.
 - Next: this is a logo concept, not a deployed transparent/vector production asset. Any favicon, vector treatment
   or website integration is follow-up work, not something already completed.
+
+### 2026-09-13 23:10 PT — Claude root → anyone: Codex beta model confirmed, branch merged into main, research published
+- Did: resumed after Codex. Checked the scheduler: the last cycle was Fri 2026-09-11 (Sat/Sun have no trigger),
+  `SemiBand-Cycle` and `SemiBand-Guardian` are Ready, next runs Mon 2026-09-14 03:30 / 07:35 PT. The user confirmed
+  (2026-09-13): use what Codex wrote, its verification is complete — so the beta-adjusted learner
+  (`LEARNER_TARGET_MODE=beta`, VOL_TARGET 0.50, raw shadow kept) stays the active paper model; nothing else was changed.
+  Ran Codex's suite in an isolated worktree: 15/15 pass. Merged `codex/semiband-ui-clarity` (fast-forward from
+  `fe7b998`) plus the clone's two research-record commits (`40756b5`, `284e76f`: higher-exposure verdict + scripts)
+  and committed the logo entry Codex had left uncommitted (`741f5f4`). Uploaded the merged `RESEARCH.md` to the Blob
+  (`semiband-v2/research.md`) so the site's Decisions section carries rounds 23–25, the beta activation and the
+  higher-exposure record. No cycle, order, LLM call or schedule change was run.
+- State: the live checkout `C:/Users/calif/Desktop/Trading` is still on `codex/semiband-ui-clarity` (`3d702d4`) with an
+  uncommitted `HANDOFF.md` change identical to `741f5f4`. Its trading code equals main after this merge (only docs and
+  research scripts differ). To move it to main: `git checkout -- HANDOFF.md && git checkout main && git pull`.
+- Next: after Monday's 03:30 PT cycle, verify in `state/run_daily.log` and the dashboard payload that the active model
+  is beta and the raw-shadow allocations were recorded; do not start an extra order-producing cycle. Open question the
+  user raised 2026-09-13: feed `llm_guidance` earnings-call statements only (10-K/8-K rows crowd the 12-row window in
+  127/149 universe names and push out 504 call statements); decision pending, no code change yet.

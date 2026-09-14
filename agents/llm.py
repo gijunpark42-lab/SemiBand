@@ -5,6 +5,7 @@ JSON-schema path, so agents always get a dict shaped exactly as they asked.
 """
 import json
 import logging
+import os
 import subprocess
 import sys
 import time
@@ -50,8 +51,10 @@ def ensure_server(wait_s=40):
     if sys.platform == "win32":
         flags = subprocess.CREATE_NEW_PROCESS_GROUP | getattr(subprocess, "DETACHED_PROCESS", 0)
     log_file = open(config.STATE_DIR / "llm_server.log", "a", encoding="utf-8")
+    env = {**os.environ, "LOCAL_CLAUDE_EFFORT_DEEP": config.LLM_EFFORT,      # opus effort and concurrent slots; the server
+           "LOCAL_CLAUDE_CONCURRENCY": str(config.LLM_WORKERS)}              # reads both once, at start
     subprocess.Popen([str(python), "-X", "utf8", str(server)], cwd=str(config.TRADINGAGENTS_DIR),
-                     stdout=log_file, stderr=subprocess.STDOUT, creationflags=flags)
+                     stdout=log_file, stderr=subprocess.STDOUT, creationflags=flags, env=env)
     for _ in range(wait_s):
         time.sleep(1)
         if health():

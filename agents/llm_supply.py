@@ -5,16 +5,18 @@ a direction. Runs through the local Claude server; no API key.
 import importlib.util
 import logging
 import os
+import re
 import sys
 import types
 from concurrent.futures import ThreadPoolExecutor
 
 import config
 from agents import llm
-from agents.base import Signal
+from agents.base import NOT_TRANSCRIPT, Signal
 
 log = logging.getLogger(__name__)
 NAME = "llm_supply"
+_STATEMENT = re.compile(r"^- (?:[^\[\n]*?)\[([^\]]+)\]")   # "- [label] text" and "- Company [label] on chain: text"
 
 SYSTEM = (
     "You are a semiconductor / AI-infrastructure supply-chain analyst deciding whether a stock "
@@ -52,8 +54,21 @@ def _report_builder():
     return mod.build_supply_chain_report
 
 
+def _transcripts_only(report):
+    """Drop statement lines quoted from SEC filings or third-party notes; earnings-call and conference statements,
+    headings and the deal lines under each counterparty stay (2026-09-13: filing lines pushed the supplier/customer
+    sections past the REPORT_CHARS cut in 30 of 150 reports)."""
+    keep = []
+    for line in report.split("\n"):
+        m = _STATEMENT.match(line)
+        if m and NOT_TRANSCRIPT.search(m.group(1)):
+            continue
+        keep.append(line)
+    return "\n".join(keep)
+
+
 def _one(build, ticker, company, price_line):
-    report = build(ticker, company)
+    report = _transcripts_only(build(ticker, company))
     if report.startswith("SUPPLY_CHAIN_UNAVAILABLE"):
         return None
     user = (f"Ticker: {ticker} ({company})\n{price_line}\n\n"

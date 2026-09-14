@@ -204,3 +204,19 @@ touched since, `git status`, the tail of `RESEARCH.md`, and `state/run_daily.log
   push to GitHub `main` now auto-deploys production (`semiband-git-main-gijun42.vercel.app` alias) — the project's
   Production env already holds TRADES_URL, BLOB_READ_WRITE_TOKEN, BLOB_STORE_ID and the Alpaca keys, so git deploys
   do not need the local `.env.local`.
+
+### 2026-09-14 00:05 PT — Claude root → anyone: transcripts-only inputs, every name, Opus xhigh (user decision, for Monday)
+
+- Did: user decision 2026-09-13 (no backtest first, token budget): `llm_guidance` / `llm_supply` now read only earnings-call
+  and conference statement rows (SEC filing and note rows dropped via `agents.base.NOT_TRANSCRIPT`), every universe name
+  gets the Claude agents (`LLM_MAX_TICKERS = None`), live Opus effort `xhigh` handed to the local server when the cycle
+  starts it (`LLM_EFFORT`; `LLM_WORKERS` 2 → 3 doubles as the server's slot count). Numbers and rationale: RESEARCH.md
+  "2026-09-13 — operational decision". Tests: `test_llm_inputs.py` (4) + Codex suite (15) pass. One measured xhigh call
+  (NVDA guidance: 41 s, 5.5k in / 3.1k out) through a server started with the new env; that server was stopped again so
+  the cycle starts its own. Merged to main and pushed (this commit).
+- State: the live checkout `C:/Users/calif/Desktop/Trading` is still on `codex/semiband-ui-clarity` (`3d702d4`); the new
+  inputs apply only after `git checkout -- HANDOFF.md && git checkout main && git pull` there (a worktree session cannot
+  touch it). Local Claude server: down (the cycle starts it). Learner, sizing, schedule: unchanged (beta, vol 0.50).
+- Next: after the Monday 2026-09-14 03:30 PT cycle check `state/llm_server.log` for `opus/xhigh` lines and ~450 calls
+  finishing before 06:30 PT, and `state/run_daily.log` for target mode beta plus the raw-shadow rows. If calls error out
+  mid-cycle (subscription window), set `LLM_EFFORT = "high"`. Conference fireside chats are not in the graph rows yet.

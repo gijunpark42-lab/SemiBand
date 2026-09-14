@@ -682,3 +682,37 @@ protocol, attribution methodology and six tests beside it. Large frozen prices, 
 immediate wrap-up request; resume analyzer without `--quick` only if requested. No statistical-proof claim is made.
 Inherited simulator limits include nondrifting weights, missing-price zero returns, post-band ceiling overshoots
 and no actual fill/margin-call feasibility. No research process remains, and no active defaults/orders changed.
+
+## 2026-09-13 — operational decision: the Claude readers get transcript statements only, every name, Opus xhigh
+
+User decision (2026-09-13, no backtest first: the point-in-time `llm_backtest.py` check would cost ~490 Sonnet calls the
+subscription does not have this week). Three live changes, effective from the 2026-09-14 cycle once the live checkout is
+on main. No sizing, learner or portfolio parameter changed; the beta model activated on 2026-09-12 stays.
+
+1. **Transcript statements only.** `llm_guidance` and `llm_supply` read the graph's pre-extracted statement rows
+   (`quarterly_data`: signal up to 500 chars plus figure up to 150 chars per row, 12 newest per company), never a raw
+   transcript. Since filings entered the graph, rows sourced from 10-K / 10-Q / 8-K and third-party notes competed for
+   the same 12 slots. Measured on the live universe (150 names, 2,833 rows): 1,709 own-call rows, 64 rows from other
+   companies' calls, 995 filing rows (431 10-K, 310 8-K, 254 10-Q), 35 analyst/media notes, 30 conference rows (GTC
+   Taipei, COMPUTEX). In the guidance window 494 of 1,692 rows were filings or notes, spread over 128 of 150 names;
+   dropping them brings 165 call/conference statements back inside the window (1,363 rows after) and raises the abstain
+   count only from 1 to 2 names (SHEL has no statements at all). In the supply-chain report (`REPORT_CHARS` = 9,000):
+   512 filing statement lines dropped, median report 9,240 to 7,820 chars, reports over the cut 80 to 49, reports whose
+   supplier/customer sections fell entirely past the cut 30 to 20. Counterparty deal lines (edges, some sourced from
+   10-K) are kept: they are the map, not commentary. Implementation: `agents.base.NOT_TRANSCRIPT` (labels containing
+   10-K / 10-Q / 8-K / 20-F / 6-K / 40-F or "note"), applied in `llm_guidance._own_signals` and
+   `llm_supply._transcripts_only`; `test_llm_inputs.py` (4 tests). Investing.com conference fireside chats are not in the
+   graph rows yet (earnings-ai side); the filter keeps any conference-labelled row automatically once they are.
+2. **Every name.** `LLM_MAX_TICKERS` 100 to None: all 150 universe names get the three Claude agents (was: top 100 by
+   preliminary |conviction| plus holdings).
+3. **Opus xhigh.** `LLM_EFFORT = "xhigh"` (Claude Code levels: low / medium / high / xhigh / max), handed to the local
+   server as `LOCAL_CLAUDE_EFFORT_DEEP` when the cycle starts it, together with `LOCAL_CLAUDE_CONCURRENCY` =
+   `LLM_WORKERS` (2 to 3). One measured call (NVDA guidance, 12 call rows): 41 s, 5,530 input / 3,061 output tokens,
+   versus high 15-19 s / ~3.3k / ~1.1k and max ~100 s / ~6.3k / ~7.5k (server log). Expected cycle: 450 calls, about
+   1.7 h with 3 workers (2.6 h with 2), so done near 05:30 PT for the 06:30 PT open; token use per cycle roughly 2.5 M
+   input + 1.4 M output, about 2.5x / 4x the 2026-09-11 cycle (300 calls at high). If the subscription window runs out
+   mid-cycle, failed calls simply yield no signal for that name (the free agents still trade); `LLM_EFFORT = "high"`
+   returns to the prior cost.
+
+Not a research result: no return, IC or Sharpe was measured for this input change; the first live evidence will be the
+`llm_guidance` / `llm_supply` scoreboard rows once the 10- and 20-day horizons mature.

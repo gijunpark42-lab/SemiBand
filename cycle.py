@@ -68,7 +68,7 @@ def _run_agent(name, universe, ctx):
 def run_agents(universe, ctx, model, held, use_llm):
     """Free agents see the whole universe; LLM agents (one claude -p call per
     ticker each) only the names the free agents rank highest plus what we hold,
-    capped by config.LLM_MAX_TICKERS. This keeps a cycle to ~1/3 of the calls."""
+    capped by config.LLM_MAX_TICKERS (None = every name)."""
     free = [a for a in config.AGENTS if not a.startswith("llm_")]
     llm_agents = [a for a in config.AGENTS if a.startswith("llm_")]
     signals = []

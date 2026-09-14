@@ -2,7 +2,9 @@
 signals from the graph (guidance, backlog, capacity, pricing, margins) and
 judges guidance momentum. Different input from `llm_supply` (which reads
 the structural position: chains, edges, transitions) and from `llm_news`
-(headlines). Abstains when the newest signal is older than 180 days.
+(headlines). Transcripts only: earnings calls and conference appearances;
+SEC filings and analyst notes are left out (2026-09-13). Abstains when the
+newest statement is older than 180 days.
 """
 import logging
 import re
@@ -11,7 +13,7 @@ from datetime import date
 
 import config
 from agents import llm
-from agents.base import Signal
+from agents.base import NOT_TRANSCRIPT, Signal
 from agents.supply_chain import _load, curated_metrics
 
 log = logging.getLogger(__name__)
@@ -38,6 +40,8 @@ def _label_date(label):
 def _own_signals(node):
     seen, rows = set(), []
     for q in node.get("quarterly_data") or []:
+        if NOT_TRANSCRIPT.search(q.get("quarter") or ""):
+            continue
         key = (q.get("quarter"), (q.get("signal") or "")[:80])
         if key in seen:
             continue
@@ -67,7 +71,7 @@ def _one(ticker, company, node, price_line):
                          + "\n".join(f"- {k}: {v}" for k, v in curated.items()
                                      if k != "asof" and v and v != "—") + "\n")
     user = (f"Ticker: {ticker} ({company})\n{price_line}\n{curated_block}\n"
-            f"Company's own recent call/filing statements, newest first:\n" + "\n".join(lines)
+            f"Company's own recent earnings-call and conference statements, newest first:\n" + "\n".join(lines)
             + "\n\nTrading is commission-free but each order costs about 5 bps in slippage, and there is no obligation to trade: a direction near 0 with low confidence is a valid answer. Give your opinion as JSON.")
     try:
         o = llm.ask_json(SYSTEM, user)

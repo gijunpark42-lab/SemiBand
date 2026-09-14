@@ -214,9 +214,10 @@ touched since, `git status`, the tail of `RESEARCH.md`, and `state/run_daily.log
   "2026-09-13 — operational decision". Tests: `test_llm_inputs.py` (4) + Codex suite (15) pass. One measured xhigh call
   (NVDA guidance: 41 s, 5.5k in / 3.1k out) through a server started with the new env; that server was stopped again so
   the cycle starts its own. Merged to main and pushed (this commit).
-- State: the live checkout `C:/Users/calif/Desktop/Trading` is still on `codex/semiband-ui-clarity` (`3d702d4`); the new
-  inputs apply only after `git checkout -- HANDOFF.md && git checkout main && git pull` there (a worktree session cannot
-  touch it). Local Claude server: down (the cycle starts it). Learner, sizing, schedule: unchanged (beta, vol 0.50).
+- State: the live checkout `C:/Users/calif/Desktop/Trading` is now on `main` (`2136b89`, fast-forwarded from the Codex
+  branch after discarding its uncommitted HANDOFF.md copy of `741f5f4`); its config loads effort xhigh, 3 workers, no
+  ticker cap, target mode beta, vol 0.50, PAPER. Local Claude server: down (the cycle starts it with the new env).
+  Schedule unchanged: `SemiBand-Cycle` next run Monday 2026-09-14 03:30 PT.
 - Next: after the Monday 2026-09-14 03:30 PT cycle check `state/llm_server.log` for `opus/xhigh` lines and ~450 calls
   finishing before 06:30 PT, and `state/run_daily.log` for target mode beta plus the raw-shadow rows. If calls error out
   mid-cycle (subscription window), set `LLM_EFFORT = "high"`. Conference fireside chats are not in the graph rows yet.

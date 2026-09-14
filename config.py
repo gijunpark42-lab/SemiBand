@@ -69,6 +69,12 @@ AGENTS = [
 HORIZONS = (10, 20)               # trading days after which a prediction is scored. v2.3 (2026-09-11 search, daily refits): dropping the 5-day
                                   # horizon was the biggest single gain (5-day abnormal returns are mostly noise): OOS Sharpe 0.92 -> 1.4-1.7
 
+OPEN_REFRESH_AGENTS = ("technical", "mean_reversion", "risk", "macro", "fundamentals")   # re-run right after the open on today's
+                                  # first trades so an overnight gap reaches the price-based signals the way it reaches the fills
+                                  # (user 2026-09-14; NOT backtested: the free daily data has no pre-market history). fundamentals
+                                  # re-prices forward P/E, P/S and analyst-target upside at the live price. Claude, supply_chain,
+                                  # neighbors and events keep their pre-open signals. () = off
+
 # --- learning ---
 WARM_START_WEIGHT = 0.5           # backtest rows (state/backtest.sqlite) count this much vs live rows in learner.fit; 0 = off
 LEARNER_HALF_LIFE_DAYS = 90       # time decay of scored rows (sweep 2026-09-10: 90 beat 45 and 20 on Sharpe and return)

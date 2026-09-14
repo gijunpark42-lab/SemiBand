@@ -7,6 +7,8 @@ the open, orders go out right after 09:30 ET. Safe to run by hand with --dry-run
     python cycle.py --no-llm        only the seven free rule agents
     python cycle.py --force         trade even if foreign (non-sb2) orders were seen in 24h
     python cycle.py --tickers NVDA,AMD   restrict the universe (testing)
+    python cycle.py --reuse-signals      re-run a day from the signals already recorded today: no agent runs again, no Claude
+                                         calls (same as creating state/reuse_signals before a scheduled run)
 
 Steps: fresh-start liquidation if state/liquidate_pending exists -> foreign-order
 guard -> universe -> closes -> score matured predictions + refit the stacking model -> run
@@ -36,9 +38,14 @@ import score
 import snapshots
 import universe as universe_mod
 from agents import moderator
+from agents.base import Signal
+from agents.macro import EXTRA as MACRO_EXTRA
+
+import pandas as pd
 
 ET = ZoneInfo("America/New_York")
 LIQUIDATE_MARKER = config.STATE_DIR / "liquidate_pending"
+REUSE_MARKER = config.STATE_DIR / "reuse_signals"
 log = logging.getLogger("cycle")
 
 
@@ -86,6 +93,57 @@ def run_agents(universe, ctx, model, held, use_llm):
     return signals
 
 
+def convict(signals, model, shadow_model, notes=None):
+    """Convictions from the active model, its breakdown, and the shadow model's convictions (demeaned when configured)."""
+    convictions, breakdown = learner.predict(signals, model)
+    shadow_convictions, _ = learner.predict(signals, shadow_model) if shadow_model else ({}, {})
+    if config.DEMEAN_CONVICTION and convictions:
+        mean_conv = sum(convictions.values()) / len(convictions)
+        convictions = {t: c - mean_conv for t, c in convictions.items()}
+        if notes is not None:
+            notes.append(f"convictions demeaned by {mean_conv:+.3f}")
+    if config.DEMEAN_CONVICTION and shadow_convictions:
+        shadow_mean = sum(shadow_convictions.values()) / len(shadow_convictions)
+        shadow_convictions = {t: c - shadow_mean for t, c in shadow_convictions.items()}
+    return convictions, breakdown, shadow_convictions
+
+
+def open_refresh(universe, signals, today, betas, notes):
+    """Right after the open: add today's first trades as a price row and re-run config.OPEN_REFRESH_AGENTS, so an
+    overnight gap reaches the price-based signals the way it reaches the fills. Every other signal (Claude included)
+    stays as computed before the open. An agent that returns nothing keeps its pre-open signals. The refreshed agents'
+    predictions for today replace the pre-open ones in the ledger. -> (signals, {symbol: live price}); {} = unchanged."""
+    names = [a for a in config.OPEN_REFRESH_AGENTS if a in config.AGENTS]
+    live = market.live_prices(list(universe) + [config.BENCHMARK, "SPY"]) if names else {}
+    if not live:
+        if names:
+            log.warning("open refresh skipped: no live prices")
+        return signals, {}
+    base = market.closes(list(universe) + [config.BENCHMARK] + MACRO_EXTRA)
+    base = base.loc[base.index < pd.Timestamp(today)]
+    row = base.ffill().iloc[-1].copy()               # last close everywhere, replaced where a print from today exists
+    for symbol, price in live.items():
+        if symbol in row.index:
+            row[symbol] = price
+    live_closes = base.copy()
+    live_closes.loc[pd.Timestamp(today)] = row
+    ctx = {"closes": live_closes, "today": today, "live_prices": live}
+    fresh = {name: _run_agent(name, universe, ctx) for name in names}
+    done = [name for name in names if fresh[name]]
+    if not done:
+        log.warning("open refresh: no agent produced signals, keeping the pre-open ones")
+        return signals, {}
+    price_at = {t: float(row[t]) for t in universe if t in row.index and pd.notna(row[t])}
+    ledger.replace_predictions(today, done, [s for name in done for s in fresh[name]], price_at, betas)
+    last = base[config.BENCHMARK].dropna()
+    gap = live[config.BENCHMARK] / float(last.iloc[-1]) - 1 if config.BENCHMARK in live and len(last) else float("nan")
+    msg = (f"open refresh: {config.BENCHMARK} {gap:+.1%} vs last close; re-ran {', '.join(done)} on today's first trades "
+           f"({len(live)} live prices)")
+    log.info(msg)
+    notes.append(msg)
+    return [s for s in signals if s.agent not in done] + [s for name in done for s in fresh[name]], live
+
+
 def guardian_blocked(today):
     """Names the intraday guardian exited within GUARDIAN_COOLDOWN_DAYS (state/guardian_exits.json)."""
     path = config.STATE_DIR / "guardian_exits.json"
@@ -113,6 +171,7 @@ def main():
     p.add_argument("--no-llm", action="store_true")
     p.add_argument("--force", action="store_true")
     p.add_argument("--tickers", default="")
+    p.add_argument("--reuse-signals", action="store_true")
     args = p.parse_args()
     dry = args.dry_run or config.DRY_RUN
 
@@ -157,7 +216,14 @@ def main():
     closes = market.closes(list(universe) + [config.BENCHMARK])
     last_close = {t: float(closes[t].dropna().iloc[-1]) for t in universe if t in closes.columns and closes[t].dropna().size}
 
-    weights, scored, model, weights_hedge = score.run(closes, today)
+    reuse = args.reuse_signals or REUSE_MARKER.exists()
+    recorded = ledger.predictions_on(today) if reuse else []
+    model = learner.load() if recorded else None
+    if model is not None:                # a re-run of a day already scored and fitted: keep that model
+        weights = model.get("effective_weights") or learner.effective_weights(model)
+        scored, weights_hedge = {}, ledger.latest_hedge_weights() or ensemble.initial_weights()
+    else:
+        weights, scored, model, weights_hedge = score.run(closes, today)
     if scored:
         notes.append("scored " + ", ".join(f"{a} {n}" for a, n in scored.items()))
     log.info("effective weights: %s", weights)
@@ -165,26 +231,32 @@ def main():
     positions = broker.positions()
 
     ctx = {"closes": closes, "today": today}
-    signals = run_agents(universe, ctx, model, positions, use_llm=not args.no_llm)
-    prediction_betas = learning_targets.latest_betas(closes, {s.ticker for s in signals}, today)
-    ledger.add_predictions(today, signals, last_close, prediction_betas)
-    convictions, breakdown = learner.predict(signals, model)
+    if recorded:
+        # Signals already recorded today by a stopped run: reuse them, so no agent and no Claude call runs twice.
+        signals = [Signal(r["agent"], r["ticker"], r["direction"], r["confidence"], r["horizon"], r["reason"]) for r in recorded]
+        prediction_betas = learning_targets.latest_betas(closes, {s.ticker for s in signals}, today)
+        notes.append(f"reused {len(signals)} signals recorded earlier today (no agent re-run, no Claude calls)")
+        log.info("reusing %d signals recorded earlier on %s", len(signals), today)
+    else:
+        signals = run_agents(universe, ctx, model, positions, use_llm=not args.no_llm)
+        prediction_betas = learning_targets.latest_betas(closes, {s.ticker for s in signals}, today)
+        ledger.add_predictions(today, signals, last_close, prediction_betas)
+    if reuse and not dry:
+        REUSE_MARKER.unlink(missing_ok=True)
     shadow_mode = "raw" if config.LEARNER_TARGET_MODE == "beta" else "beta"
     shadow_model = learner.load(shadow_mode)
-    shadow_convictions, _ = learner.predict(signals, shadow_model) if shadow_model else ({}, {})
-    if config.DEMEAN_CONVICTION and convictions:
-        mean_conv = sum(convictions.values()) / len(convictions)
-        convictions = {t: c - mean_conv for t, c in convictions.items()}
-        notes.append(f"convictions demeaned by {mean_conv:+.3f}")
-    if config.DEMEAN_CONVICTION and shadow_convictions:
-        shadow_mean = sum(shadow_convictions.values()) / len(shadow_convictions)
-        shadow_convictions = {t: c - shadow_mean for t, c in shadow_convictions.items()}
+    convictions, breakdown, shadow_convictions = convict(signals, model, shadow_model, notes)
 
     if not dry and not wait_for_open(max_minutes=120):
         log.info("market did not open (holiday?) — predictions recorded, no orders")
         journal.publish_dashboard({"date": today, "weights": weights,
                                    "notes": notes + ["market did not open: predictions recorded, no orders"]})
         return 0
+
+    if config.OPEN_REFRESH_AGENTS:
+        signals, live = open_refresh(universe, signals, today, prediction_betas, notes)
+        if live:
+            convictions, breakdown, shadow_convictions = convict(signals, model, shadow_model)
 
     acct = broker.account()          # fresh numbers at the open
     equity, cash = float(acct.equity), float(acct.cash)

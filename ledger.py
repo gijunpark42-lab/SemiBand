@@ -75,6 +75,29 @@ def add_predictions(date, signals, price_at, benchmark_beta=None):
              for s in signals])
 
 
+def predictions_on(date):
+    """One date's recorded signals, newest row per (agent, ticker): a re-run reuses them instead of calling the agents again."""
+    with connect() as con:
+        rows = con.execute("SELECT agent, ticker, direction, confidence, horizon, reason FROM predictions "
+                           "WHERE date = ? ORDER BY id", (date,)).fetchall()
+    return list({(r["agent"], r["ticker"]): r for r in rows}.values())
+
+
+def replace_predictions(date, agents, signals, price_at, benchmark_beta=None):
+    """Swap one date's predictions of `agents` for fresh ones in one transaction (the open refresh re-runs the
+    price-based agents on today's first trades)."""
+    agents = list(agents)
+    benchmark_beta = benchmark_beta or {}
+    with connect() as con:
+        con.execute(f"DELETE FROM predictions WHERE date = ? AND agent IN ({','.join('?' * len(agents))})", (date, *agents))
+        con.executemany(
+            "INSERT INTO predictions(date, agent, ticker, direction, confidence, horizon, reason, price_at, benchmark_beta) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            [(date, s.agent, s.ticker, s.direction, s.confidence, s.horizon, s.reason, price_at.get(s.ticker),
+              benchmark_beta.get(s.ticker))
+             for s in signals if s.agent in agents])
+
+
 def unscored(horizon):
     """Predictions that have no score yet for this horizon (all of them; the scorer decides maturity)."""
     with connect() as con:

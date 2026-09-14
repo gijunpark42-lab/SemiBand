@@ -55,6 +55,35 @@ def opens(symbols, lookback_days) -> pd.DataFrame:
     return df
 
 
+def live_prices(symbols, max_age_hours=6) -> dict:
+    """{symbol: price of its newest trade in the last `max_age_hours`} from Alpaca's data API, across IEX (real time) and
+    the consolidated tape (15 minutes delayed). Used right after the open so an overnight gap reaches the price-based
+    agents; a name with no print in that window is left out (the caller keeps its last close)."""
+    import requests
+    cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(hours=max_age_hours)
+    symbols = sorted(set(symbols))
+    best = {}
+    for feed in ("iex", "delayed_sip"):
+        for i in range(0, len(symbols), 100):
+            try:
+                r = requests.get("https://data.alpaca.markets/v2/stocks/trades/latest", timeout=15,
+                                 headers={"APCA-API-KEY-ID": config.API_KEY, "APCA-API-SECRET-KEY": config.SECRET_KEY},
+                                 params={"symbols": ",".join(symbols[i:i + 100]), "feed": feed})
+                r.raise_for_status()
+                trades = r.json().get("trades") or {}
+            except Exception as exc:  # one feed failing must not stop the other
+                log.warning("live prices (%s): %s", feed, exc)
+                continue
+            for symbol, trade in trades.items():
+                try:
+                    price, when = float(trade["p"]), pd.Timestamp(trade["t"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if price > 0 and when >= cutoff and (symbol not in best or when > best[symbol][1]):
+                    best[symbol] = (price, when)
+    return {symbol: price for symbol, (price, _) in best.items()}
+
+
 def news(symbol, limit=10, max_age_days=21):
     """[{title, publisher, when}] newest first; empty list if yfinance has nothing."""
     try:

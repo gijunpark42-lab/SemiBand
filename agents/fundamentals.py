@@ -14,9 +14,16 @@ NAME = "fundamentals"
 
 def run(universe: dict, ctx: dict) -> list[Signal]:
     data = market.fundamentals(list(universe))
+    live = ctx.get("live_prices") or {}     # open refresh: today's first trades re-price the valuation ratios
     out = []
     for ticker in universe:
-        f = data.get(ticker) or {}
+        f = dict(data.get(ticker) or {})
+        price, now = f.get("currentPrice"), live.get(ticker)
+        if price and now:
+            for key in ("forwardPE", "priceToSalesTrailing12Months"):
+                if f.get(key) is not None:
+                    f[key] = f[key] * now / price
+            f["currentPrice"] = now
         score, why, n = 0.0, [], 0
 
         g = f.get("revenueGrowth")

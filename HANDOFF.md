@@ -165,3 +165,14 @@ touched since, `git status`, the tail of `RESEARCH.md`, and `state/run_daily.log
   returns remain verified as in the preceding entry. Higher-exposure research is being finalized below, not deployed.
 - Next: keep this final user decision; inspect normal next-cycle beta/raw-shadow logs when that scheduled cycle
   occurs. Do not start an extra order-producing cycle or resume parameter tuning without a new request.
+
+### 2026-09-12 afternoon — Codex root → Claude / anyone: subsequent logo request
+- Did: user subsequently requested a new logo for the Earnings AI website branded "AI Supply Chain". Created a
+  blue connected-node A and exact wordmark with the built-in image tool, matching the site's existing dark/blue
+  palette. Refined a rough transparent draft into an opaque dark-background concept; no website code/deployment
+  was changed and no existing asset was replaced.
+- Local deliverable: `C:/Users/calif/Documents/Codex/2026-09-12/semiband-research/outputs/logo/ai-supply-chain-logo-dark-v1.png`
+  (2172×724 PNG), with the final prompt/tool/provenance in `outputs/logo/README.md` beside it. The user can inspect
+  the generated image in the Codex conversation; originals remain in the generated-images folder.
+- Next: this is a logo concept, not a deployed transparent/vector production asset. Any favicon, vector treatment
+  or website integration is follow-up work, not something already completed.

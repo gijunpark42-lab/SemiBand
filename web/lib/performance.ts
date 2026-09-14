@@ -77,3 +77,47 @@ export function parseDailyBars(payload: AlpacaBars, now = new Date()) {
   }
   return { series, openingPrices };
 }
+
+export type Risk = { n: number; sharpe: number | null; sharpeSe: number | null; vol: number | null; maxDrawdown: number | null;
+  beta: number | null; infoRatio: number | null; infoRatioSe: number | null };
+
+const ANNUAL = Math.sqrt(252);
+const mean = (xs: number[]) => xs.reduce((sum, x) => sum + x, 0) / xs.length;
+const std = (xs: number[]) => { const m = mean(xs); return Math.sqrt(xs.reduce((sum, x) => sum + (x - m) ** 2, 0) / xs.length); };
+
+// Annualised mean / standard deviation of daily returns, with its approximate standard error (Lo 2002, iid returns).
+function annualRatio(xs: number[]) {
+  const s = std(xs);
+  if (!(s > 1e-12)) return { value: null, se: null };
+  const daily = mean(xs) / s;
+  return { value: daily * ANNUAL, se: Math.sqrt((1 + daily * daily / 2) / xs.length) * ANNUAL };
+}
+
+function dailyReturns(line: (number | null)[], end: number): number[] | null {
+  const points = line.slice(0, end + 1);
+  if (!points.length || points.some((v) => v == null || !Number.isFinite(v))) return null;
+  const levels = (points as number[]).map((v) => 1 + v);
+  return levels.slice(1).map((v, i) => v / levels[i] - 1);
+}
+
+// Risk of one comparison line through index `end` (index 0 = the opening baseline, later indexes = daily closes, never the
+// live mark). Same definitions as backtest.py: daily returns, population standard deviation, zero risk-free rate, x sqrt(252).
+// Beta and the information ratio are measured against `bench` (SOXX).
+export function riskStats(line: (number | null)[], bench: (number | null)[], end: number): Risk {
+  const empty: Risk = { n: 0, sharpe: null, sharpeSe: null, vol: null, maxDrawdown: null, beta: null, infoRatio: null, infoRatioSe: null };
+  const r = dailyReturns(line, end);
+  if (!r || !r.length) return empty;
+  let peak = 1, maxDrawdown = 0;
+  for (const v of line.slice(0, end + 1) as number[]) { peak = Math.max(peak, 1 + v); maxDrawdown = Math.max(maxDrawdown, 1 - (1 + v) / peak); }
+  if (r.length < 2) return { ...empty, n: r.length, maxDrawdown };
+  const sharpe = annualRatio(r);
+  const b = dailyReturns(bench, end);
+  let beta: number | null = null, info: { value: number | null; se: number | null } = { value: null, se: null };
+  if (b && b.length === r.length) {
+    const mr = mean(r), mb = mean(b), varB = std(b) ** 2;
+    beta = varB > 1e-18 ? r.reduce((sum, x, i) => sum + (x - mr) * (b[i] - mb), 0) / r.length / varB : null;
+    info = annualRatio(r.map((x, i) => x - b[i]));
+  }
+  return { n: r.length, sharpe: sharpe.value, sharpeSe: sharpe.se, vol: std(r) * ANNUAL, maxDrawdown, beta,
+    infoRatio: info.value, infoRatioSe: info.se };
+}

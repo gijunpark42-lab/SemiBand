@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { BENCHMARK_START, LIVE, buildComparison, sessionLabel, type DailySeries, type EquityPoint, type LivePoint } from "@/lib/performance";
+import { BENCHMARK_START, LIVE, buildComparison, riskStats, sessionLabel, type DailySeries, type EquityPoint, type LivePoint } from "@/lib/performance";
 
 const H = 240, PAD = { l: 62, r: 12, t: 14, b: 24 };
 const COLORS: Record<string, string> = { Portfolio: "var(--line)", SOXX: "var(--down)", SPY: "var(--ink-3)", QQQ: "var(--up)" };
@@ -80,6 +80,30 @@ export default function Performance({ equity, benchmarks, openingPrices, source,
         </svg>
         <label className="chart-scrubber">Explore dates<input type="range" min={0} max={dates.length - 1} value={hi}
           aria-label="Explore benchmark returns by date" aria-valuetext={label(hi)} onChange={(e) => setHover(Number(e.target.value))} /></label>
+        {(() => {
+          const end = dates[hi] === LIVE ? hi - 1 : hi;       // daily closes only: the live mark is not a daily return
+          const rows = Object.entries(lines).map(([name, arr]) => ({ name, risk: riskStats(arr, lines.SOXX ?? [], end) }));
+          const n = Math.max(0, ...rows.map((row) => row.risk.n));
+          const withSe = (v: number | null, se: number | null) => v == null ? "—" : `${v.toFixed(2)} ± ${(se ?? 0).toFixed(2)}`;
+          return <div style={{ marginTop: 16 }}>
+            <div className="performance-context">
+              <span>{`Risk · daily closes from the ${day(BENCHMARK_START)} open through ${end > 0 ? `the ${day(dates[end])} close` : "the opening baseline"} · ${n} daily return${n === 1 ? "" : "s"}`}</span>
+              <span>Same formulas as the backtest: daily returns, zero risk-free rate, annualised with √252 · ± one standard error</span>
+            </div>
+            {n > 0 && n < 20 && <p className="data-notice">{`Only ${n} daily return${n === 1 ? "" : "s"} so far, so these numbers are mostly noise: one standard error on a Sharpe ratio is about ±${Math.sqrt(252 / n).toFixed(1)}. They become readable after roughly 60 sessions.`}</p>}
+            <div className="scroll"><table>
+              <thead><tr><th>Series</th><th className="num">Sharpe</th><th className="num">Volatility</th><th className="num">Max drawdown</th><th className="num">Beta vs SOXX</th><th className="num">Info ratio vs SOXX</th></tr></thead>
+              <tbody>{rows.map(({ name, risk }) => <tr key={name}>
+                <td style={{ color: COLORS[name] }}>{name}</td>
+                <td className="num">{withSe(risk.sharpe, risk.sharpeSe)}</td>
+                <td className="num">{risk.vol == null ? "—" : `${(risk.vol * 100).toFixed(1)}%`}</td>
+                <td className="num">{risk.maxDrawdown == null ? "—" : `${(-risk.maxDrawdown * 100).toFixed(2)}%`}</td>
+                <td className="num">{risk.beta == null ? "—" : risk.beta.toFixed(2)}</td>
+                <td className="num">{withSe(risk.infoRatio, risk.infoRatioSe)}</td>
+              </tr>)}</tbody>
+            </table></div>
+          </div>;
+        })()}
       </>}
     </div>
   );

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildComparison, marketDate, parseDailyBars, sessionComplete, sessionLabel } from "../lib/performance.ts";
+import { buildComparison, marketDate, parseDailyBars, riskStats, sessionComplete, sessionLabel } from "../lib/performance.ts";
 
 const timestamp = (iso) => Date.parse(iso) / 1000;
 const equity = [
@@ -78,6 +78,30 @@ test("a live mark is appended after the recorded closes and never replaces them"
   const without = buildComparison(equity, closes, opens);
   assert.deepEqual(without.dates, ["2026-09-10", "2026-09-10", "2026-09-11"]);
   assert.equal(without.live, null);
+});
+
+test("risk statistics use the backtest definitions and stop at the selected close", () => {
+  const soxx = [0, 0.1, 0.21, 0.089];          // levels 1, 1.1, 1.21, 1.089 -> daily +10%, +10%, -10%
+  const book = [0, 0.05, 0.1025, 0.047375];    // half of every move -> beta 0.5
+  const close = (a, b) => Math.abs(a - b) < 1e-9;
+  const s = riskStats(soxx, soxx, 3);
+  assert.equal(s.n, 3);
+  assert.ok(close(s.sharpe, Math.sqrt(252) / (2 * Math.sqrt(2))));
+  assert.ok(close(s.sharpeSe, Math.sqrt((1 + 1 / 16) / 3) * Math.sqrt(252)));
+  assert.ok(close(s.vol, Math.sqrt(0.08) / 3 * Math.sqrt(252)));
+  assert.ok(close(s.maxDrawdown, 0.1));
+  assert.ok(close(s.beta, 1));
+  assert.equal(s.infoRatio, null);
+  const p = riskStats(book, soxx, 3);
+  assert.ok(close(p.beta, 0.5));
+  assert.ok(close(p.infoRatio, -Math.sqrt(252) / (2 * Math.sqrt(2))));
+  assert.ok(close(p.maxDrawdown, 0.05));
+  const early = riskStats(book, soxx, 1);
+  assert.equal(early.n, 1);
+  assert.equal(early.sharpe, null);
+  assert.equal(early.maxDrawdown, 0);
+  assert.equal(riskStats(book, soxx, 0).n, 0);
+  assert.equal(riskStats([null, null, null, null], soxx, 3).sharpe, null);
 });
 
 test("the live mark is labelled by New York session", () => {

@@ -48,11 +48,12 @@ export default function Performance({ equity, benchmarks, openingPrices, source,
       {!isLive && endDate && latestDates.Portfolio && endDate < latestDates.Portfolio && <p className="data-notice">Comparison ends {day(endDate)} because one or more benchmarks have not published the portfolio&apos;s latest session.</p>}
       <div className="tiles" style={{ marginBottom: 16 }}>
         {Object.entries(lines).map(([name, arr]) => {
-          const value = arr.at(-1) ?? null;
+          const value = arr[hi] ?? null;               // follows the selected point (hover, touch or slider); latest by default
+          const known = arr.some((v) => v != null);     // a line exists only when its opening baseline is known
           return <div className="tile" key={name}>
             <div className="label" style={{ color: COLORS[name] }}>{name}</div>
             <div className={`value ${value == null ? "muted" : value < 0 ? "down" : "up"}`}>{value == null ? "—" : pct(value)}</div>
-            <div className="delta muted">{value == null ? "Opening baseline unavailable" : isLive ? `live · ${liveLabel}` : endDate ? `through ${day(endDate)} close` : ""}</div>
+            <div className="delta muted">{!known ? "Opening baseline unavailable" : value == null ? `No price · ${label(hi)}` : label(hi)}</div>
             <div className="delta muted">{name === "Portfolio"
               ? portfolioBaselineDate ? `${day(portfolioBaselineDate)} account close as opening proxy` : "No opening account history"
               : bases[name] != null ? `Sep 10 open $${bases[name]!.toFixed(2)}` : "Sep 10 open not available"}</div>

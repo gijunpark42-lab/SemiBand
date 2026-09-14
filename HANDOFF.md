@@ -221,3 +221,22 @@ touched since, `git status`, the tail of `RESEARCH.md`, and `state/run_daily.log
 - Next: after the Monday 2026-09-14 03:30 PT cycle check `state/llm_server.log` for `opus/xhigh` lines and ~450 calls
   finishing before 06:30 PT, and `state/run_daily.log` for target mode beta plus the raw-shadow rows. If calls error out
   mid-cycle (subscription window), set `LLM_EFFORT = "high"`. Conference fireside chats are not in the graph rows yet.
+
+### 2026-09-14 07:00 PT — Claude root → anyone: Monday cycle reused Claude signals and refreshed price agents at the open; SHEL closed, book in cash; dashboard live marks
+
+- Did (overnight, dashboard): `a9cf266` live mark for account equity and the benchmark comparison (latest trade in any session,
+  recorded daily closes unchanged); `0c6ea50` comparison tiles follow the selected date; `1be7f4b` risk table (Sharpe with
+  standard error, volatility, max drawdown, beta and information ratio vs SOXX; same formulas as backtest.py; follows the date
+  slider; small-sample notice under 20 daily returns). Each verified against numbers computed from Alpaca, locally and in production.
+- Did (morning): the scheduled cycle started 03:43 PT because the PC was off at 03:30; 448 Opus xhigh calls on 3 slots finished
+  04:43 with no failures. The user asked for the price at order time, so `cad125d` and `fafe3d9` add the open refresh and signal
+  reuse. Rehearsed on a state copy, then stopped the waiting run at 04:50 before any order and relaunched it with
+  `state/reuse_signals`. At 06:30:14 the refresh ran on 151 live prices with SOXX −5.5%; 0 targets; SHEL sold at $97.14.
+  Numbers and caveats: RESEARCH.md "2026-09-14 — operational decision".
+- State: live checkout on main (this record on top of `fafe3d9`). Account all cash, $1,007,152, no positions. The local Claude
+  server is up (xhigh, 3 slots) for the guardian. `OPEN_REFRESH_AGENTS` is on for tomorrow unless the backtest says otherwise.
+- Relaunch recipe if a waiting run must pick up new code before the open: confirm no order lines today, create
+  `state/reuse_signals`, stop the waiting `python cycle.py` and its cmd parent, wait for the task to show Ready, then
+  `schtasks /Run /TN SemiBand-Cycle`; the log must show "reusing N signals recorded earlier".
+- Next: backtest the open refresh against the next-open baseline (500 days, `--exec open`, no Claude) and decide before the
+  2026-09-15 03:30 PT cycle; end-of-day record after 13:20 PT.

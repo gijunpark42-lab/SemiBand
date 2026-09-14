@@ -716,3 +716,42 @@ on main. No sizing, learner or portfolio parameter changed; the beta model activ
 
 Not a research result: no return, IC or Sharpe was measured for this input change; the first live evidence will be the
 `llm_guidance` / `llm_supply` scoreboard rows once the 10- and 20-day horizons mature.
+
+## 2026-09-14 — operational decision: price-based agents refreshed on the first trades after the open
+
+User decision 2026-09-14 about 04:45 PT, with SOXX trading 4.7% below Friday's close before the open: signals were computed on
+Friday's close while fills happen at the open, so the price-based agents should see the price at order time. Activated the same
+morning WITHOUT a backtest (the free daily data has no pre-market history); the backtest comparison is the next item.
+
+What changed (commits `cad125d`, `fafe3d9`):
+
+- Right after the open, `config.OPEN_REFRESH_AGENTS` (technical, mean_reversion, risk, macro, fundamentals, events) re-run on a
+  price row built from each name's newest trade (`market.live_prices`: IEX real time or the 15-minute delayed consolidated
+  tape; a name with no print today keeps its last close). fundamentals re-prices forward P/E, P/S and analyst-target upside at
+  the live price. Their predictions for the day replace the pre-open rows in the ledger (`ledger.replace_predictions`).
+- The Claude agents, supply_chain and neighbors keep their pre-open signals: price is one line of the Claude prompts, and
+  re-running about 450 xhigh calls takes an hour, so it cannot finish by the open.
+- `--reuse-signals` or a `state/reuse_signals` marker re-runs a day from its recorded signals and that day's fitted model: no
+  agent re-run and no Claude calls. Tests: `test_open_refresh.py` (4), 23 in total.
+
+How the day ran:
+
+| Step | Time PT | Result |
+|---|---|---|
+| Scheduled run (the PC was off at 03:30) | 03:43 to 04:43 | all 11 agents; 448 Opus xhigh calls on 3 slots, no failures; 1,383 predictions recorded, then waiting |
+| Rehearsal on a copy of the state, pre-market prices (SOXX −4.7%) | 04:44 | names at or above the 0.10 entry bar: 7 before the refresh (ES, EXC, SHEL, APD, D, MMM, ADBE), 0 after; the only order would close SHEL |
+| Switch | 04:50 | waiting run stopped before any order, relaunched with the reuse marker |
+| Open refresh | 06:30:14 | 151 live prices, SOXX −5.5% vs Friday's close; 6 agents re-ran in under a second; risk 66 to 64 signals |
+| Orders | 06:30 | 0 targets; one order: SHEL market sell, 786.6221 shares filled at $97.14 at 09:33 ET |
+| After | 06:38 | book all cash, equity $1,007,152; the raw shadow model also had 0 targets |
+
+Why convictions fell: the gap raised a few fundamentals and mean-reversion scores, but risk, macro and technical reacted more
+strongly under the learned weights (effective macro −0.08, risk +0.17, technical +0.07). Largest pre-market conviction changes
+in the rehearsal: GOOGL −0.094, SNPS −0.093, EXC −0.087, AAPL −0.084, MMM −0.080; the largest rise was MRVL +0.076.
+
+Caveats: the refreshed features are out of sample for a learner fitted on close-based features; walk-forward CV IC is still
+negative for both models; one day proves nothing. Noted, not changed: live learning labels start at the prediction day's close
+and backtest labels at the signal day's close, while fills happen at the open.
+
+Next: backtest the refresh (price agents see day t+1's open appended before trading at that open) against the next-open
+baseline, 500 days, and keep or turn off `OPEN_REFRESH_AGENTS` before the 2026-09-15 cycle.

@@ -646,3 +646,39 @@ User subsequently requested testing higher deployment/exposure toward a $2m book
 That is a separate predeclared experiment; gross1.50, size0.60 and entry0.10 remain unchanged pending its verdict.
 Raising a ceiling alone does not force investment. Record the next experiment below when complete, including
 financing, stress, cash exposure and whether its result actually addresses the current low-investment state.
+
+## 2026-09-12 — round 26: higher exposure, financing and cash-drag attribution
+
+Final user decision: KEEP beta0.50 with the existing signal-sized/cash-holding structure. No allocation setting
+was enlarged. Five fixed variants × two regimes × two trading-cost models × financing0/5/10% =60 completed scenarios.
+All470 recent and1,170 stress dates refit daily. Twelve zero-financing comparisons exactly matched unchanged sweep
+daily rounded returns and metrics; six financing/sizing/attribution tests passed. Both source ledgers remained
+byte-identical. One new common adjusted-price snapshot reproduced the prior zero-financing beta baselines.
+
+| Variant (cap-tier costs + assumed5% financing) | Recent return / Sharpe / DD | OOS Sharpe | Stress return / Sharpe / DD | Recent mean gross |
+|---|---:|---:|---:|---:|
+| Existing beta0.50 | +763.32% /2.007 /32.7% |2.188 |+14.51% /0.120 /37.2% |93.5% |
+| Gross ceiling2.00 only | +963.33% /1.937 /36.5% |2.143 |+11.69% /0.092 /39.6% |103.8% |
+| Size0.80 only | +811.83% /2.019 /33.4% |2.118 |+12.98% /0.097 /43.4% |97.4% |
+| Both | +1059.97% /1.953 /37.1% |2.138 |+8.69% /0.060 /45.3% |111.8% |
+| Positive ranking +5% pre-control name floor | +865.47% /2.045 /37.9% |2.024 |+42.88% /0.246 /38.1% |105.4% |
+
+All four alternatives fail the original recent OOS-Sharpe screen. Small Sharpe gaps do NOT prove inferiority;
+larger return with larger drawdown is a risk-preference choice, not evidence of an improved risk-adjusted edge.
+The ranking floor's apparent cap-cost stress gain reverses with30bps trading costs: stress return−66.22%, DD70.4%
+versus baseline−47.83%, DD57.3%. Financing is charged identically on positive borrowing across calendar days and
+feeds back into volatility control; these are assumed rates, not broker quotes. Cash earns no modeled interest.
+
+The user's cash-drag concern is real but distinct from chosen-name quality. On the recent baseline's64 dates below
+20% gross, mean exposure was9.8%, conditional account return+0.58% versus SOXX+16.77%; the daily excess attribution
+was selection−1.16bps + utilization−26.82bps − trading0.93bps. On the48 active subset dates, the unit-gross same-name
+sleeve returned+11.17% before costs versus SOXX+12.76%. Conditional dates are non-contiguous, not a continuous period.
+Gross2 alone leaves mean low-day exposure9.7%; size0.8 raises it only12.7%; ranking floor raises it61.3% but increases
+risk and turnover. Live paper history has only two sessions, insufficient to infer production selection skill.
+
+Complete reproducibility/decision handoff is `outputs/higher_exposure_20260912/HANDOFF.md`, with runner,
+protocol, attribution methodology and six tests beside it. Large frozen prices, daily-model caches, full curves,
+`report.md` and `summary.json` stay local. The optional bootstrap/PBO/DSR phase was explicitly NOT run at the user's
+immediate wrap-up request; resume analyzer without `--quick` only if requested. No statistical-proof claim is made.
+Inherited simulator limits include nondrifting weights, missing-price zero returns, post-band ceiling overshoots
+and no actual fill/margin-call feasibility. No research process remains, and no active defaults/orders changed.

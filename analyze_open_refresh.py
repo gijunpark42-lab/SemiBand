@@ -16,10 +16,12 @@ import numpy as np
 import config
 
 OOS_END = "2025-09-24"
-RUNS = {  # name: (tag, open_refresh, label_open)
-    "baseline (next open)": ("_orbase", False, False),
-    "open refresh": ("_orrefresh", True, False),
-    "open refresh, open labels": ("_orrefresh_ol", True, True),
+RUNS = {  # name: (tag, open_refresh, label_open, label_next_close)
+    "baseline (next open)": ("_orbase", False, False, False),
+    "open refresh": ("_orrefresh", True, False, False),
+    "open refresh, open labels": ("_orrefresh_ol", True, True, False),
+    "baseline, live labels": ("_orbase_nc", False, False, True),
+    "open refresh, live labels": ("_orrefresh_nc", True, False, True),
 }
 WINDOWS = (("full", None, None), ("OOS", None, OOS_END), ("IS", OOS_END, None))
 
@@ -38,13 +40,14 @@ def window_stats(curve, lo=None, hi=None):
 
 
 reports = {}
-for name, (tag, refresh, label_open) in RUNS.items():
+for name, (tag, refresh, label_open, label_next_close) in RUNS.items():
     path = config.STATE_DIR / f"backtest_report{tag}.json"
     if not path.exists():
         print(f"{name}: {path.name} missing, skipped")
         continue
     rep = json.loads(path.read_text(encoding="utf-8"))
-    assert rep["execution"] == "open" and bool(rep.get("open_refresh")) == refresh and bool(rep.get("label_open")) == label_open, name
+    assert (rep["execution"] == "open" and bool(rep.get("open_refresh")) == refresh and bool(rep.get("label_open")) == label_open
+            and bool(rep.get("label_next_close")) == label_next_close), name
     reports[name] = rep
 
 print(f"{'run':27} {'window':6} {'days':>4} {'return':>9} {'SOXX':>8} {'Sharpe':>6} {'maxDD':>6} {'gross':>6} {'turn':>5}")

@@ -31,6 +31,10 @@ class OpenRowWindow(unittest.TestCase):
         with self.assertRaises(ValueError):
             backtest.run(days=5, exec_mode="close", open_refresh=True)
 
+    def test_only_one_label_start(self):
+        with self.assertRaises(ValueError):
+            backtest.run(days=5, exec_mode="open", open_refresh=True, label_open=True, label_next_close=True)
+
 
 if __name__ == "__main__":
     unittest.main()

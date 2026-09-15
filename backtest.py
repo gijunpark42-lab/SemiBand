@@ -235,7 +235,8 @@ def publish_progress(payload):
 
 
 def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mode="close", agents=None, end=None,
-        open_refresh=False, label_open=False, label_next_close=False, refresh_agents=None, learn_preopen=False):
+        open_refresh=False, label_open=False, label_next_close=False, refresh_agents=None, learn_preopen=False,
+        prior_only=False):
     """tag: suffix for the output files (state/backtest<tag>.sqlite / backtest_report<tag>.json)
     so a long build can run while sweeps read the default files.
     exec_mode: 'close' = trade at the close the signals were computed on (optimistic);
@@ -269,6 +270,7 @@ def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mod
                 "agents_requested": agents, "open_refresh": open_refresh, "label_open": label_open,
                 "label_next_close": label_next_close,
                 "refresh_agents": list(refresh_agents) if refresh_agents is not None else None, "learn_preopen": learn_preopen,
+                "prior_only": prior_only,
                 "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     publish_progress(dict(run_info, status="loading", pct=0.0, message="downloading prices and earnings"))
     try:
@@ -422,6 +424,8 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
             model = learner.fit(t, asof=t)
         conv, _ = learner.predict(signals, model)
         conv_prior, _ = learner.predict(signals, None)
+        traded = conv_prior if run_info.get("prior_only") else conv   # learner ablation: trade on the equal-weight prior blend
+        day_ic = (None, None)
         # IC of today's convictions against the 10-day outcome (evaluated later in the loop's own scores)
         y10 = {}
         for tk in conv:
@@ -439,6 +443,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
         if len(common) >= 10:
             ic_learned.append(learner.ic(np.array([conv[tk] for tk in common]), np.array([y10[tk] for tk in common])))
             ic_prior.append(learner.ic(np.array([conv_prior[tk] for tk in common]), np.array([y10[tk] for tk in common])))
+            day_ic = (ic_learned[-1], ic_prior[-1])
             order = sorted(common, key=lambda tk: conv[tk])       # signal monotonicity: 10-day abnormal return by conviction quintile
             for q in range(5):
                 part = order[q * len(order) // 5:(q + 1) * len(order) // 5]
@@ -448,7 +453,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
         # or from open t+1 to open t+2 (open mode, what the live cycle actually gets)
         realized = (float(np.std([c["ret"] for c in curve[-config.VOL_LOOKBACK_DAYS:]])) * math.sqrt(252)
                     if config.VOL_TARGET and len(curve) >= config.VOL_LOOKBACK_DAYS else None)
-        targets = portfolio.targets(conv, config.CAPITAL, realized_vol=realized)   # dollars, same rules as live
+        targets = portfolio.targets(traded, config.CAPITAL, realized_vol=realized)   # dollars, same rules as live
         w = {tk: v / config.CAPITAL for tk, v in targets.items()}   # -> weights
         if config.HEDGE_SIZE and B[i] < float(np.nanmean(B[max(0, i - config.HEDGE_LOOKBACK): i + 1])):   # regime hedge, as live
             scale = min(1.0, config.VOL_TARGET / realized) if (config.VOL_TARGET and realized and realized > config.VOL_TARGET) else 1.0
@@ -475,13 +480,14 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
         equity *= 1 + ret
         turnover_total += turnover
         prev_w = w
-        top = sorted(conv, key=lambda tk: -conv[tk])[:config.TOP_N]
+        top = sorted(traded, key=lambda tk: -traded[tk])[:config.TOP_N]
         rank_rets = [r for tk in top if (r := day_ret(tk)) is not None]
         rank_ret = float(np.mean(rank_rets)) if rank_rets else 0.0
         equity_rank *= 1 + rank_ret - 0.1 * config.COST_BPS / 10_000    # ~10% daily turnover assumed
         curve.append({"date": t.isoformat(), "portfolio": equity, "rank": equity_rank, "gross": sum(abs(x) for x in w.values()),
                       "n": len([tk for tk in w if not tk.startswith("__")]), "hedge": round(-w.get("__HEDGE__", 0.0), 2),
                       "held": sorted(tk for tk in w if not tk.startswith("__")),
+                      "ic_learned": day_ic[0], "ic_prior": day_ic[1],
                       "sleeve": round(w.get("__SLEEVE__", 0.0), 3),
                       "ret": ret, "turnover": turnover,
                       "soxx": float(px[config.BENCHMARK].iloc[i + 1 + shift] / px[config.BENCHMARK].iloc[base]),
@@ -520,6 +526,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
         "label_next_close": bool(run_info.get("label_next_close")),
         "refresh_agents": run_info.get("refresh_agents"),
         "learn_preopen": bool(run_info.get("learn_preopen")),
+        "prior_only": bool(run_info.get("prior_only")),
         "sizing": {"size": config.SIZE_PER_CONVICTION, "cap": config.MAX_POSITION_PCT, "gross": config.GROSS_TARGET,
                    "min_book": config.MIN_STOCK_BOOK, "idle_sleeve": config.IDLE_SLEEVE,
                    "sleeve_fraction": config.IDLE_SLEEVE_FRACTION, "sleeve_trend": config.IDLE_SLEEVE_TREND},
@@ -591,6 +598,7 @@ if __name__ == "__main__":
     p.add_argument("--label-next-close", action="store_true", help="learning labels start at the close of the order day t+1, as the live scorer does (score.py)")
     p.add_argument("--refresh-agents", default=None, help="with --open-refresh: comma list of the agents that see the open row (default: config.OPEN_REFRESH_AGENTS, as live), e.g. technical,risk,macro,fundamentals,events")
     p.add_argument("--learn-preopen", action="store_true", help="with --open-refresh: trade on the refreshed signals but record and learn from the signals computed before the open (hybrid)")
+    p.add_argument("--prior-only", action="store_true", help="trade on the equal-weight prior blend instead of the fitted weights (learner ablation); the learner is still fit daily and both ICs are recorded per day")
     p.add_argument("--position-cap", type=float, default=None, help="override MAX_POSITION_PCT, e.g. 0.30")
     p.add_argument("--min-book", type=float, default=None, help="override MIN_STOCK_BOOK, e.g. 0.5")
     p.add_argument("--idle-sleeve", default=None, help="ETF for idle equity, SOXX or SPY (sets IDLE_SLEEVE)")
@@ -620,5 +628,5 @@ if __name__ == "__main__":
             exec_mode=args.exec_mode, agents=tuple(x for x in args.agents.split(",") if x) if args.agents else None, end=args.end,
             open_refresh=args.open_refresh, label_open=args.label_open, label_next_close=args.label_next_close,
             refresh_agents=tuple(x for x in args.refresh_agents.split(",") if x) if args.refresh_agents is not None else None,
-            learn_preopen=args.learn_preopen)
+            learn_preopen=args.learn_preopen, prior_only=args.prior_only)
     print(json.dumps({k: v for k, v in r.items() if k != "curve"}, indent=2)[:4000])

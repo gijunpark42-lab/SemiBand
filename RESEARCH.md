@@ -1052,3 +1052,54 @@ Across all five runs, turnover was 0.35–0.36 per day, mean gross 1.00–1.03, 
 **Other findings.**
 - **Changes since round 29.** `_g1ref` (+1084%, drawdown 28.8%) uses the same flags as `_sz5` (+1158%, 29.4%). Two code changes separate them: the 2026-09-15 sleeve formula, which fills idle equity only up to the vol target's exposure, and the events data guards. Together they cost 74 points of total return and lowered drawdown by 0.6 points.
 - **Caveat.** This is one 470-day window in one regime. A paired t of −1.7 is not decisive on its own; the gate and the stop rule were fixed before the runs.
+
+**Round 31 addendum (review partner, 04:20 PT).**
+
+- **The 74-point gap between `_sz5` and `_g1ref` is entirely the sleeve formula.** The two prediction ledgers are identical (289,471 rows), and the return difference sits on the 101 days where the sleeve differs:
+
+  | Window | Difference, bps/day | t |
+  |---|---|---|
+  | Full | −1.42 | −1.76 |
+  | OOS | +0.46 | +1.75 |
+  | In-sample | −3.51 | −2.11 |
+
+  Max drawdown moves from 29.4% to 28.8% and Sharpe from 2.27 to 2.24. Capping the sleeve at the vol target's exposure is a risk-policy choice, not a correctness fix. It stays, because a vol cap the sleeve can override is not a cap, and it is flagged to the user as their call.
+- **"Keep live" means "no measurable cost".**
+  - Daily differences have a spread of 118 bps, so the gate detects only effects of about 11 bps/day.
+  - Every OOS refresh comparison since round 27 has been negative. Live-label forms ranged from −2.7 to −11.2 bps/day, though they reuse the same OOS days.
+  - The replay fills at the exact open the refreshed signals saw, which flatters the refresh.
+- **The refresh and the signal-close label are coupled.** The comments in `config.py` and `score.py` now say so: neither changes alone.
+- **Cheapest forward evidence, planned for after the live freeze:** record each day's pre-refresh book as a shadow target set and compare it with the live book after about 60 sessions.
+
+## 2026-09-15 — round 32, pre-registered before any run: does the re-weighting learner add value?
+
+**Why.** Both open requests from the user assume the stacking learner's fitted weights beat a fixed equal-weight blend: agents that improve themselves under a learner that keeps re-weighting them, and more agents whose voices the learner sets. Round 31's reports do not show that:
+- With the clean label (`_g0`), the learned 10-day IC (0.0151) is below the equal prior's (0.0184).
+- `_g1ref`'s 0.026 against 0.013 is measured on the gap-contaminated label.
+- Walk-forward CV IC is negative in every run.
+
+The review partner therefore ranked this ablation ahead of any new agent or per-agent learning.
+
+**Runs.** Both use 500 days, the round 31 flags and the same price cache.
+
+| Tag | Flags | What it is |
+|---|---|---|
+| `_l0` | `_g0` flags + `--prior-only` | No refresh, order-day-open label |
+| `_l1` | `_g1ref` flags + `--prior-only` | The live setup: refresh, signal-close label |
+
+`--prior-only` trades on the equal-weight prior blend. The learner is still fit every day, and every curve day records both 10-day ICs.
+
+**Checks.** `_l0`'s prediction ledger and mean learned IC must equal `_g0`'s, and `_l1`'s must equal `_g1ref`'s. Trading does not feed back into signals or fits.
+
+**Conclusion rule.** This decides research direction only; no live change comes from this round. Learning "helps" on a flag set when all three hold:
+1. The learned book's paired daily t against the prior-only book is at least +1.0 over the full window.
+2. Its OOS mean difference (before 2025-09-24) is above 0.
+3. The learned 10-day IC exceeds the prior's in both halves, before and after 2025-09-24.
+
+For `_l1` that IC is on the signal-close label and is reported with that caveat. The clean-label pair (`_g0` against `_l0`) decides.
+
+**What follows.**
+- If learning helps there: per-agent learning (Stage B) and learned weights for new agents stay on the plan.
+- If it doesn't: Stage B is deprioritised, and new agents enter with weights fixed in advance.
+
+Changing the live learner would need its own pre-registered test and forward shadow data. This round adds two trials to the count.

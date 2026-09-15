@@ -75,6 +75,8 @@ OPEN_REFRESH_AGENTS = ("technical", "mean_reversion", "risk", "macro", "fundamen
                                   # with labels starting at the close the signals used (score.py since 2026-09-15, warm start
                                   # backtest_orrefresh) the refresh made +895% / Sharpe 2.14 / DD 31% vs +900% / 2.14 / 30% without
                                   # it; with labels starting at the order day's close it made +712% / 1.96 / 34%. () = off
+                                  # Round 31: under the order-day-open label every refresh form lost 6-7 bps/day to no refresh; only
+                                  # the signal-close label in score.py makes it tie. The two are coupled: never change one alone.
 
 # --- learning ---
 WARM_START_WEIGHT = 0.5           # backtest rows (state/backtest.sqlite) count this much vs live rows in learner.fit; 0 = off

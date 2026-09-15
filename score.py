@@ -45,7 +45,9 @@ def run(closes: pd.DataFrame, today: str):
         for p in ledger.unscored(h):
             pos = idx.searchsorted(pd.Timestamp(p["date"]))
             # entry at the close before the prediction date (2026-09-15: the backtest's label; starting at the prediction
-            # day's own close cost +895% -> +712% over 500 days with the open refresh on, RESEARCH.md round 27)
+            # day's own close cost +895% -> +712% over 500 days with the open refresh on, RESEARCH.md round 27).
+            # Coupled to config.OPEN_REFRESH_AGENTS: only with this label does the refresh tie no refresh (round 31); under the
+            # order-day-open label every refresh form lost 6-7 bps/day. Never change the label alone: re-test the refresh first.
             if pos < 1 or pos - 1 + h >= len(idx) or idx[pos] != pd.Timestamp(p["date"]):
                 continue                        # not matured yet, or no close before the prediction date
             t = p["ticker"]

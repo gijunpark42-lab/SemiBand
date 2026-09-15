@@ -88,5 +88,26 @@ class Fundamentals(unittest.TestCase):
         self.assertEqual(info["NVDA"]["currentPrice"], 100.0)   # the day's cache is not modified
 
 
+class LiveLabels(unittest.TestCase):
+    def test_label_starts_at_the_close_before_the_prediction_date(self):
+        import numpy as np
+        import config
+        import learner
+        import score
+        idx = pd.bdate_range("2024-01-01", periods=100)
+        closes = pd.DataFrame({"SOXX": np.linspace(100, 160, 100), "AAA": np.linspace(50, 120, 100)}, index=idx)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(config, "STATE_DIR", root), patch.object(ledger, "DB", root / "ledger.sqlite"), \
+                    patch.object(config, "AGENTS", ["technical"]), patch.object(config, "HORIZONS", (10,)), \
+                    patch.object(learner, "fit", return_value={"effective_weights": {}, "horizons": {}}):
+                ledger.add_predictions(str(idx[60].date()), [Signal("technical", "AAA", 1.0, 0.5, 10, "")], {"AAA": 1.0}, {"AAA": 1.0})
+                score.run(closes, str(idx[90].date()))
+                with ledger.connect() as con:
+                    ret, bench_ret = con.execute("SELECT ret, bench_ret FROM scores").fetchone()
+        self.assertAlmostEqual(ret, closes.AAA.iloc[69] / closes.AAA.iloc[59] - 1)
+        self.assertAlmostEqual(bench_ret, closes.SOXX.iloc[69] / closes.SOXX.iloc[59] - 1)
+
+
 if __name__ == "__main__":
     unittest.main()

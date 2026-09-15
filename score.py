@@ -1,7 +1,8 @@
 """Score matured predictions against realized returns, then refit the learner.
 
-For a prediction made on date D with horizon h: entry = close of D, exit =
-close h trading days later, abnormal = stock return minus the benchmark's.
+For a prediction made on date D with horizon h: entry = the close before D (the
+one the pre-open signals were computed on, as in the backtest), exit = close h
+trading days after that, abnormal = stock return minus the benchmark's.
 
 Two learners run on the scored rows:
   * learner.fit  - Bayesian ridge stacking (the weights actually used), see learner.py
@@ -43,13 +44,15 @@ def run(closes: pd.DataFrame, today: str):
     for h in config.HORIZONS:
         for p in ledger.unscored(h):
             pos = idx.searchsorted(pd.Timestamp(p["date"]))
-            if pos + h >= len(idx) or idx[pos] != pd.Timestamp(p["date"]):
-                continue                        # not matured yet
+            # entry at the close before the prediction date (2026-09-15: the backtest's label; starting at the prediction
+            # day's own close cost +895% -> +712% over 500 days with the open refresh on, RESEARCH.md round 27)
+            if pos < 1 or pos - 1 + h >= len(idx) or idx[pos] != pd.Timestamp(p["date"]):
+                continue                        # not matured yet, or no close before the prediction date
             t = p["ticker"]
             if t not in closes.columns:
                 continue
-            c0, c1 = closes[t].iloc[pos], closes[t].iloc[pos + h]
-            b0, b1 = bench.iloc[pos], bench.iloc[pos + h]
+            c0, c1 = closes[t].iloc[pos - 1], closes[t].iloc[pos - 1 + h]
+            b0, b1 = bench.iloc[pos - 1], bench.iloc[pos - 1 + h]
             if any(not math.isfinite(v) or v <= 0 for v in (c0, c1, b0, b1)):
                 continue
             ret, bench_ret = float(c1 / c0 - 1), float(b1 / b0 - 1)

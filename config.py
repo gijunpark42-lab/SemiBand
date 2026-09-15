@@ -69,12 +69,12 @@ AGENTS = [
 HORIZONS = (10, 20)               # trading days after which a prediction is scored. v2.3 (2026-09-11 search, daily refits): dropping the 5-day
                                   # horizon was the biggest single gain (5-day abnormal returns are mostly noise): OOS Sharpe 0.92 -> 1.4-1.7
 
-OPEN_REFRESH_AGENTS = ()          # OFF since the 2026-09-14 backtest. When set, e.g. ("technical", "mean_reversion", "risk", "macro",
-                                  # "fundamentals", "events"), those agents re-run right after the open on today's first trades
-                                  # (fundamentals re-prices P/E, P/S and target upside) and replace their pre-open predictions.
-                                  # Live 2026-09-14 only. 500-day backtests (RESEARCH.md 2026-09-14 round 27): with the live scorer's
-                                  # labels the refresh made +712% / Sharpe 1.96 / DD 34% vs +919% / 2.16 / 26% without it, and it only
-                                  # looked neutral when the labels overlapped the gap the refreshed signal had already seen.
+OPEN_REFRESH_AGENTS = ("technical", "mean_reversion", "risk", "macro", "fundamentals", "events")   # re-run right after the open on
+                                  # today's first trades and replace their pre-open predictions (fundamentals re-prices P/E, P/S and
+                                  # target upside). User decision 2026-09-15: signals must use the latest price. Round 27 backtests:
+                                  # with labels starting at the close the signals used (score.py since 2026-09-15, warm start
+                                  # backtest_orrefresh) the refresh made +895% / Sharpe 2.14 / DD 31% vs +900% / 2.14 / 30% without
+                                  # it; with labels starting at the order day's close it made +712% / 1.96 / 34%. () = off
 
 # --- learning ---
 WARM_START_WEIGHT = 0.5           # backtest rows (state/backtest.sqlite) count this much vs live rows in learner.fit; 0 = off

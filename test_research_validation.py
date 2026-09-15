@@ -246,7 +246,8 @@ class LearnerValidationTest(unittest.TestCase):
                  patch.object(config, "AGENTS", ["technical"]), patch.object(config, "HORIZONS", (10,)), \
                  patch.object(learner, "fit", return_value={"effective_weights": {}, "horizons": {}}):
                 with ledger.connect() as con:
-                    for d in (str(idx[0].date() - timedelta(days=1)), str(idx[80].date())):
+                    # idx[81]: the 10-day label runs from idx[80]'s close to idx[90]'s, which is today and not yet known
+                    for d in (str(idx[0].date() - timedelta(days=1)), str(idx[81].date())):
                         con.execute("INSERT INTO predictions(date,agent,ticker,direction,confidence,benchmark_beta) "
                                     "VALUES (?,'technical','AAA',1,0.5,1.5)", (d,))
                 score.run(closes, str(idx[90].date()))

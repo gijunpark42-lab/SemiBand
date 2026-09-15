@@ -265,3 +265,14 @@ touched since, `git status`, the tail of `RESEARCH.md`, and `state/run_daily.log
 - State: live checkout on main, refresh off (`OPEN_REFRESH_AGENTS = ()`), effort xhigh, 3 workers, beta target, PAPER.
   Next cycle 2026-09-15 03:30 PT: expect "reusing" and "open refresh" lines to be absent and the Claude stage to finish before
   06:30 PT.
+
+### 2026-09-15 02:05 PT — Claude root → anyone: latest price at order time restored and fitted; warm start swapped; conservativeness, negative convictions and shorts checked
+
+- Did: the user reaffirmed at 01:30 PT that signals must use the latest price, with the model fitted to it, and delegated
+  everything overnight. Commit `c3979a7` turns `OPEN_REFRESH_AGENTS` back on and makes `score.py` start labels at the close the
+  signals used (tests 27 pass). The live warm start `state/backtest.sqlite` is now `backtest_orrefresh`; the old one is
+  `state/backtest_nbfix_warmstart_20260911.sqlite`. A preview on a state copy fitted cleanly. Findings on conservativeness
+  (regime behaviour, leave sizing), negative convictions (bullish map agents weighted against) and shorts (rejected in rounds 9
+  and 18) are in RESEARCH.md round 28.
+- State: live checkout on main with these records; the 2026-09-15 cycle runs at 03:30 PT with the refresh on; account all cash.
+- Next: checkpoints 03:22, 03:37, 06:23, 06:57 and 13:27 PT. Rollback recipe in RESEARCH.md round 28.

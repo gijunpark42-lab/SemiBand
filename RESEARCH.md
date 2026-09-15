@@ -799,3 +799,56 @@ Reading:
 Caveats: one 470-day window dominated by one regime; today's universe (survivorship); flat 5 bps; the replay trades exactly
 at the official open while the live refresh orders a few seconds later; fundamentals and the Claude agents are not
 simulated, so the fundamentals re-pricing that was part of the live refresh is untested.
+
+## 2026-09-15 — round 28: latest price at order time, fitted; conservativeness, negative convictions and shorts checked
+
+User decision 2026-09-15 01:30 PT, after round 27 switched the refresh off: signals must use the latest price, and the model
+must be fitted to it by backtesting rather than the refresh being dropped. Round 27 already holds the fit: with the refresh on,
+the label start decides the result.
+
+| Refresh on, labels start at | Return | Sharpe | Max DD | OOS Sharpe | IS Sharpe | At 30 bps |
+|---|---|---|---|---|---|---|
+| the close the signals used (adopted) | +895% | 2.14 | 31.0% | 2.25 | 2.03 | +558% / 1.75 |
+| the order day's close (live scorer until 2026-09-14) | +712% | 1.96 | 34.0% | 2.03 | 1.89 | +445% / 1.58 |
+| for reference, no refresh, signal-close labels | +900% | 2.14 | 29.7% | 2.38 | 1.86 | +559% / 1.75 |
+
+What changed for the 2026-09-15 cycle:
+
+- `OPEN_REFRESH_AGENTS` back on: technical, mean_reversion, risk, macro, fundamentals, events re-run on the first trades after
+  the open (commit `c3979a7`).
+- `score.py`: a prediction's label now starts at the close before its date, the close the pre-open signals used, as in the
+  backtest. No live score had matured, so no stored score changed. Codex's scorer test keeps its unfinished-label case at
+  idx[81]; a new test pins the entry close. Tests: 27 pass.
+- Warm start: `state/backtest.sqlite` is now the round-27 refresh ledger (`backtest_orrefresh`: 289,471 predictions, 578,524
+  scores, refreshed price-agent features, signal-close labels). The round-22 `_nbfix` warm start is saved as
+  `state/backtest_nbfix_warmstart_20260911.sqlite`.
+- Preview on a copy of the state (no Claude, no orders): effective weights moved mean_reversion 0.135 → 0.058, supply_chain
+  −0.043 → −0.057, macro −0.080 → −0.091, risk 0.171 → 0.177, technical 0.070 → 0.077, neighbors 0.053 → 0.068. Walk-forward CV
+  IC stays negative (10d −0.077, 20d −0.053). On the 2026-09-14 signals: old model 0 names at or above the 0.10 entry bar (top NRG
+  0.069), new model 1 (SHEL 0.101).
+
+Is the book too conservative? Live cycles: 2026-09-10 bought 15 names, 09-11 sold 15 and bought SHEL, 09-14 sold SHEL. The
+same strategy in the 500-day replay has been mostly in cash for four months:
+
+| Replay window (no refresh) | Strategy | SOXX | Mean gross |
+|---|---|---|---|
+| 2025-09-24 → 2026-05-01 | +125.6% | +77.2% | 0.94 |
+| 2026-05-01 → 2026-08-14 | +0.8% | +19.3% | 0.15 |
+
+Monthly replay gross 2026-05 to 08: 0.11, 0.18, 0.19, 0.09, with 1–2 names. The live cash stance is the validated strategy's
+regime behaviour, not a live fault. The exposure increases tested in round 26 (gross ceiling 2.0, size 0.8, a positive-rank
+floor) all failed the OOS-Sharpe screen, and the user kept the signal-sized structure then. Verdict: leave the sizing as is.
+Revisit if live matured rows keep a negative IC after about 20 scored days.
+
+Why convictions are mostly negative (2026-09-14 signals, live model): 20 of 150 names positive, 130 negative, 66 at or below
+−0.10; 5/25/50/75/95% quantiles −0.231, −0.142, −0.093, −0.024, +0.039. The structurally bullish map agents are weighted
+against: supply_chain mean direction +0.55 but mean contribution −0.065, neighbors +0.43 / −0.056. risk only ever speaks
+negative (−0.32 / −0.041) and events −0.020. The largest positive contributors are fundamentals +0.021 and mean_reversion
++0.008.
+
+Shorts: rounds 9 and 18 rejected short books of the 5–10 most negative names (+723% / +671%, Sharpe 1.73 / 1.66 against
+long-only +731% / 1.78) and the SOXX hedge as a return source. With walk-forward IC negative, strongly negative convictions
+are not a short signal either. Long-only stays.
+
+Rollback, if needed: `OPEN_REFRESH_AGENTS = ()`, `git revert c3979a7` for the label start, and copy
+`backtest_nbfix_warmstart_20260911.sqlite` back to `backtest.sqlite`.

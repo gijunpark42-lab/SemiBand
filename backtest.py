@@ -182,9 +182,15 @@ def _prices(kind, symbols, lookback):
           else market.opens(symbols, lookback_days=lookback))
     if path is not None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
+        tmp = path.with_suffix(f".{os.getpid()}.tmp")
         tmp.write_bytes(pickle.dumps(df))
-        tmp.replace(path)
+        try:
+            os.link(tmp, path)       # first writer wins, so parallel runs all trade on one download (2026-09-15: they diverged)
+        except FileExistsError:
+            pass
+        finally:
+            tmp.unlink(missing_ok=True)
+        return pickle.loads(path.read_bytes())
     return df
 
 
@@ -246,6 +252,8 @@ def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mod
     unknown = set(refresh_agents or ()) - {"technical", "mean_reversion", "risk", "macro", "events", "fundamentals"} - set(extra)
     if unknown:
         raise ValueError(f"--refresh-agents: not an open-refresh agent: {sorted(unknown)}")
+    if refresh_agents is not None and not refresh_agents:
+        raise ValueError("--refresh-agents: empty list (omit the flag to refresh config.OPEN_REFRESH_AGENTS)")
     if open_refresh and refresh_agents is None:
         refresh_agents = tuple(config.OPEN_REFRESH_AGENTS)   # as live (fundamentals is not simulated, so it changes nothing here)
     extra_mods = [{"momentum": momentum, "sue": sue, "ml_ranker": ml_ranker}.get(e) or importlib.import_module(f"agents.{e}")

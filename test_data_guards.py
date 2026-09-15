@@ -70,5 +70,42 @@ class GuardianSeenMemory(unittest.TestCase):
         self.assertEqual(seen, {"b", "c", "d", "e"})
 
 
+class ModelSaveRetry(unittest.TestCase):
+    def test_a_momentarily_locked_model_file_is_still_replaced(self):
+        import json
+        import learner
+        real, calls = Path.replace, []
+
+        def flaky(self, target):
+            calls.append(target)
+            if len(calls) < 3:
+                raise PermissionError(5, "Access is denied")            # a scanner holds the old file for a moment
+            return real(self, target)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "model.json"
+            path.write_text("{}", encoding="utf-8")
+            with patch.object(Path, "replace", flaky), patch("time.sleep"):
+                learner.save_model({"weights": {"risk": 0.2}}, path)
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"weights": {"risk": 0.2}})
+            self.assertEqual(len(calls), 3)
+            self.assertEqual([p.name for p in Path(tmp).iterdir()], ["model.json"])
+
+    def test_a_file_that_stays_locked_raises_and_leaves_no_temp_file(self):
+        import learner
+
+        def locked(self, target):
+            raise PermissionError(5, "Access is denied")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "model.json"
+            path.write_text("{}", encoding="utf-8")
+            with patch.object(Path, "replace", locked), patch("time.sleep") as sleep, self.assertRaises(PermissionError):
+                learner.save_model({"weights": {}}, path)
+            self.assertEqual(sleep.call_count, 19)
+            self.assertEqual([p.name for p in Path(tmp).iterdir()], ["model.json"])
+            self.assertEqual(path.read_text(encoding="utf-8"), "{}")          # the previous model is still readable
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -329,12 +329,26 @@ def fit(today: date | None = None, asof: date | None = None, target_mode: str | 
 
 def save_model(model, path):
     """Publish a complete model atomically; interrupted fits leave the previous model readable."""
+    import contextlib
+    import logging
     import os
+    import time
     from pathlib import Path
     path = Path(path)
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     tmp.write_text(json.dumps(model, indent=2, allow_nan=False), encoding="utf-8")
-    tmp.replace(path)
+    for attempt in range(20):   # Windows: a scanner or reader holding the old file blocks the swap for a moment (2026-09-15)
+        try:
+            tmp.replace(path)
+            return
+        except PermissionError as exc:
+            if attempt == 19:
+                with contextlib.suppress(OSError):
+                    tmp.unlink()
+                raise
+            if attempt == 0:
+                logging.getLogger(__name__).warning("saving %s blocked (%s); retrying for up to 5 s", path.name, exc)
+            time.sleep(0.25)
 
 
 def load(target_mode: str | None = None) -> dict | None:

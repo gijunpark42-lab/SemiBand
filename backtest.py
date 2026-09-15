@@ -234,9 +234,25 @@ def publish_progress(payload):
         log.warning("progress publish failed: %s", exc)
 
 
+def long_short_weights(convictions, betas, n, leg):
+    """Market-neutral weights (round 33): the top n convictions long at leg/n each, the bottom n short, the short leg
+    resized (bounded 0.5-2x) so the book's beta is about zero. Fewer than two names -> no book. -> {ticker: weight}"""
+    ranked = sorted(convictions, key=lambda tk: convictions[tk])
+    k = min(n, len(ranked) // 2)
+    if k == 0:
+        return {}
+    longs, shorts = ranked[-k:], ranked[:k]
+    w = {tk: leg / k for tk in longs}
+    beta_long = sum(leg / k * betas.get(tk, 1.0) for tk in longs)
+    beta_short = sum(leg / k * betas.get(tk, 1.0) for tk in shorts)
+    ratio = min(2.0, max(0.5, beta_long / beta_short)) if beta_short > 0 else 1.0
+    w.update({tk: -leg / k * ratio for tk in shorts})
+    return w
+
+
 def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mode="close", agents=None, end=None,
         open_refresh=False, label_open=False, label_next_close=False, refresh_agents=None, learn_preopen=False,
-        prior_only=False):
+        prior_only=False, long_short=None):
     """tag: suffix for the output files (state/backtest<tag>.sqlite / backtest_report<tag>.json)
     so a long build can run while sweeps read the default files.
     exec_mode: 'close' = trade at the close the signals were computed on (optimistic);
@@ -257,6 +273,8 @@ def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mod
         raise ValueError("--refresh-agents: empty list (omit the flag to refresh config.OPEN_REFRESH_AGENTS)")
     if open_refresh and refresh_agents is None:
         refresh_agents = tuple(config.OPEN_REFRESH_AGENTS)   # as live (fundamentals is not simulated, so it changes nothing here)
+    if long_short is not None and long_short < 1:
+        raise ValueError("--long-short needs at least one name per leg")
     extra_mods = [{"momentum": momentum, "sue": sue, "ml_ranker": ml_ranker}.get(e) or importlib.import_module(f"agents.{e}")
                   for e in extra]                              # factor_* agents load by name
     if agents:
@@ -270,7 +288,7 @@ def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mod
                 "agents_requested": agents, "open_refresh": open_refresh, "label_open": label_open,
                 "label_next_close": label_next_close,
                 "refresh_agents": list(refresh_agents) if refresh_agents is not None else None, "learn_preopen": learn_preopen,
-                "prior_only": prior_only,
+                "prior_only": prior_only, "long_short": long_short,
                 "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     publish_progress(dict(run_info, status="loading", pct=0.0, message="downloading prices and earnings"))
     try:
@@ -453,12 +471,17 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
         # or from open t+1 to open t+2 (open mode, what the live cycle actually gets)
         realized = (float(np.std([c["ret"] for c in curve[-config.VOL_LOOKBACK_DAYS:]])) * math.sqrt(252)
                     if config.VOL_TARGET and len(curve) >= config.VOL_LOOKBACK_DAYS else None)
-        targets = portfolio.targets(traded, config.CAPITAL, realized_vol=realized)   # dollars, same rules as live
-        w = {tk: v / config.CAPITAL for tk, v in targets.items()}   # -> weights
+        long_short = run_info.get("long_short")
+        if long_short:   # market-neutral book (round 33): each leg GROSS_TARGET / 2, scaled by the vol target like the live book
+            scale = min(1.0, config.VOL_TARGET / realized) if (config.VOL_TARGET and realized and realized > config.VOL_TARGET) else 1.0
+            w = long_short_weights(traded, prediction_betas, long_short, config.GROSS_TARGET / 2 * scale)
+        else:
+            targets = portfolio.targets(traded, config.CAPITAL, realized_vol=realized)   # dollars, same rules as live
+            w = {tk: v / config.CAPITAL for tk, v in targets.items()}   # -> weights
         if config.HEDGE_SIZE and B[i] < float(np.nanmean(B[max(0, i - config.HEDGE_LOOKBACK): i + 1])):   # regime hedge, as live
             scale = min(1.0, config.VOL_TARGET / realized) if (config.VOL_TARGET and realized and realized > config.VOL_TARGET) else 1.0
             w["__HEDGE__"] = -min(config.HEDGE_SIZE * scale, sum(w.values()))   # capped at the long gross: a hedge, never a net short
-        if config.IDLE_SLEEVE:                                       # idle equity into an ETF while it trades above its average, as live
+        if config.IDLE_SLEEVE and not long_short:                    # idle equity into an ETF while it trades above its average, as live
             s = C[:, col[config.IDLE_SLEEVE]]
             n_tr = config.IDLE_SLEEVE_TREND
             if n_tr is None or (i >= n_tr and s[i] > float(np.nanmean(s[i - n_tr + 1: i + 1]))):
@@ -467,7 +490,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
                 if idle > 0:
                     w["__SLEEVE__"] = config.IDLE_SLEEVE_FRACTION * idle
         for tk in w:                                                 # rebalance band, as portfolio.plan() does live: a held name is
-            if tk in prev_w and abs(w[tk] - prev_w[tk]) < config.REBALANCE_BAND * w[tk]:   # not resized for a move under 30% of target
+            if tk in prev_w and abs(w[tk] - prev_w[tk]) < config.REBALANCE_BAND * abs(w[tk]):   # not resized for a move under 30% of target
                 w[tk] = prev_w[tk]
         turnover = sum(abs(w.get(tk, 0) - prev_w.get(tk, 0)) for tk in set(w) | set(prev_w))
         def day_ret(tk):
@@ -476,6 +499,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
             return None if (np.isnan(c0) or np.isnan(c1) or c0 <= 0) else float(c1 / c0) - 1
         ret = sum(w_i * r for tk, w_i in w.items() if (r := day_ret(tk)) is not None)
         ret -= abs(w.get("__HEDGE__", 0.0)) * 0.0002          # ~5%/yr borrow drag on the short side (as in sweep.py)
+        ret -= sum(-x for tk, x in w.items() if x < 0 and not tk.startswith("__")) * 0.0002   # the same borrow drag on short stocks
         ret -= turnover * config.COST_BPS / 10_000
         equity *= 1 + ret
         turnover_total += turnover
@@ -488,6 +512,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
                       "n": len([tk for tk in w if not tk.startswith("__")]), "hedge": round(-w.get("__HEDGE__", 0.0), 2),
                       "held": sorted(tk for tk in w if not tk.startswith("__")),
                       "ic_learned": day_ic[0], "ic_prior": day_ic[1],
+                      "net": round(sum(w.values()), 3), "short": round(sum(-x for x in w.values() if x < 0), 3),
                       "sleeve": round(w.get("__SLEEVE__", 0.0), 3),
                       "ret": ret, "turnover": turnover,
                       "soxx": float(px[config.BENCHMARK].iloc[i + 1 + shift] / px[config.BENCHMARK].iloc[base]),
@@ -528,6 +553,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
         "learn_preopen": bool(run_info.get("learn_preopen")),
         "prior_only": bool(run_info.get("prior_only")),
         "sizing": {"size": config.SIZE_PER_CONVICTION, "cap": config.MAX_POSITION_PCT, "gross": config.GROSS_TARGET,
+                   "long_short": run_info.get("long_short"),
                    "min_book": config.MIN_STOCK_BOOK, "idle_sleeve": config.IDLE_SLEEVE,
                    "sleeve_fraction": config.IDLE_SLEEVE_FRACTION, "sleeve_trend": config.IDLE_SLEEVE_TREND},
         "agents": PIT_AGENTS,
@@ -599,6 +625,7 @@ if __name__ == "__main__":
     p.add_argument("--refresh-agents", default=None, help="with --open-refresh: comma list of the agents that see the open row (default: config.OPEN_REFRESH_AGENTS, as live), e.g. technical,risk,macro,fundamentals,events")
     p.add_argument("--learn-preopen", action="store_true", help="with --open-refresh: trade on the refreshed signals but record and learn from the signals computed before the open (hybrid)")
     p.add_argument("--prior-only", action="store_true", help="trade on the equal-weight prior blend instead of the fitted weights (learner ablation); the learner is still fit daily and both ICs are recorded per day")
+    p.add_argument("--long-short", type=int, default=None, help="market-neutral book (round 33): long the top N and short the bottom N convictions, each leg GROSS_TARGET/2 under the vol target, short leg beta-matched, 2 bps/day borrow, no sleeve")
     p.add_argument("--position-cap", type=float, default=None, help="override MAX_POSITION_PCT, e.g. 0.30")
     p.add_argument("--min-book", type=float, default=None, help="override MIN_STOCK_BOOK, e.g. 0.5")
     p.add_argument("--idle-sleeve", default=None, help="ETF for idle equity, SOXX or SPY (sets IDLE_SLEEVE)")
@@ -628,5 +655,5 @@ if __name__ == "__main__":
             exec_mode=args.exec_mode, agents=tuple(x for x in args.agents.split(",") if x) if args.agents else None, end=args.end,
             open_refresh=args.open_refresh, label_open=args.label_open, label_next_close=args.label_next_close,
             refresh_agents=tuple(x for x in args.refresh_agents.split(",") if x) if args.refresh_agents is not None else None,
-            learn_preopen=args.learn_preopen, prior_only=args.prior_only)
+            learn_preopen=args.learn_preopen, prior_only=args.prior_only, long_short=args.long_short)
     print(json.dumps({k: v for k, v in r.items() if k != "curve"}, indent=2)[:4000])

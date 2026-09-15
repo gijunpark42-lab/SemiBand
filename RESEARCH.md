@@ -1165,3 +1165,46 @@ Changing the live learner would need its own pre-registered test and forward sha
 - The sized book's alpha and beta by half are reported alongside.
 
 **Freeze.** The learner and its warm start carry the edge, and part of that edge is exposure set by regime. Changing the label, warm start, agent set, λ or sizing can therefore change live exposure even when selection looks unchanged. The live configuration stays frozen. Once the live book has built up, compare its realised beta and gross against the replay (OOS beta 1.15).
+
+## 2026-09-15 — round 33, pre-registered before any run: a market-neutral long-short book
+
+**Why.** The user wants the book to keep taking positions instead of sitting in cash for days, and asked to trade long and short together (2026-09-15 07:20 PT).
+
+Earlier short tests (rounds 9 and 18) only added a short book of the 5–10 most negative names to the long-only book, and they lost. A market-neutral book that always holds the day's relative winners long and relative losers short has not been tested. It is the one form that still trades on a day like 2026-09-15, when every conviction is negative because the two graph agents shift every name down together.
+
+This round does not change what the learner learns from. Predictions for all 150 names are recorded and scored whether or not they are traded.
+
+**Design.** Replay only; no live change before a pass. Same flags and price cache as `_g1ref` (the live setup: refresh, signal-close label), 500 days, next-open execution, 5 bps trading cost.
+
+1. **Selection.** Rank the day's convictions. Long the top N names equally and short the bottom N equally.
+2. **Size.** Each leg is `GROSS_TARGET / 2` = 0.75 of equity, so gross stays at the existing 1.5 ceiling. Both legs scale down with the 50% vol target like the live book.
+3. **Beta.** The short leg is resized so the book's beta to SOXX is about zero, using each name's point-in-time rolling beta. The resize factor is bounded to 0.5–2x.
+4. **Costs.** Short stock positions pay 2 bps/day borrow, about 5%/yr, the replay's existing short convention. This comes on top of trading costs.
+5. **Other rules.**
+   - No SOXX sleeve.
+   - The rebalance band applies to both legs.
+   - All 150 names are assumed shortable. This is optimistic: some small caps are hard to borrow.
+
+| Tag | Setup | Role |
+|---|---|---|
+| `_mn1` | N = 10 per leg | decides |
+| `_mn2` | N = 15 per leg | robustness check |
+
+**Gate for adopting `_mn1`, against `_g1ref`.** All five conditions must hold:
+1. Higher total return over the full window.
+2. Higher Sharpe over the full window.
+3. Mean daily difference before 2025-09-24 (OOS) of at least 0.
+4. Total return at 30 bps not below `_g1ref`'s at 30 bps.
+5. `_mn2`'s full-window mean daily difference has the same sign as `_mn1`'s.
+
+**Reported alongside:**
+- max drawdown;
+- beta and correlation to SOXX;
+- mean gross, net and short exposure;
+- turnover;
+- the beta-adjusted alpha of the daily difference.
+
+**Afterwards.**
+- **If it passes:** live support for shorts is built and applied from the next cycle, and the user is told the measured numbers. That support means portfolio sizing, Alpaca shortability and borrow checks, guards, tests and partner review.
+- **If it fails:** live stays long-only. No N tuning after the results.
+- Either way this round adds two trials to the count.

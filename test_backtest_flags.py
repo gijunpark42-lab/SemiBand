@@ -44,6 +44,22 @@ class RefreshFlags(unittest.TestCase):
             backtest.run(exec_mode="open", open_refresh=True, refresh_agents=())
 
 
+class LongShortWeights(unittest.TestCase):
+    def test_top_long_bottom_short_with_the_short_leg_beta_matched(self):
+        conv = {"A": 0.3, "B": 0.1, "C": -0.1, "D": -0.4}
+        betas = {"A": 1.5, "B": 1.5, "C": 1.0, "D": 1.0}
+        w = backtest.long_short_weights(conv, betas, 1, 0.75)
+        self.assertEqual(sorted(w), ["A", "D"])
+        self.assertAlmostEqual(w["A"], 0.75)
+        self.assertAlmostEqual(w["D"], -0.75 * 1.5)                     # the low-beta short is scaled up to offset the long
+        self.assertAlmostEqual(sum(x * betas[t] for t, x in w.items()), 0.0)
+
+    def test_the_beta_ratio_is_bounded_and_a_one_name_universe_holds_nothing(self):
+        w = backtest.long_short_weights({"A": 0.2, "B": -0.2}, {"A": 5.0, "B": 0.5}, 1, 1.0)
+        self.assertAlmostEqual(w["B"], -2.0)                              # capped at 2x
+        self.assertEqual(backtest.long_short_weights({"A": 0.2}, {}, 3, 1.0), {})
+
+
 class PriceCacheRace(unittest.TestCase):
     def test_a_run_that_loses_the_race_trades_on_the_winners_prices(self):
         idx = pd.bdate_range("2026-09-01", periods=3)

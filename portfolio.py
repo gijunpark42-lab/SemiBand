@@ -26,6 +26,9 @@ def targets(convictions, equity, realized_vol=None):
     gross = sum(weights.values())
     if gross > config.GROSS_TARGET:
         weights = {t: w * config.GROSS_TARGET / gross for t, w in weights.items()}
+    elif config.MIN_STOCK_BOOK and 0 < gross < config.MIN_STOCK_BOOK:
+        # few or weak names passed the bar: scale them up to the floor, never above the per-name cap
+        weights = {t: min(w * config.MIN_STOCK_BOOK / gross, config.MAX_POSITION_PCT) for t, w in weights.items()}
     if config.VOL_TARGET and realized_vol and realized_vol > config.VOL_TARGET:
         weights = {t: w * config.VOL_TARGET / realized_vol for t, w in weights.items()}
     return {t: round(w * equity, 2) for t, w in weights.items() if w * equity >= config.MIN_ORDER_USD}

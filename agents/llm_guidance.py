@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 
 import config
+import market
 from agents import llm
 from agents.base import NOT_TRANSCRIPT, Signal
 from agents.supply_chain import _load, curated_metrics
@@ -88,16 +89,10 @@ def run(universe: dict, ctx: dict) -> list[Signal]:
     graph, _, _ = _load()
     by_id = {n["id"]: n for n in graph["nodes"]}
     closes = ctx["closes"]
-    bench = closes[config.BENCHMARK].dropna()
-    b20 = bench.iloc[-1] / bench.iloc[-21] - 1
+    live = market.live_prices(list(universe) + [config.BENCHMARK])   # today's pre-market trades where there are any (user 2026-09-15)
 
     def price_line(t):
-        if t not in closes.columns or closes[t].dropna().shape[0] < 22:
-            return "Recent price move: unavailable"
-        c = closes[t].dropna()
-        m20 = c.iloc[-1] / c.iloc[-21] - 1
-        return (f"Recent price move: {t} {m20*100:+.1f}% over 20 trading days, "
-                f"{config.BENCHMARK} {b20*100:+.1f}% (relative {(m20-b20)*100:+.1f}%).")
+        return market.move_line(closes, t, live)
 
     jobs = [(t, c, by_id[c]) for t, c in universe.items() if c in by_id]
     with ThreadPoolExecutor(max_workers=config.LLM_WORKERS) as pool:

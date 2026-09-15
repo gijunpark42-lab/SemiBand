@@ -109,5 +109,35 @@ class LiveLabels(unittest.TestCase):
         self.assertAlmostEqual(bench_ret, closes.SOXX.iloc[69] / closes.SOXX.iloc[59] - 1)
 
 
+class MoveLine(unittest.TestCase):
+    def test_uses_todays_trade_when_there_is_one_and_the_last_close_otherwise(self):
+        import market
+        idx = pd.bdate_range("2026-08-01", periods=30)
+        closes = pd.DataFrame({"NVDA": [100.0] * 29 + [110.0], "SOXX": [500.0] * 30}, index=idx)
+        with_live = market.move_line(closes, "NVDA", {"NVDA": 90.0, "SOXX": 450.0})
+        self.assertIn("latest trade, pre-market included", with_live)
+        self.assertIn("NVDA -10.0% over 20 trading days, SOXX -10.0% (relative +0.0%)", with_live)
+        without = market.move_line(closes, "NVDA", {})
+        self.assertIn("(last close): NVDA +10.0% over 20 trading days, SOXX +0.0%", without)
+        self.assertEqual(market.move_line(closes, "AMD", {}), "Recent price move: unavailable")
+
+
+class Sizing(unittest.TestCase):
+    def test_min_stock_book_scales_few_names_up_within_the_cap(self):
+        import config
+        import portfolio
+        with patch.object(config, "MIN_STOCK_BOOK", 0.5), patch.object(config, "MAX_POSITION_PCT", 0.30), \
+                patch.object(config, "VOL_TARGET", None), patch.object(config, "MIN_CONVICTION", 0.10), \
+                patch.object(config, "SIZE_PER_CONVICTION", 0.60):
+            two = portfolio.targets({"A": 0.12, "B": 0.11, "C": 0.05}, 1_000_000)
+            one = portfolio.targets({"A": 0.12}, 1_000_000)
+        self.assertEqual(set(two), {"A", "B"})
+        self.assertAlmostEqual(sum(two.values()), 500_000, delta=1)
+        self.assertAlmostEqual(two["A"] / two["B"], 12 / 11, places=6)
+        self.assertEqual(one, {"A": 300_000.0})
+        with patch.object(config, "MIN_STOCK_BOOK", None), patch.object(config, "VOL_TARGET", None):
+            self.assertAlmostEqual(portfolio.targets({"A": 0.12}, 1_000_000)["A"], 72_000, delta=1)
+
+
 if __name__ == "__main__":
     unittest.main()

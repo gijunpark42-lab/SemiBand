@@ -84,6 +84,30 @@ def live_prices(symbols, max_age_hours=6) -> dict:
     return {symbol: price for symbol, (price, _) in best.items()}
 
 
+def move_line(closes, ticker, live=None, days=20):
+    """The "Recent price move" line of the Claude prompts: the newest price (a trade from today when there is one, pre-market
+    included, else the last close) against the close `days` sessions back, next to the benchmark's move."""
+    live = live or {}
+
+    def move(symbol):
+        if symbol not in closes.columns:
+            return None, False
+        c = closes[symbol].dropna()
+        if symbol in live and len(c) >= days:
+            return live[symbol] / float(c.iloc[-days]) - 1, True
+        if len(c) > days:
+            return float(c.iloc[-1] / c.iloc[-days - 1] - 1), False
+        return None, False
+
+    m, m_live = move(ticker)
+    b, _ = move(config.BENCHMARK)
+    if m is None or b is None:
+        return "Recent price move: unavailable"
+    basis = "latest trade, pre-market included" if m_live else "last close"
+    return (f"Recent price move ({basis}): {ticker} {m*100:+.1f}% over {days} trading days, "
+            f"{config.BENCHMARK} {b*100:+.1f}% (relative {(m-b)*100:+.1f}%).")
+
+
 def news(symbol, limit=10, max_age_days=21):
     """[{title, publisher, when}] newest first; empty list if yfinance has nothing."""
     try:

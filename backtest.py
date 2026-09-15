@@ -34,10 +34,13 @@ import argparse
 import json
 import logging
 import math
+import os
+import pickle
 import re
 import sqlite3
 import time
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -167,6 +170,23 @@ class PointInTimeMap:
         return Signal("neighbors", ticker, direction, confidence, 20, f"pit: customer heat {c_avg:.2f}, read-through {rt:+.2f}")
 
 
+def _prices(kind, symbols, lookback):
+    """Closes or opens for a replay. With BACKTEST_PRICE_CACHE=<folder>, runs started the same day share one download
+    (parallel variants would otherwise each hit yfinance)."""
+    folder = os.environ.get("BACKTEST_PRICE_CACHE")
+    path = Path(folder) / f"{kind}_{date.today().isoformat()}_{lookback}_{len(set(symbols))}.pkl" if folder else None
+    if path is not None and path.exists():
+        return pickle.loads(path.read_bytes())
+    df = (market.closes(symbols, lookback_days=lookback, cache=False) if kind == "closes"
+          else market.opens(symbols, lookback_days=lookback))
+    if path is not None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_bytes(pickle.dumps(df))
+        tmp.replace(path)
+    return df
+
+
 def open_row_window(closes, px, i):
     """Closes through day i plus one row dated day i+1 holding that day's OPEN where known (the last close elsewhere, e.g.
     ^VIX / ^TNX or a name that did not open): what the live open refresh sees at 09:30 ET. Never reads day i+1's close."""
@@ -251,7 +271,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
     extra = [config.BENCHMARK, "SPY", "^VIX", "^TNX"]
     end_date = date.fromisoformat(run_info["end"]) if run_info.get("end") else None
     lookback = int(days * 1.6) + 400 + ((date.today() - end_date).days if end_date else 0)
-    closes = market.closes(tickers + extra, lookback_days=lookback, cache=False)
+    closes = _prices("closes", tickers + extra, lookback)
     if end_date:
         closes = closes[closes.index <= pd.Timestamp(end_date)]              # historical window ending before today
     closes = closes[closes[config.BENCHMARK].notna() & closes["SPY"].notna()]   # drop holiday rows that only ^VIX/^TNX filled
@@ -259,7 +279,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
     bench = closes[config.BENCHMARK]
     # execution prices: close mode trades at close t; open mode buys at open t+1 and marks at open t+2
     if exec_mode == "open":
-        px = market.opens(tickers + [config.BENCHMARK, "SPY"], lookback_days=lookback).reindex(idx)
+        px = _prices("opens", tickers + [config.BENCHMARK, "SPY"], lookback).reindex(idx)
         shift = 1
     else:
         px, shift = closes, 0
@@ -270,7 +290,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
     indicators.PRECOMPUTED = {tk: indicators.rsi_series(closes[tk].dropna()) for tk in tickers if tk in closes.columns}
     _init_db()
     ledger.DB = DB                                   # learner reads through ledger.connect()
-    learner.MODEL_FILE = config.STATE_DIR / "backtest_model.json"
+    learner.MODEL_FILE = config.STATE_DIR / f"backtest_model{run_info.get('tag') or ''}.json"   # per tag: parallel runs never share it
     live_agents = config.AGENTS
     config.AGENTS = PIT_AGENTS                       # the prior and the sizing see only the simulated agents
 
@@ -406,12 +426,20 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
         if config.HEDGE_SIZE and B[i] < float(np.nanmean(B[max(0, i - config.HEDGE_LOOKBACK): i + 1])):   # regime hedge, as live
             scale = min(1.0, config.VOL_TARGET / realized) if (config.VOL_TARGET and realized and realized > config.VOL_TARGET) else 1.0
             w["__HEDGE__"] = -min(config.HEDGE_SIZE * scale, sum(w.values()))   # capped at the long gross: a hedge, never a net short
+        if config.IDLE_SLEEVE:                                       # idle equity into an ETF while it trades above its average, as live
+            s = C[:, col[config.IDLE_SLEEVE]]
+            n_tr = config.IDLE_SLEEVE_TREND
+            if n_tr is None or (i >= n_tr and s[i] > float(np.nanmean(s[i - n_tr + 1: i + 1]))):
+                scale = min(1.0, config.VOL_TARGET / realized) if (config.VOL_TARGET and realized and realized > config.VOL_TARGET) else 1.0
+                idle = max(0.0, 1.0 - sum(v for tk, v in w.items() if not tk.startswith("__")))
+                if idle > 0:
+                    w["__SLEEVE__"] = config.IDLE_SLEEVE_FRACTION * idle * scale
         for tk in w:                                                 # rebalance band, as portfolio.plan() does live: a held name is
             if tk in prev_w and abs(w[tk] - prev_w[tk]) < config.REBALANCE_BAND * w[tk]:   # not resized for a move under 30% of target
                 w[tk] = prev_w[tk]
         turnover = sum(abs(w.get(tk, 0) - prev_w.get(tk, 0)) for tk in set(w) | set(prev_w))
         def day_ret(tk):
-            j = pcol[config.BENCHMARK if tk == "__HEDGE__" else tk]
+            j = pcol[config.BENCHMARK if tk == "__HEDGE__" else config.IDLE_SLEEVE if tk == "__SLEEVE__" else tk]
             c0, c1 = P[i + shift, j], P[i + 1 + shift, j]
             return None if (np.isnan(c0) or np.isnan(c1) or c0 <= 0) else float(c1 / c0) - 1
         ret = sum(w_i * r for tk, w_i in w.items() if (r := day_ret(tk)) is not None)
@@ -425,7 +453,8 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
         rank_ret = float(np.mean(rank_rets)) if rank_rets else 0.0
         equity_rank *= 1 + rank_ret - 0.1 * config.COST_BPS / 10_000    # ~10% daily turnover assumed
         curve.append({"date": t.isoformat(), "portfolio": equity, "rank": equity_rank, "gross": sum(abs(x) for x in w.values()),
-                      "n": len([tk for tk in w if tk != "__HEDGE__"]), "hedge": round(-w.get("__HEDGE__", 0.0), 2),
+                      "n": len([tk for tk in w if not tk.startswith("__")]), "hedge": round(-w.get("__HEDGE__", 0.0), 2),
+                      "sleeve": round(w.get("__SLEEVE__", 0.0), 3),
                       "ret": ret, "turnover": turnover,
                       "soxx": float(px[config.BENCHMARK].iloc[i + 1 + shift] / px[config.BENCHMARK].iloc[base]),
                       "spy": float(px["SPY"].iloc[i + 1 + shift] / px["SPY"].iloc[base])})
@@ -461,6 +490,9 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
         "open_refresh": bool(run_info.get("open_refresh")),
         "label_open": bool(run_info.get("label_open")),
         "label_next_close": bool(run_info.get("label_next_close")),
+        "sizing": {"size": config.SIZE_PER_CONVICTION, "cap": config.MAX_POSITION_PCT, "gross": config.GROSS_TARGET,
+                   "min_book": config.MIN_STOCK_BOOK, "idle_sleeve": config.IDLE_SLEEVE,
+                   "sleeve_fraction": config.IDLE_SLEEVE_FRACTION, "sleeve_trend": config.IDLE_SLEEVE_TREND},
         "agents": PIT_AGENTS,
         "portfolio": {
             "total_return": round(curve[-1]["portfolio"] - 1, 4),
@@ -527,9 +559,22 @@ if __name__ == "__main__":
     p.add_argument("--open-refresh", action="store_true", help="price agents see the next day's open appended before trading at that open, like the live open refresh (needs --exec open)")
     p.add_argument("--label-open", action="store_true", help="with --open-refresh: learning labels start at the open the refreshed signal saw, not at the previous close")
     p.add_argument("--label-next-close", action="store_true", help="learning labels start at the close of the order day t+1, as the live scorer does (score.py)")
+    p.add_argument("--position-cap", type=float, default=None, help="override MAX_POSITION_PCT, e.g. 0.30")
+    p.add_argument("--min-book", type=float, default=None, help="override MIN_STOCK_BOOK, e.g. 0.5")
+    p.add_argument("--idle-sleeve", default=None, help="ETF for idle equity, SOXX or SPY (sets IDLE_SLEEVE)")
+    p.add_argument("--sleeve-fraction", type=float, default=1.0, help="share of the idle equity put in the sleeve")
+    p.add_argument("--sleeve-trend", type=int, default=50, help="only while the ETF closed above this many days' average; 0 = always")
     p.add_argument("--graph-asof", default=None, help="ISO date: build the supply-chain map from the newest graph snapshot dated <= this (state/graph_snapshots) instead of today's graph")
     args = p.parse_args()
     PUBLISH = not args.no_publish
+    if args.position_cap is not None:
+        config.MAX_POSITION_PCT = args.position_cap
+    if args.min_book is not None:
+        config.MIN_STOCK_BOOK = args.min_book
+    if args.idle_sleeve:
+        config.IDLE_SLEEVE = args.idle_sleeve
+        config.IDLE_SLEEVE_FRACTION = args.sleeve_fraction
+        config.IDLE_SLEEVE_TREND = args.sleeve_trend or None
     if args.horizons:
         config.HORIZONS = tuple(int(x) for x in args.horizons.split(","))
     if args.graph_asof:

@@ -11,6 +11,7 @@ import types
 from concurrent.futures import ThreadPoolExecutor
 
 import config
+import market
 from agents import llm
 from agents.base import NOT_TRANSCRIPT, Signal
 
@@ -87,16 +88,10 @@ def run(universe: dict, ctx: dict) -> list[Signal]:
         return []
     build = _report_builder()
     closes = ctx["closes"]
-    bench = closes[config.BENCHMARK].dropna()
-    b20 = bench.iloc[-1] / bench.iloc[-21] - 1
+    live = market.live_prices(list(universe) + [config.BENCHMARK])   # today's pre-market trades where there are any (user 2026-09-15)
 
     def price_line(t):
-        if t not in closes.columns or closes[t].dropna().shape[0] < 22:
-            return "Recent price move: unavailable"
-        c = closes[t].dropna()
-        m20 = c.iloc[-1] / c.iloc[-21] - 1
-        return (f"Recent price move: {t} {m20*100:+.1f}% over 20 trading days, "
-                f"{config.BENCHMARK} {b20*100:+.1f}% (relative {(m20-b20)*100:+.1f}%).")
+        return market.move_line(closes, t, live)
 
     with ThreadPoolExecutor(max_workers=config.LLM_WORKERS) as pool:
         results = list(pool.map(lambda kv: _one(build, kv[0], kv[1], price_line(kv[0])), universe.items()))

@@ -903,3 +903,55 @@ percent (4.961 on 2026-09-14), but the rule divided the 20-day change by 10, so 
 | **`_sz5` yield rule fixed (adopted)** | +1158% | 2.27 | 29.4% | 2.23 | 2.35 | +722% / 1.89 |
 
 Paired daily difference +0.02 bps/day, t = +0.01. Adopted as a correctness fix: return unchanged, drawdown 2.4 points lower.
+
+## 2026-09-15 — round 30: cross-asset factor agents (none adopted); review partner and audit findings
+
+Question (user, 2026-09-15): an investor weighs everything (oil, memory prices, CPI, rate-hike odds, bond markets), so add
+agents for them and let the learner's weights set each voice. Built eight factor agents (commit `e0805a6`, `agents/factors.py`):
+each stock's loading on a factor net of SOXX (OLS over 120 sessions, standardised across the universe) times the factor's
+signal (position vs its 50-day average plus its 20-day move over its one-year spread). Factors: WTI (CL=F), fed path
+(100 − ZQ=F), 10-year yield, TIP/IEF, HYG/IEF, dollar index, a MU/WDC/SK hynix/Samsung basket vs SOXX, copper. Replays on the
+live setup (`_sz5`: refresh, SOXX sleeve, macro fix), 500 days, next-open, 5 bps, no Claude:
+
+| Added to `_sz5` | Return | Sharpe | Max DD | OOS Sharpe | Paired daily t |
+|---|---|---|---|---|---|
+| nothing (`_sz5`) | +1158% | 2.27 | 29.4% | 2.23 | |
+| oil | +933% | 2.07 | 42.3% | 1.95 | −0.82 |
+| fed path | +821% | 1.95 | 40.4% | 1.82 | −1.56 |
+| long rates | +1095% | 2.22 | 36.0% | 1.97 | −0.24 |
+| memory | +979% | 2.08 | 34.4% | 2.10 | −0.74 |
+| all eight | +673% | | | | |
+
+Every factor alone made the book worse and raised drawdown; all eight together were the worst. Not adopted. The premise
+that the weights will quiet a weak voice does not hold yet: the learner's prior gives every agent an equal share (eight new
+agents hold 42% of the prior mass) and live walk-forward CV IC is negative, so a new agent trades at full voice for months
+(the same dilution cut +373% to +265% when momentum, SUE and the ML ranker were added on 2026-09-10). Inflation, credit,
+dollar and copper were not run alone after the review below.
+
+Review partner critique of the design, to fix before any re-test: KRX closes are known before the US open and must be lagged
+a row in both replay and live; asynchronous closes attenuate same-day loadings (use multi-day returns); MU and WDC are in the
+universe, so the memory basket must leave each name out of its own factor; CL=F, HG=F and ZQ=F are unadjusted front months
+whose rolls fake 20-day moves (use ETFs, ratio-spliced futures, or lagged DGS2); `market.fred_latest` is not point-in-time in
+replays (it adds a constant NFCI term on all 470 days); loadings from 120 sessions carry a standard error near 0.27, so shrink
+them; long rates duplicate macro's yield rule, HYG/IEF is mostly equity beta, TIP/IEF mostly duration. Gate for any re-test:
+paired t ≥ +1 and OOS t ≥ 0, deflated Sharpe on the cumulative trial count, leave-one-factor-out, and new agents entering as
+shadow agents with a prior weight of 0 (ledger rows, no vote) until they earn one.
+
+Other review findings and what was done the same morning (commit `8c2e3ae` unless noted):
+
+- **Fixed:** the wait for the open started after all agents and gave up after 120 minutes, so a 03:30 PT start whose agents
+  finish by 04:30 would have placed no orders (09-14 only traded after a relaunch): now 240 minutes, and early-exit dashboard
+  payloads keep the site's decision history.
+- **Fixed:** live VIX / 10-year levels are checked for units only (1/3 to 3x the last close), so genuine spikes pass.
+- **Fixed:** at the open, trades printed after 09:30 ET win over pre-market prints, after a short wait for opening prints.
+- **Fixed:** the idle sleeve fills only up to the vol target's exposure cap (it used to refill what the vol target cut);
+  the replay needs re-running before the sleeve's first buy.
+- **Fixed:** a sleeve with no usable closes is left alone instead of sold.
+- **Fixed:** the warm start is the `_sz5` replay (macro fix included).
+- **Fixed on the branch, merged after the 09-15 orders:** a failed download was cached as an empty column for the day; the
+  events agent read a NaN last row; the guardian's one-day news search hit the cycle's cached one-week search.
+- **Open, needs a decision or replay:** labels of open-refreshed rows start at the previous close and include the overnight
+  gap those signals saw (both reviewers; a "trade on refreshed signals, learn on pre-open signals" hybrid is being designed);
+  the sleeve can override the model's bearish cash call with SOXX beta; `plan()`'s gross budget ignores sleeve sales;
+  negative CV IC does not down-weight anything; a fresh-start liquidation would trip the foreign-order guard; EXIT_CONVICTION
+  is unused; TSM's P/S mixes USD market cap with TWD revenue.

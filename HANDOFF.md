@@ -297,3 +297,7 @@ touched since, `git status`, the tail of `RESEARCH.md`, and `state/run_daily.log
   fundamentals re-pricing covers trailing P/E and market cap as well. User request logged for a research round: agents that
   improve themselves recursively, with the stacking learner still adjusting their weights.
 - 2026-09-15 02:40 PT: macro 10-year-yield unit fix adopted (replay _sz5 vs _sz1: max DD 31.8% to 29.4%, return unchanged, paired t +0.01); RESEARCH.md round 29 addendum. Review partner and audit agent still running.
+
+### 2026-09-15 03:10 PT — Claude root → anyone: factor agents rejected; review and audit fixes; branch-only fixes pending merge
+- Did: eight cross-asset factor agents replayed on the live setup; every one alone and all eight together made the book worse (RESEARCH.md round 30), none adopted. A review partner and an audit agent found an order-blocking bug (the 120-minute wait for the open) and several sleeve and open-price issues; those went live in `8c2e3ae` before the 03:30 PT cycle. Branch-only commit (this one): events reads the last valid closes, a failed download is not cached as an empty column, the guardian's news search has its own cache key and remembers three days of headlines. Merge to main and pull into the live checkout AFTER the 2026-09-15 orders, not during the cycle.
+- Open: the refreshed rows' label artifact (hybrid 'trade refreshed, learn pre-open' under review), sleeve vs bearish cash, plan() budget with sleeve sales, negative CV IC, liquidation vs foreign-order guard, EXIT_CONVICTION unused, TSM P/S currency.

@@ -47,12 +47,12 @@ def run(universe: dict, ctx: dict) -> list[Signal]:
                 direction = math.tanh(surprise / 30)
                 rel = None
                 if ticker in closes.columns:
-                    pos = closes.index.searchsorted(pd.Timestamp(last["date"]))
-                    if 0 < pos < len(closes.index):
-                        c0, c1 = closes[ticker].iloc[pos - 1], closes[ticker].iloc[-1]
-                        b0, b1 = bench.iloc[pos - 1], bench.iloc[-1]
-                        if not any(pd.isna(v) for v in (c0, c1, b0, b1)):
-                            rel = float(c1 / c0 - 1) - float(b1 / b0 - 1)
+                    # last valid closes: a day's cache can end in a row that only an index has filled (audit 2026-09-15)
+                    ct, bt, report = closes[ticker].dropna(), bench.dropna(), pd.Timestamp(last["date"])
+                    c_prev, b_prev = ct[ct.index < report], bt[bt.index < report]
+                    if len(c_prev) and len(b_prev) and len(ct) > len(c_prev):
+                        c0, c1, b0, b1 = float(c_prev.iloc[-1]), float(ct.iloc[-1]), float(b_prev.iloc[-1]), float(bt.iloc[-1])
+                        rel = float(c1 / c0 - 1) - float(b1 / b0 - 1)
                 agrees = rel is not None and (rel > 0) == (surprise > 0)
                 confidence = 0.6 if agrees else 0.35
                 why = f"reported {days}d ago, EPS surprise {surprise:+.0f}%"

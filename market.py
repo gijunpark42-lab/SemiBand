@@ -29,18 +29,23 @@ def closes(symbols, lookback_days=config.LOOKBACK_DAYS, cache=True) -> pd.DataFr
         if old != cache:
             old.unlink(missing_ok=True)
     cached = pickle.loads(cache.read_bytes()) if cache.exists() else None
-    missing = symbols if cached is None else [s for s in symbols if s not in cached.columns]
+    # a symbol whose download failed comes back as an all-NaN column: treat it as missing so the next call retries
+    missing = symbols if cached is None else [s for s in symbols if s not in cached.columns or cached[s].isna().all()]
     if not missing:
-        return cached[symbols]
+        return cached[symbols].dropna(how="all")
     start = date.today() - timedelta(days=lookback_days)
     raw = yf.download(missing, start=start.isoformat(), auto_adjust=True, progress=False, threads=True)
     df = raw["Close"] if isinstance(raw.columns, pd.MultiIndex) else raw[["Close"]].rename(columns={"Close": missing[0]})
     df = df.dropna(how="all")
     df.index = pd.to_datetime(df.index).tz_localize(None).normalize()
+    failed = [s for s in missing if s not in df.columns or df[s].isna().all()]
+    if failed:
+        log.warning("closes: no data for %s (not cached, retried next call)", failed)
+        df = df.drop(columns=[s for s in failed if s in df.columns])
     if cached is not None:
-        df = cached.join(df, how="outer")          # merge new columns into the day's cache
+        df = cached.drop(columns=[s for s in missing if s in cached.columns]).join(df, how="outer")   # merge into the day's cache
     cache.write_bytes(pickle.dumps(df))
-    return df[symbols]
+    return df.reindex(columns=symbols).dropna(how="all")
 
 
 def opens(symbols, lookback_days) -> pd.DataFrame:
@@ -327,7 +332,8 @@ def web_news(query, limit=6, timelimit="w"):
     Cached per day per query. Empty list on any failure — never blocks a cycle."""
     import json
     import hashlib
-    key = hashlib.md5(query.encode("utf-8")).hexdigest()[:12]
+    # limit and window are part of the key: the guardian's one-day search must not get the cycle's cached one-week search
+    key = hashlib.md5(f"{query}|{limit}|{timelimit}".encode("utf-8")).hexdigest()[:12]
     path = _daily_json(f"webnews_{key}")
     if path.exists():
         return json.loads(path.read_text(encoding="utf-8"))

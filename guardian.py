@@ -99,7 +99,10 @@ def main():
         log.info("no holdings")
         return 0
     seen_by = _load(SEEN, {})
-    seen = set(seen_by.get(today, []))
+    # titles judged on the previous three check days count as seen too, so the first check of a morning does not hand
+    # Claude yesterday's news as new (audit 2026-09-15)
+    older = {t for d in sorted(seen_by)[-3:] if d != today for t in seen_by[d]}
+    seen = set(seen_by.get(today, [])) | older
     exits = _load(EXITS, [])
     events = []
     if not llm.ensure_server():
@@ -139,8 +142,9 @@ def main():
             log.info("%s: %d new headlines, %s (severity %.2f) — %s", ticker, len(fresh), v["action"], v["severity"], v["reason"])
         events.append(event)
 
-    seen_by[today] = sorted(seen)
-    SEEN.write_text(json.dumps({today: seen_by[today]}), encoding="utf-8")   # keep only today's memory
+    seen_by[today] = sorted(seen - older)
+    keep = {d: seen_by[d] for d in sorted(seen_by)[-4:]}          # today plus the three previous check days
+    SEEN.write_text(json.dumps(keep), encoding="utf-8")
     EXITS.write_text(json.dumps(exits[-100:]), encoding="utf-8")
     dash = _load(journal.DASHBOARD_FILE, {})
     dash["guardian"] = (dash.get("guardian") or [])

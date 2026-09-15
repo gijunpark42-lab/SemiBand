@@ -1226,3 +1226,76 @@ The two runs started under the first code were stopped unread. They are replaced
 7. Before any live adoption, a confirmation run must also beat the live setup on return and Sharpe. That run restricts shorts to names Alpaca flags shortable and easy-to-borrow today, and charges 10 bps/day borrow on the smaller half of the universe by market cap. This is a proxy, not point-in-time, and it is run only if conditions 1–6 pass.
 
 **Also reported:** the short leg's own beta-adjusted return per unit of short exposure. This is the clean test of whether the short signal adds anything, separate from the live comparison, which mostly measures beta in a +145% SOXX window.
+
+### Round 33 results (2026-09-15 07:40 PT): the market-neutral long-short book fails; live stays long-only
+
+**Setup.** 470 common days at 5 bps, with the same flags and price cache as `_g1ref`.
+
+| Run | Return | Sharpe | Max DD | Return at 30 bps | Beta (OOS / IS) | Gross | Net | Short | Turnover | Names |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `_g1ref` live long-only | +1084% | 2.24 | 28.8% | +676% | 0.95 (1.11 / 0.84) | 1.00 | +1.00 | 0.00 | 0.36 | 11.7 |
+| `_mn1b` N = 10 (decides) | +70% | 0.74 | 30.8% | −26% | 0.14 (0.28 / 0.04) | 1.48 | +0.16 | 0.66 | 0.71 | 20 |
+| `_mn2b` N = 15 | +90% | 1.03 | 21.9% | −10% | 0.09 (0.20 / 0.03) | 1.49 | +0.15 | 0.67 | 0.63 | 30 |
+
+**Against live** (paired daily return difference, and alpha against SOXX):
+
+| Run | Full window, bps/day (t) | OOS (t) | In-sample (t) | Book alpha vs SOXX (t) |
+|---|---|---|---|---|
+| `_mn1b` | −45.4 (−3.47) | −38.7 (−2.18) | −52.8 (−2.71) | +11.3 (+1.01) |
+| `_mn2b` | −43.9 (−3.36) | −42.2 (−2.34) | −45.9 (−2.41) | +13.7 (+1.41) |
+
+**The short leg on its own.** Its beta-adjusted return per unit of short exposure was −6.6 bps/day (t −0.65) in `_mn1b` and −6.1 (t −0.69) in `_mn2b`. The names the model ranks worst did not underperform their beta, so shorting them lost money.
+
+**Gate outcome.** `_mn1b` fails conditions 1, 2, 3, 4 and 6 (its OOS beta was 0.28). Only condition 5 holds: `_mn2b` agrees in sign.
+
+**Decision, as pre-registered:**
+- Live stays long-only.
+- No N tuning.
+- The confirmation run (condition 7) is not needed.
+
+**Reading.**
+- The model's skill is in picking the top names (round 32), and its bottom ranks carry no short signal.
+- The market-neutral book therefore sets the long leg's alpha against a losing short leg and doubles turnover.
+- It also gives up the benchmark's +145% over the window.
+- The gross cap and beta matching worked as designed (mean gross 1.48, beta 0.09–0.14), so the failure is the strategy, not the implementation.
+
+**Also recorded.** The user asked beforehand whether concentrating into one or two heavily weighted names would do better. Round 29 already tested that: a per-name cap of 0.30 with book floors made +844% and +780%, against +895%, with drawdown up to 37.8%, and was rejected. A 2-names-per-leg long-short run (`_mn3`) follows. It is exploratory and not part of the gate.
+
+## 2026-09-15 — round 34, pre-registered before any replay: is the SOXX sleeve's 50-day trend rule robust?
+
+**Why.** The user asked whether holding SOXX with idle cash is overfitting, or simply too crude. Round 29 adopted the sleeve on weak evidence:
+- +5.5 bps/day, t +1.20, over the full window;
+- −0.6 bps/day, t −1.62, out of sample;
+- the gain was concentrated in the 2024–26 rally.
+
+**25-year check of the timing rule on its own.** SOXX from its 2001 listing to 2026-09-15. The signal is decided at close t and held over day t+1, with 5 bps per switch and cash earning 0.
+
+| Rule | CAGR | Sharpe | Max DD | Days invested |
+|---|---|---|---|---|
+| buy & hold | +13.7% | 0.55 | 70.2% | 100% |
+| above 20-day average | +2.9% | 0.24 | 49.6% | 58% |
+| **above 50-day average (live)** | +5.5% | 0.35 | 56.2% | 62% |
+| above 100-day average | +8.5% | 0.48 | 45.8% | 66% |
+| above 200-day average | +11.0% | 0.59 | 42.2% | 66% |
+
+**What it shows.**
+- The live 50-day rule loses to buy-and-hold on both return and Sharpe over the 25 years. It also loses in 2009–2015 (Sharpe 0.42 against 0.80) and 2016–2021 (0.71 against 1.20) taken separately.
+- It protected somewhat in 2001–2008 and 2022–2026.
+- Only the 200-day rule matches buy-and-hold on Sharpe, and it does so with a much smaller drawdown.
+- The 50-day window was a convention and was never tuned. The risk is therefore regime overfitting (one bull market), not parameter fitting.
+- On 2026-09-15 SOXX, at 499.71, is 5.4% below its 50-day average and 14.0% above its 200-day average. A 200-day sleeve would be invested today.
+
+**Runs.** 500 days with the live flags and price cache; only the sleeve differs.
+
+| Tag | Sleeve | Status |
+|---|---|---|
+| `_sl0` | off (`--sleeve-fraction 0`) | new |
+| `_g1ref` | 50-day rule (live) | already run |
+| `_sl200` | 200-day rule (`--sleeve-trend 200`) | new |
+
+**Decision rule.** No other window is tried. Checks are applied in this order:
+1. If `_sl0`'s Sharpe is at least the better sleeve run's Sharpe, the sleeve is switched off: it adds risk without adding risk-adjusted return.
+2. Otherwise, if `_sl200`'s Sharpe is at least `_g1ref`'s and its max drawdown is no more than 2 points higher, the 200-day rule replaces the 50-day rule. The 25-year check already favours 200 over 50.
+3. Otherwise the live 50-day sleeve stays.
+
+This round adds two trials to the count. The live config changes only after the user is told the numbers and agrees.

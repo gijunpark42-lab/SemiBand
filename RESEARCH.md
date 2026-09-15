@@ -955,3 +955,69 @@ Other review findings and what was done the same morning (commit `8c2e3ae` unles
   the sleeve can override the model's bearish cash call with SOXX beta; `plan()`'s gross budget ignores sleeve sales;
   negative CV IC does not down-weight anything; a fresh-start liquidation would trip the foreign-order guard; EXIT_CONVICTION
   is unused; TSM's P/S mixes USD market cap with TWD revenue.
+
+## 2026-09-15 — round 31, pre-registered before any 500-day run: which form of the open refresh
+
+**Why.** Rounds 27–28 kept the open refresh at the user's direction, so every agent works from the latest price. The learner was fitted around it with signal-close labels. Both reviewers then flagged that a refreshed row's label starts at the previous close, so it includes the overnight gap the refreshed signal had already seen.
+
+The review partner showed two things:
+- That contaminated label is what pushed mean_reversion's weight down to 0.01 and rescued the refresh run.
+- The two runs that traded refreshed features on clean-label weights, `_ol` and `_nc`, were the worst.
+
+**Label, fixed in advance for every candidate run: the order-day open (`--label-open`).** Each row's learning label starts at the open of the order day, the price the book fills at, so no agent is credited with the overnight gap.
+
+The review partner split the 10-day credit on the `_orbase` and `_orrefresh` ledgers into three parts:
+
+| Part of the 10 days | Credit found |
+|---|---|
+| Overnight gap | Carries the artifact: refreshed mean_reversion −0.23 pooled correlation, refreshed technical +0.11 |
+| First session | Genuine: mean_reversion +0.017 pooled whether or not its signal saw the open; macro and risk about −0.02 |
+| Days 2–10 | The rest of the horizon |
+
+The order-day close would therefore discard tradable signal.
+
+Caveat: live fills are the 09:30:30 and 09:40 slices, not the official open. One part of refreshed mean_reversion's first-session credit comes from sharing the opening print (about +0.009 rank IC). That part is the least likely to be captured live, which matters for `_g1` and `_g2` but not `_g3`.
+
+**Runs.** Shared settings for all five:
+- 500 days, next open, 5 bps.
+- SOXX sleeve: fraction 1.0, 50-day trend, 2026-09-15 formula.
+- Macro fix, plus the events and closes guards.
+- No Claude.
+
+| Tag | Run | Label |
+|---|---|---|
+| `_g0` | Baseline, no refresh | Order-day open |
+| `_g1ref` | Live setup, reference only: refresh with `config.OPEN_REFRESH_AGENTS` | Signal close |
+| `_g1` | Refresh with `config.OPEN_REFRESH_AGENTS`: technical, mean_reversion, risk, macro and events replayed; fundamentals not simulated | Order-day open |
+| `_g2` | Hybrid: trade on the refreshed signals, record and learn from the pre-open signals (`--learn-preopen`) | Order-day open |
+| `_g3` | Refresh without mean_reversion (`--refresh-agents technical,risk,macro,fundamentals,events`) | Order-day open |
+
+Before these runs, 60-day equivalence checks must show three things:
+- The patched code reproduces the pre-patch refresh run exactly.
+- The hybrid's ledger equals the no-refresh ledger.
+- `_g3`'s mean_reversion rows equal the no-refresh rows, and its technical rows equal the refresh rows.
+
+**Gate.** Applied to `_g2` and `_g3` and reported for `_g1`, each against `_g0`. All four must hold:
+1. The full-window paired daily t is at least 0.
+2. The mean daily difference before 2025-09-24 (OOS) is at least 0.
+3. Max drawdown is no more than 2 points above `_g0`.
+4. Total return at 30 bps is not below `_g0` at 30 bps.
+
+Reported alongside:
+- turnover;
+- mean gross;
+- names per day;
+- share of days whose held set differs from `_g0`, where under 10% means no measurable effect.
+
+**Stop rule.** If `_g2` trails `_g0` by 4 bps/day or more over the full window, the hybrid is rejected and no further label variants are tried.
+
+**Decision rule.** The user requires latest-price signals, so the refresh stays in some form.
+
+A candidate replaces the live setup only if it passes the gate and its full-window paired daily t against `_g1ref` is positive. If both candidates qualify, the one with the higher paired t against `_g0` wins.
+
+Adoption means three changes:
+- The candidate's refresh form goes live.
+- `score.py` switches to the order-day-open label: entry at the order day's Open, from the same download as the closes. This must land before the first live scores under the current label mature around 2026-09-24, so the live ledger never mixes label definitions.
+- The candidate's replay ledger becomes the warm start.
+
+If no candidate qualifies, live stays as is, and the refresh's measured cost (`_g1ref` and `_g1` against `_g0`) is reported. At most these two variants are tried, with no tuning after the results.

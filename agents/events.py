@@ -49,6 +49,7 @@ def run(universe: dict, ctx: dict) -> list[Signal]:
                 if ticker in closes.columns:
                     # last valid closes: a day's cache can end in a row that only an index has filled (audit 2026-09-15)
                     ct, bt, report = closes[ticker].dropna(), bench.dropna(), pd.Timestamp(last["date"])
+                    bt = bt[bt.index <= ct.index[-1]] if len(ct) else bt       # the benchmark over the stock's own dates
                     c_prev, b_prev = ct[ct.index < report], bt[bt.index < report]
                     if len(c_prev) and len(b_prev) and len(ct) > len(c_prev):
                         c0, c1, b0, b1 = float(c_prev.iloc[-1]), float(ct.iloc[-1]), float(b_prev.iloc[-1]), float(bt.iloc[-1])

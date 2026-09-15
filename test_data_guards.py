@@ -1,4 +1,5 @@
-"""Data guards from the 2026-09-15 audit: events reads the last valid closes, and a failed download is never cached. No network.
+"""Data guards from the 2026-09-15 audit: events reads the last valid closes over the stock's own dates, a failed download is
+never cached, and the guardian remembers three previous check days. No network.
 
     set ALPACA_API_KEY=x && set ALPACA_SECRET_KEY=x && python -m unittest -v test_data_guards
 """
@@ -43,6 +44,30 @@ class ClosesCache(unittest.TestCase):
             self.assertEqual(download.call_args_list[1].args[0], ["SOXX"])
             self.assertEqual(float(b["SOXX"].iloc[-1]), 509.0)
             self.assertEqual(float(b["NVDA"].iloc[-1]), 109.0)
+
+
+class EventsBenchmarkDates(unittest.TestCase):
+    def test_the_benchmark_is_measured_over_the_stock_own_dates(self):
+        idx = pd.bdate_range("2026-08-03", periods=31)
+        soxx = np.linspace(500, 510, 31)
+        soxx[-3:] = [600, 700, 800]                                           # the benchmark rallies after the stock stops trading
+        nvda = np.linspace(100, 130, 31)
+        nvda[-3:] = np.nan
+        closes = pd.DataFrame({"SOXX": soxx, "NVDA": nvda}, index=idx)
+        earnings = {"NVDA": [{"date": str(idx[-10].date()), "eps_estimate": 1.0, "reported_eps": 1.2, "surprise_pct": 20.0}]}
+        out = events.run({"NVDA": "NVIDIA"}, {"closes": closes, "earnings": earnings, "asof": idx[-1].date()})
+        self.assertEqual(len(out), 1)
+        self.assertIn("confirms", out[0].reason)                            # +5.8% vs SOXX's +0.5% to the same date, not -52%
+
+
+class GuardianSeenMemory(unittest.TestCase):
+    def test_the_second_check_of_a_day_still_remembers_three_previous_days(self):
+        import guardian
+        # the file after the first check of 09-15: today plus the three previous check days
+        seen_by = {"2026-09-11": ["b"], "2026-09-12": ["c"], "2026-09-14": ["d"], "2026-09-15": ["e"]}
+        seen, older = guardian.seen_titles(seen_by, "2026-09-15")
+        self.assertEqual(older, {"b", "c", "d"})
+        self.assertEqual(seen, {"b", "c", "d", "e"})
 
 
 if __name__ == "__main__":

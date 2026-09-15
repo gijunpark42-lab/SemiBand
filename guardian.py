@@ -76,6 +76,13 @@ def new_headlines(ticker, company, seen):
     return fresh
 
 
+def seen_titles(seen_by, today, days=3):
+    """Titles already judged: today's plus those of the previous `days` check days, so the first check of a morning does not
+    hand Claude yesterday's news as new (audit 2026-09-15). -> (seen, older)"""
+    older = {t for d in [d for d in sorted(seen_by) if d != today][-days:] for t in seen_by[d]}
+    return set(seen_by.get(today, [])) | older, older
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
@@ -99,10 +106,7 @@ def main():
         log.info("no holdings")
         return 0
     seen_by = _load(SEEN, {})
-    # titles judged on the previous three check days count as seen too, so the first check of a morning does not hand
-    # Claude yesterday's news as new (audit 2026-09-15)
-    older = {t for d in sorted(seen_by)[-3:] if d != today for t in seen_by[d]}
-    seen = set(seen_by.get(today, [])) | older
+    seen, older = seen_titles(seen_by, today)
     exits = _load(EXITS, [])
     events = []
     if not llm.ensure_server():

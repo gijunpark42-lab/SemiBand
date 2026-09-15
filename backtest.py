@@ -229,7 +229,7 @@ def publish_progress(payload):
 
 
 def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mode="close", agents=None, end=None,
-        open_refresh=False, label_open=False, label_next_close=False):
+        open_refresh=False, label_open=False, label_next_close=False, refresh_agents=None, learn_preopen=False):
     """tag: suffix for the output files (state/backtest<tag>.sqlite / backtest_report<tag>.json)
     so a long build can run while sweeps read the default files.
     exec_mode: 'close' = trade at the close the signals were computed on (optimistic);
@@ -237,10 +237,17 @@ def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mod
     global DB, REPORT, PIT_AGENTS
     if open_refresh and exec_mode != "open":
         raise ValueError("--open-refresh needs --exec open: the refreshed row is the open the trade executes at")
-    if label_open and not open_refresh:
-        raise ValueError("--label-open only applies to --open-refresh")
+    if label_open and exec_mode != "open":
+        raise ValueError("--label-open needs --exec open: labels start at the open the trade fills at")
     if label_open and label_next_close:
         raise ValueError("choose one label start: --label-open or --label-next-close")
+    if (refresh_agents is not None or learn_preopen) and not open_refresh:
+        raise ValueError("--refresh-agents and --learn-preopen only apply to --open-refresh")
+    unknown = set(refresh_agents or ()) - {"technical", "mean_reversion", "risk", "macro", "events", "fundamentals"} - set(extra)
+    if unknown:
+        raise ValueError(f"--refresh-agents: not an open-refresh agent: {sorted(unknown)}")
+    if open_refresh and refresh_agents is None:
+        refresh_agents = tuple(config.OPEN_REFRESH_AGENTS)   # as live (fundamentals is not simulated, so it changes nothing here)
     extra_mods = [{"momentum": momentum, "sue": sue, "ml_ranker": ml_ranker}.get(e) or importlib.import_module(f"agents.{e}")
                   for e in extra]                              # factor_* agents load by name
     if agents:
@@ -253,6 +260,7 @@ def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mod
     run_info = {"kind": "backtest", "tag": tag, "days": days, "exec": exec_mode, "extra": list(extra), "cap": cap, "end": end,
                 "agents_requested": agents, "open_refresh": open_refresh, "label_open": label_open,
                 "label_next_close": label_next_close,
+                "refresh_agents": list(refresh_agents) if refresh_agents is not None else None, "learn_preopen": learn_preopen,
                 "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     publish_progress(dict(run_info, status="loading", pct=0.0, message="downloading prices and earnings"))
     try:
@@ -331,44 +339,50 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
     quint = [[] for _ in range(5)]
     t0 = time.time()
     base = start + warmup + shift                    # benchmark curves are rebased to the first traded day
-    label_open = bool(run_info.get("label_open"))      # refreshed signals saw day t+1's open: labels start there, not at close t
+    label_open = bool(run_info.get("label_open"))      # labels start at day t+1's open (the fill, and what a refreshed signal saw), not at close t
     label_next_close = bool(run_info.get("label_next_close"))   # the live scorer: labels start at the close of the order day t+1
     for i in range(start, end):
         t = idx[i].date()
         window = closes.iloc[: i + 1]
         ctx = {"closes": window, "asof": t, "earnings": earnings, "today": t.isoformat(), "hist": hist, "asof_ts": idx[i]}
-        signals = []
+        signals, learned = [], []        # signals: what the day trades on; learned: what the ledger records and the learner fits
         refresh = run_info.get("open_refresh")
+        refresh_names = run_info.get("refresh_agents") or ()         # the agents that see the open: config.OPEN_REFRESH_AGENTS unless overridden
+        learn_preopen = bool(run_info.get("learn_preopen"))     # hybrid: trade on the refreshed signals, learn from the pre-open ones
         if refresh:
             # live open refresh: the price agents see day t+1's open before trading at it. No hist fast path and no
             # precomputed RSI here: both are indexed by date and would hand back day t+1's CLOSE for the appended row.
-            price_ctx = {"closes": open_row_window(closes, px, i), "asof": t, "earnings": earnings, "today": t.isoformat()}
-            saved_rsi, indicators.PRECOMPUTED = indicators.PRECOMPUTED, {}
-        else:
-            price_ctx = ctx
-        try:
-            for a in [m for m in (technical, mean_reversion, risk, macro) if m.NAME in PIT_AGENTS] + extra_mods:
+            open_ctx = {"closes": open_row_window(closes, px, i), "asof": t, "earnings": earnings, "today": t.isoformat()}
+        mods = [m for m in (technical, mean_reversion, risk, macro) if m.NAME in PIT_AGENTS] + extra_mods
+        if "events" in PIT_AGENTS:
+            mods.append(events)
+        for a in mods:
+            at_open = bool(refresh) and a.NAME in refresh_names
+            for use_open in ((True, False) if at_open and learn_preopen else (at_open,)):
+                if use_open:
+                    saved_rsi, indicators.PRECOMPUTED = indicators.PRECOMPUTED, {}
                 try:
-                    signals += a.run(universe, price_ctx)
+                    out = a.run(universe, open_ctx if use_open else ctx)
                 except Exception as exc:
                     log.warning("%s @ %s: %s", a.NAME, t, exc)
-            if "events" in PIT_AGENTS:
-                try:
-                    signals += events.run(universe, price_ctx)
-                except Exception as exc:
-                    log.warning("events @ %s: %s", t, exc)
-        finally:
-            if refresh:
-                indicators.PRECOMPUTED = saved_rsi
+                    out = []
+                finally:
+                    if use_open:
+                        indicators.PRECOMPUTED = saved_rsi
+                if use_open == at_open:
+                    signals += out
+                if not (use_open and learn_preopen):
+                    learned += out
         for tk, company in universe.items():
             for s in ((pit.supply_chain(tk, company, t) if "supply_chain" in PIT_AGENTS else None),
                       (pit.neighbors(tk, company, t) if "neighbors" in PIT_AGENTS else None)):
                 if s:
                     signals.append(s)
+                    learned.append(s)
         # record predictions + realised outcomes (known only later; the learner filters by maturity)
         last = {tk: float(C[i, col[tk]]) for tk in tickers if not np.isnan(C[i, col[tk]])}
         prediction_betas = {tk: learning_targets.beta_at(rolling_betas, tk, idx[i]) for tk in last}
-        ledger.add_predictions(t.isoformat(), signals, last, prediction_betas)
+        ledger.add_predictions(t.isoformat(), learned, last, prediction_betas)
         with ledger.connect() as con:
             rows = con.execute("SELECT id, ticker, direction FROM predictions WHERE date = ?", (t.isoformat(),)).fetchall()
             batch = []
@@ -459,6 +473,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
         equity_rank *= 1 + rank_ret - 0.1 * config.COST_BPS / 10_000    # ~10% daily turnover assumed
         curve.append({"date": t.isoformat(), "portfolio": equity, "rank": equity_rank, "gross": sum(abs(x) for x in w.values()),
                       "n": len([tk for tk in w if not tk.startswith("__")]), "hedge": round(-w.get("__HEDGE__", 0.0), 2),
+                      "held": sorted(tk for tk in w if not tk.startswith("__")),
                       "sleeve": round(w.get("__SLEEVE__", 0.0), 3),
                       "ret": ret, "turnover": turnover,
                       "soxx": float(px[config.BENCHMARK].iloc[i + 1 + shift] / px[config.BENCHMARK].iloc[base]),
@@ -495,6 +510,8 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
         "open_refresh": bool(run_info.get("open_refresh")),
         "label_open": bool(run_info.get("label_open")),
         "label_next_close": bool(run_info.get("label_next_close")),
+        "refresh_agents": run_info.get("refresh_agents"),
+        "learn_preopen": bool(run_info.get("learn_preopen")),
         "sizing": {"size": config.SIZE_PER_CONVICTION, "cap": config.MAX_POSITION_PCT, "gross": config.GROSS_TARGET,
                    "min_book": config.MIN_STOCK_BOOK, "idle_sleeve": config.IDLE_SLEEVE,
                    "sleeve_fraction": config.IDLE_SLEEVE_FRACTION, "sleeve_trend": config.IDLE_SLEEVE_TREND},
@@ -562,8 +579,10 @@ if __name__ == "__main__":
     p.add_argument("--end", default=None, help="ISO date: the window ends here instead of today (historical stress tests)")
     p.add_argument("--horizons", default=None, help="comma list overriding config.HORIZONS for this run, e.g. 10,20,40 (the ledger then carries all of them)")
     p.add_argument("--open-refresh", action="store_true", help="price agents see the next day's open appended before trading at that open, like the live open refresh (needs --exec open)")
-    p.add_argument("--label-open", action="store_true", help="with --open-refresh: learning labels start at the open the refreshed signal saw, not at the previous close")
+    p.add_argument("--label-open", action="store_true", help="learning labels start at the order day's open (the fill price) instead of the signal day's close; with --open-refresh that is also the open the refreshed signals saw (needs --exec open)")
     p.add_argument("--label-next-close", action="store_true", help="learning labels start at the close of the order day t+1, as the live scorer does (score.py)")
+    p.add_argument("--refresh-agents", default=None, help="with --open-refresh: comma list of the agents that see the open row (default: config.OPEN_REFRESH_AGENTS, as live), e.g. technical,risk,macro,fundamentals,events")
+    p.add_argument("--learn-preopen", action="store_true", help="with --open-refresh: trade on the refreshed signals but record and learn from the signals computed before the open (hybrid)")
     p.add_argument("--position-cap", type=float, default=None, help="override MAX_POSITION_PCT, e.g. 0.30")
     p.add_argument("--min-book", type=float, default=None, help="override MIN_STOCK_BOOK, e.g. 0.5")
     p.add_argument("--idle-sleeve", default=None, help="ETF for idle equity, SOXX or SPY (sets IDLE_SLEEVE)")
@@ -591,5 +610,7 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     r = run(days=args.days, refit_every=args.refit_every, tag=args.tag, extra=tuple(x for x in args.extra.split(",") if x), cap=args.cap,
             exec_mode=args.exec_mode, agents=tuple(x for x in args.agents.split(",") if x) if args.agents else None, end=args.end,
-            open_refresh=args.open_refresh, label_open=args.label_open, label_next_close=args.label_next_close)
+            open_refresh=args.open_refresh, label_open=args.label_open, label_next_close=args.label_next_close,
+            refresh_agents=tuple(x for x in args.refresh_agents.split(",") if x) if args.refresh_agents is not None else None,
+            learn_preopen=args.learn_preopen)
     print(json.dumps({k: v for k, v in r.items() if k != "curve"}, indent=2)[:4000])

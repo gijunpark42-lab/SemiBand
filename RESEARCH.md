@@ -1021,3 +1021,34 @@ Adoption means three changes:
 - The candidate's replay ledger becomes the warm start.
 
 If no candidate qualifies, live stays as is, and the refresh's measured cost (`_g1ref` and `_g1` against `_g0`) is reported. At most these two variants are tried, with no tuning after the results.
+
+### Round 31 results (2026-09-15 04:05 PT): keep the live setup
+
+**Coverage.** 470 common days (2024-09-27 → 2026-08-13), 247 of them before 2025-09-24 (OOS), at 5 bps cost. `_g0` was re-run after its first attempt died: its own model file was momentarily locked while being replaced, likely by a scanner. The retry added in `387e55d` cannot change results.
+
+| Run | Return | Sharpe | Max DD | Return at 30 bps | Held set ≠ `_g0` | vs `_g0` bps/day (t) | OOS bps/day (t) | Paired t vs live |
+|---|---|---|---|---|---|---|---|---|
+| `_g0` no refresh, order-day-open label | +1117% | 2.22 | 31.9% | +700% | — | — | — | +0.17 |
+| `_g1ref` live: refresh, signal-close label | +1084% | 2.24 | 28.8% | +676% | 92% | −0.91 (−0.17) | −5.24 (−0.77) | — |
+| `_g1` refresh, open label | +761% | 1.91 | 36.0% | +467% | 85% | −7.40 (−1.73) | −11.72 (−2.12) | −1.49 |
+| `_g2` hybrid, open label | +780% | 1.93 | 36.3% | +482% | 82% | −6.93 (−1.68) | −12.60 (−2.52) | −1.31 |
+| `_g3` refresh without mean_reversion, open label | +812% | 1.99 | 33.7% | +501% | 77% | −6.34 (−1.70) | −7.24 (−1.47) | −1.42 |
+
+Across all five runs, turnover was 0.35–0.36 per day, mean gross 1.00–1.03, and names held 11.4–11.7.
+
+**Gate outcome.**
+- `_g2` (hybrid) fails all four conditions. At −6.9 bps/day against `_g0` it trips the stop rule, so the hybrid is rejected and no further label variants will be tried.
+- `_g3` fails three of four; only the drawdown condition holds.
+- `_g1` fails all four.
+- **Decision, as pre-registered: keep the live setup. No config change.**
+
+**Reading.**
+- Under a label that credits no agent with the overnight gap, every form of the open refresh loses 6–7 bps/day to no refresh.
+- Taking mean_reversion out of the refresh recovers little (−6.3 against −7.4 bps/day). The refreshed technical, risk, macro and events signals also cost money once the learner weights them on clean labels.
+- The hybrid, which trades on refreshed signals with weights learned before the open, behaved as the review partner predicted from `_ol` and `_nc`.
+- The live setup is statistically indistinguishable from the clean no-refresh baseline: −0.9 bps/day (t −0.17), with a lower drawdown (28.8% against 31.9%). Its signal-close label keeps the refreshed signals' weights low enough that the refresh costs nothing measurable.
+- The refresh therefore stays live. The user requires latest-price signals, and in its live form the refresh is harmless. That harmlessness comes from the label artifact, so any future label change must be tested against a no-refresh baseline, not assumed safe.
+
+**Other findings.**
+- **Changes since round 29.** `_g1ref` (+1084%, drawdown 28.8%) uses the same flags as `_sz5` (+1158%, 29.4%). Two code changes separate them: the 2026-09-15 sleeve formula, which fills idle equity only up to the vol target's exposure, and the events data guards. Together they cost 74 points of total return and lowered drawdown by 0.6 points.
+- **Caveat.** This is one 470-day window in one regime. A paired t of −1.7 is not decisive on its own; the gate and the stop rule were fixed before the runs.

@@ -852,3 +852,43 @@ are not a short signal either. Long-only stays.
 
 Rollback, if needed: `OPEN_REFRESH_AGENTS = ()`, `git revert c3979a7` for the label start, and copy
 `backtest_nbfix_warmstart_20260911.sqlite` back to `backtest.sqlite`.
+
+## 2026-09-15 — round 29: a more aggressive book: idle cash into SOXX (adopted) vs concentration floors (rejected)
+
+Question (user, 2026-09-15): average exposure of about 15% leaves money idle; be more aggressive, e.g. a higher per-name cap
+or more money in the few names that pass the bar. Five 500-day replays on the same day's data and code (`35b35aa` plus the
+sleeve), all with the adopted setup of rounds 27–28 (open refresh, labels from the signal close), `--exec open`, daily refits,
+5 bps, 150 names, no Claude; prices shared through `BACKTEST_PRICE_CACHE`; comparison `python analyze_runs.py _sz0 _sz1 _sz2 _sz3 _sz4`.
+
+- `MIN_STOCK_BOOK` (`--min-book`): when the sized stock book is below the floor, the names that passed the bar are scaled up
+  to it, per-name cap still applied (`--position-cap 0.30`).
+- `IDLE_SLEEVE` (`--idle-sleeve SOXX`): the equity the stock book leaves idle goes into SOXX while SOXX closed above its
+  50-day average; scaled with the vol target like the book; costs and the rebalance band apply.
+
+| Run | Return | Sharpe | Max DD | OOS return / Sharpe | IS return / Sharpe | 2026-05 on | Mean gross | At 30 bps | Deflated Sharpe |
+|---|---|---|---|---|---|---|---|---|---|
+| `_sz0` current sizing | +895% | 2.14 | 31.1% | +310% / 2.25 | +143% / 2.03 | +0.9% | 0.91 | +558% / 1.75 | 0.85 |
+| **`_sz1` idle cash into SOXX, trend 50 (adopted)** | **+1152%** | **2.26** | 31.8% | +304% / 2.22 | +210% / 2.33 | **+19.7%** | 1.03 | **+713% / 1.87** | **0.89** |
+| `_sz2` cap 0.30, floor 0.5 | +844% | 2.07 | 32.0% | +303% / 2.20 | +134% / 1.93 | +1.9% | 0.94 | +511% / 1.67 | 0.83 |
+| `_sz3` cap 0.30, floor 1.0 | +780% | 1.98 | 37.8% | +261% / 1.99 | +144% / 2.00 | +3.3% | 0.98 | +447% / 1.54 | 0.79 |
+| `_sz4` cap 0.30, floor 0.5, SOXX sleeve | +1079% | 2.21 | 32.7% | +298% / 2.18 | +197% / 2.28 | +18.2% | 1.03 | +648% / 1.80 | 0.87 |
+
+SOXX over the whole window +145%; from 2026-05-01 +19.3%. Paired daily differences against `_sz0`:
+
+- `_sz1`: +5.48 bps/day, t = +1.20; OOS −0.57, t = −1.62; IS +12.18, t = +1.27; 2026-05 on +26.82, t = +0.94.
+- `_sz2`: −1.01 bps/day, t = −0.63. `_sz3`: −2.33, t = −0.79. `_sz4`: +4.14, t = +1.00.
+
+Reading:
+
+- Concentration does not help. Few names pass the entry bar in the cash regime, so a floor mostly scales one or two names
+  (2026-05 gross only 0.27–0.34) and adds single-name risk: lower return and Sharpe, and a 37.8% drawdown at a floor of 1.0.
+  Together with round 17 (exposure floors) and round 26 (gross 2.0, size 0.8), forcing stock exposure is rejected again.
+- The trend-filtered SOXX sleeve raises exposure where the book is idle and only while semis are in an uptrend: return
+  +257 points, Sharpe +0.12, drawdown +0.7 points, better at every cost level, deflated Sharpe 0.85 → 0.89. The gain sits in
+  the IS year and the 2026 cash stretch; OOS is flat to slightly lower (Sharpe 2.25 → 2.22). The screen in round 28 already
+  showed why the trend filter matters: the same sleeve without it had a 45% drawdown.
+- **Adopted from the 2026-09-15 cycle: `IDLE_SLEEVE = "SOXX"`, fraction 1.0, trend 50.** Cap 0.15 and no stock floor stay.
+  On 2026-09-15 SOXX closed 497.40 against a 50-day average of 530.14, so the sleeve starts out of the market.
+
+Caveats: the gain is not statistically significant (t = +1.20) and concentrated in one regime; SOXX is also the benchmark,
+so a sleeve-heavy book tracks SOXX by design; the replay trades the sleeve at the open like the stocks.

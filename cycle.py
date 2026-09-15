@@ -387,7 +387,7 @@ def main():
                      f"cost assumed {config.COST_BPS} bps per order"),
         })
     if decisions and not args.no_llm:
-        moderator.run(decisions)          # meeting minutes per traded ticker (explains, never changes)
+        moderator.run([d for d in decisions if d["ticker"] in universe])   # minutes per traded stock; the idle sleeve has no agent debate
     history = []
     if journal.DASHBOARD_FILE.exists():
         try:

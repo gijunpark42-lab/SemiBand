@@ -276,3 +276,23 @@ touched since, `git status`, the tail of `RESEARCH.md`, and `state/run_daily.log
   and 18) are in RESEARCH.md round 28.
 - State: live checkout on main with these records; the 2026-09-15 cycle runs at 03:30 PT with the refresh on; account all cash.
 - Next: checkpoints 03:22, 03:37, 06:23, 06:57 and 13:27 PT. Rollback recipe in RESEARCH.md round 28.
+
+### 2026-09-15 02:45 PT — Claude root → anyone: idle cash into SOXX adopted; Claude agents see today's latest price
+
+- Did: user asked (2026-09-15 02:10 PT) for a more aggressive book and for every agent to see the current price. Commit
+  `35b35aa`: `llm_supply` / `llm_guidance` price lines use today's newest trade when there is one (pre-market included);
+  sizing knobs `MIN_STOCK_BOOK` and `IDLE_SLEEVE` plus backtest flags, a shared price cache and per-tag model files. Round 29
+  (RESEARCH.md): five 500-day replays; concentration floors rejected; the trend-filtered SOXX sleeve adopted
+  (+1152% / Sharpe 2.26 / DD 31.8% vs +895% / 2.14 / 31.1%). This commit turns `IDLE_SLEEVE = "SOXX"` on and adds the live
+  sleeve path (`portfolio.sleeve_target`, `portfolio.plan_sleeve`, cycle wiring; tests 31 pass; dry rehearsal on a state copy).
+- State: live checkout on main with the sleeve on for the 2026-09-15 03:30 PT cycle. SOXX closed below its 50-day average
+  on 2026-09-14, so the sleeve starts out of the market until SOXX closes back above it.
+- Next: the day's checkpoints (03:22, 03:37, 06:23, 06:57, 13:27 PT). Rollback: `IDLE_SLEEVE = None`. Open idea from the user:
+  per-agent self-learning models under the stacking learner (a research round; the LightGBM ranker of 2026-09-10 hurt).
+- 2026-09-15 02:45 PT, same session: a dry rehearsal showed the 03:30 PT cycle would have ABORTED: yesterday's SHEL exit went
+  out through Alpaca's close_position, whose client id lacks `sb2-`, so `broker.foreign_orders` called it another bot's order.
+  Fixed: an order the ledger recorded for the same New York date, symbol and side counts as ours; `broker.close` now sends a
+  tagged market order when given a client id, and the cycle and guardian pass one. Verified read-only against the live account
+  (the SHEL sell is no longer foreign). Also: the open refresh now takes today's ^VIX and ^TNX levels from yfinance, and the
+  fundamentals re-pricing covers trailing P/E and market cap as well. User request logged for a research round: agents that
+  improve themselves recursively, with the stacking learner still adjusting their weights.

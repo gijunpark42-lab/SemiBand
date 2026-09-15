@@ -31,6 +31,7 @@ also carries robustness.summary(): bootstrap Sharpe CI, deflated Sharpe for the 
 sweep trials, calendar tables, cost sensitivity and a rolling Sharpe.
 """
 import argparse
+import importlib
 import json
 import logging
 import math
@@ -240,7 +241,8 @@ def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mod
         raise ValueError("--label-open only applies to --open-refresh")
     if label_open and label_next_close:
         raise ValueError("choose one label start: --label-open or --label-next-close")
-    extra_mods = [{"momentum": momentum, "sue": sue, "ml_ranker": ml_ranker}[e] for e in extra]
+    extra_mods = [{"momentum": momentum, "sue": sue, "ml_ranker": ml_ranker}.get(e) or importlib.import_module(f"agents.{e}")
+                  for e in extra]                              # factor_* agents load by name
     if agents:
         PIT_AGENTS = [a for a in SIM_AGENTS if a in agents]
     PIT_AGENTS = PIT_AGENTS + list(extra)
@@ -269,6 +271,9 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
         universe = universe_mod.load()
     tickers = list(universe)
     extra = [config.BENCHMARK, "SPY", "^VIX", "^TNX"]
+    if any(m.NAME.startswith("factor_") for m in extra_mods):   # cross-asset factor series (oil, fed funds futures, ...)
+        from agents import factors
+        extra = sorted(set(extra) | set(factors.SYMBOLS))
     end_date = date.fromisoformat(run_info["end"]) if run_info.get("end") else None
     lookback = int(days * 1.6) + 400 + ((date.today() - end_date).days if end_date else 0)
     closes = _prices("closes", tickers + extra, lookback)

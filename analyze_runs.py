@@ -34,7 +34,9 @@ for t, rep in reports.items():
     for label, lo, hi in WINDOWS:
         s = window(rep["curve"], lo, hi)
         print(f"{t:10} {label:8} {s['ret']:>+9.1%} {s['soxx']:>+8.1%} {s['sharpe']:>6.2f} {s['dd']:>6.1%} {s['gross']:>6.2f}"
-              + (f"  {rep.get('sizing')} refresh={rep.get('open_refresh')}" if label == "full" else ""))
+              + (f"  {rep.get('sizing')} refresh={rep.get('open_refresh')} refresh_agents={rep.get('refresh_agents')} "
+                 f"learn_preopen={rep.get('learn_preopen')} label_open={rep.get('label_open')} "
+                 f"label_next_close={rep.get('label_next_close')}" if label == "full" else ""))
     rb = rep["robustness"]
     print(f"{'':10} cost bps -> return/Sharpe {[(c['bps'], round(c['total_return'], 2), c['sharpe']) for c in rb['cost_sensitivity']]}; "
           f"Sharpe CI {rb.get('sharpe_ci95')}; DSR {rb['deflated']['dsr'] if rb.get('deflated') else None}; "

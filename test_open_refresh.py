@@ -47,7 +47,7 @@ class OpenRefresh(unittest.TestCase):
 
         notes = []
         with patch.object(cycle.market, "live_prices", return_value={"NVDA": 97.0, "SOXX": 502.0}), \
-                patch.object(cycle.market, "index_levels", return_value={"^TNX": 4.3, "^VIX": 160.0}), \
+                patch.object(cycle.market, "index_levels", return_value={"^TNX": 43.0, "^VIX": 30.0}), \
                 patch.object(cycle.market, "closes", return_value=self.closes), \
                 patch.object(cycle, "_run_agent", side_effect=fake_run), \
                 patch.object(cycle.ledger, "replace_predictions") as replace, \
@@ -57,8 +57,8 @@ class OpenRefresh(unittest.TestCase):
         self.assertEqual(frame.index[-1], pd.Timestamp("2026-09-14"))
         self.assertEqual(frame.loc["2026-09-14", "NVDA"], 97.0)       # today's print
         self.assertEqual(frame.loc["2026-09-14", "AMD"], 51.0)        # no print today: last close
-        self.assertEqual(frame.loc["2026-09-14", "^VIX"], 16.0)       # 160 is off the close's scale: last close kept
-        self.assertEqual(frame.loc["2026-09-14", "^TNX"], 4.3)        # today's index level, same scale as the history
+        self.assertEqual(frame.loc["2026-09-14", "^VIX"], 30.0)       # a real spike (+88%) is used
+        self.assertEqual(frame.loc["2026-09-14", "^TNX"], 4.1)        # 43.0 is ten times the history's scale: last close kept
         by = {(s.agent, s.ticker): s for s in signals}
         self.assertEqual(by[("technical", "NVDA")].reason, "open")
         self.assertEqual(by[("llm_news", "NVDA")].reason, "claude")
@@ -168,10 +168,15 @@ class IdleSleeve(unittest.TestCase):
         import portfolio
         stocks = {"A": 100_000.0, "B": 50_000.0}
         self.assertAlmostEqual(self.run_with(lambda: portfolio.sleeve_target(stocks, 1_000_000, self.up)), 850_000, delta=1)
-        self.assertAlmostEqual(self.run_with(lambda: portfolio.sleeve_target(stocks, 1_000_000, self.up, realized_vol=1.0)), 425_000, delta=1)
+        # vol target halves exposure: total capped at 0.5, stocks already hold 0.15, so the sleeve fills 0.35
+        self.assertAlmostEqual(self.run_with(lambda: portfolio.sleeve_target(stocks, 1_000_000, self.up, realized_vol=1.0)), 350_000, delta=1)
+        self.assertEqual(self.run_with(lambda: portfolio.sleeve_target({"A": 600_000.0}, 1_000_000, self.up, realized_vol=1.0)), 0.0)
         self.assertEqual(self.run_with(lambda: portfolio.sleeve_target(stocks, 1_000_000, self.down)), 0.0)
         self.assertEqual(self.run_with(lambda: portfolio.sleeve_target(stocks, 1_000_000, self.up), HEDGE_SIZE=0.5, HEDGE_SYMBOL="SOXX"), 0.0)
         self.assertEqual(self.run_with(lambda: portfolio.sleeve_target(stocks, 1_000_000, self.up), IDLE_SLEEVE=None), 0.0)
+        empty = self.up.assign(SOXX=float("nan"))                       # a failed download: never sell the sleeve over it
+        self.assertIsNone(self.run_with(lambda: portfolio.sleeve_target(stocks, 1_000_000, empty)))
+        self.assertIsNone(self.run_with(lambda: portfolio.sleeve_target(stocks, 1_000_000, self.up.drop(columns=["SOXX"]))))
 
     def test_orders_buy_hold_inside_the_band_and_close_when_off(self):
         import portfolio
@@ -213,6 +218,25 @@ class ForeignOrderGuard(unittest.TestCase):
         self.assertEqual(sent[0].client_order_id, "sb2-2026-09-15-SHEL-sell-1")
         self.assertAlmostEqual(float(sent[0].qty), 786.6221)
         self.assertEqual(sent[0].symbol, "SHEL")
+
+
+class LivePrices(unittest.TestCase):
+    def test_a_print_after_the_open_wins_over_a_newer_looking_pre_market_print(self):
+        import market
+        from types import SimpleNamespace as NS
+        now = pd.Timestamp.now(tz="UTC")
+        open_utc = now - pd.Timedelta(seconds=40)
+        pages = {"iex": {"NVDA": {"p": 101.0, "t": (open_utc + pd.Timedelta(seconds=10)).isoformat()},
+                         "AMD": {"p": 55.0, "t": (open_utc - pd.Timedelta(minutes=20)).isoformat()}},
+                 "delayed_sip": {"NVDA": {"p": 99.0, "t": (open_utc - pd.Timedelta(minutes=15)).isoformat()},
+                                 "AMD": {"p": 54.0, "t": (open_utc - pd.Timedelta(minutes=15)).isoformat()}}}
+
+        def fake_get(url, timeout=None, headers=None, params=None):
+            return NS(raise_for_status=lambda: None, json=lambda: {"trades": pages[params["feed"]]})
+        with patch("requests.get", side_effect=fake_get):
+            prices = market.live_prices(["NVDA", "AMD"], prefer_after=open_utc)
+        self.assertEqual(prices["NVDA"], 101.0)                      # the post-open print
+        self.assertEqual(prices["AMD"], 54.0)                        # no post-open print yet: newest pre-market print
 
 
 class MacroYields(unittest.TestCase):

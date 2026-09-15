@@ -55,14 +55,15 @@ def opens(symbols, lookback_days) -> pd.DataFrame:
     return df
 
 
-def live_prices(symbols, max_age_hours=6) -> dict:
+def live_prices(symbols, max_age_hours=6, prefer_after=None) -> dict:
     """{symbol: price of its newest trade in the last `max_age_hours`} from Alpaca's data API, across IEX (real time) and
     the consolidated tape (15 minutes delayed). Used right after the open so an overnight gap reaches the price-based
-    agents; a name with no print in that window is left out (the caller keeps its last close)."""
+    agents; a name with no print in that window is left out (the caller keeps its last close). With prefer_after (UTC
+    timestamp, the open), a trade at or after it wins over any earlier pre-market print."""
     import requests
     cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(hours=max_age_hours)
     symbols = sorted(set(symbols))
-    best = {}
+    best, after = {}, {}
     for feed in ("iex", "delayed_sip"):
         for i in range(0, len(symbols), 100):
             try:
@@ -81,6 +82,10 @@ def live_prices(symbols, max_age_hours=6) -> dict:
                     continue
                 if price > 0 and when >= cutoff and (symbol not in best or when > best[symbol][1]):
                     best[symbol] = (price, when)
+                if (price > 0 and prefer_after is not None and when >= prefer_after
+                        and (symbol not in after or when > after[symbol][1])):
+                    after[symbol] = (price, when)
+    best.update(after)
     return {symbol: price for symbol, (price, _) in best.items()}
 
 

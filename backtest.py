@@ -436,9 +436,9 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
             n_tr = config.IDLE_SLEEVE_TREND
             if n_tr is None or (i >= n_tr and s[i] > float(np.nanmean(s[i - n_tr + 1: i + 1]))):
                 scale = min(1.0, config.VOL_TARGET / realized) if (config.VOL_TARGET and realized and realized > config.VOL_TARGET) else 1.0
-                idle = max(0.0, 1.0 - sum(v for tk, v in w.items() if not tk.startswith("__")))
+                idle = max(0.0, scale - sum(v for tk, v in w.items() if not tk.startswith("__")))   # total capped at the vol target
                 if idle > 0:
-                    w["__SLEEVE__"] = config.IDLE_SLEEVE_FRACTION * idle * scale
+                    w["__SLEEVE__"] = config.IDLE_SLEEVE_FRACTION * idle
         for tk in w:                                                 # rebalance band, as portfolio.plan() does live: a held name is
             if tk in prev_w and abs(w[tk] - prev_w[tk]) < config.REBALANCE_BAND * w[tk]:   # not resized for a move under 30% of target
                 w[tk] = prev_w[tk]

@@ -114,7 +114,11 @@ def open_refresh(universe, signals, today, betas, notes):
     stays as computed before the open. An agent that returns nothing keeps its pre-open signals. The refreshed agents'
     predictions for today replace the pre-open ones in the ledger. -> (signals, {symbol: live price}); {} = unchanged."""
     names = [a for a in config.OPEN_REFRESH_AGENTS if a in config.AGENTS]
-    live = market.live_prices(list(universe) + [config.BENCHMARK, "SPY"]) if names else {}
+    open_utc = pd.Timestamp(f"{today} 09:30", tz="America/New_York").tz_convert("UTC")
+    wait = (open_utc + pd.Timedelta(seconds=30) - pd.Timestamp.now(tz="UTC")).total_seconds()
+    if names and 0 < wait <= 60:
+        time.sleep(wait)                                # let the opening prints land before reading them
+    live = market.live_prices(list(universe) + [config.BENCHMARK, "SPY"], prefer_after=open_utc) if names else {}
     if not live:
         if names:
             log.warning("open refresh skipped: no live prices")
@@ -127,7 +131,7 @@ def open_refresh(universe, signals, today, betas, notes):
             row[symbol] = price
     for symbol, level in market.index_levels([s for s in MACRO_EXTRA if s.startswith("^")]).items():   # VIX, 10y yield now
         last_close = row.get(symbol)
-        if symbol in row.index and pd.notna(last_close) and last_close > 0 and abs(level / last_close - 1) <= 0.30:
+        if symbol in row.index and pd.notna(last_close) and last_close > 0 and 1 / 3 <= level / last_close <= 3:   # units only: VIX spikes pass
             row[symbol] = level
         elif symbol in row.index:
             log.warning("open refresh: %s level %.3f is not on the scale of its last close %s, kept the close", symbol, level, last_close)
@@ -148,6 +152,16 @@ def open_refresh(universe, signals, today, betas, notes):
     log.info(msg)
     notes.append(msg)
     return [s for s in signals if s.agent not in done] + [s for name in done for s in fresh[name]], live
+
+
+def _previous_history():
+    """The published cycle history, so an early-exit dashboard payload does not wipe the site's decision history."""
+    if not journal.DASHBOARD_FILE.exists():
+        return []
+    try:
+        return json.loads(journal.DASHBOARD_FILE.read_text(encoding="utf-8")).get("history") or []
+    except ValueError:
+        return []
 
 
 def guardian_blocked(today):
@@ -209,7 +223,8 @@ def main():
         notes.append(msg)
         if not args.force and not dry:
             journal.publish_dashboard({"date": today, "notes": notes + ["cycle aborted: stop the other bot or run with --force"],
-                                       "weights": ledger.latest_weights() or ensemble.initial_weights()})
+                                       "weights": ledger.latest_weights() or ensemble.initial_weights(),
+                                       "history": _previous_history()})
             return 2
 
     snapshots.take()                 # dated copy of the earnings-ai graph whenever it changed (point-in-time backtests later)
@@ -253,9 +268,11 @@ def main():
     shadow_model = learner.load(shadow_mode)
     convictions, breakdown, shadow_convictions = convict(signals, model, shadow_model, notes)
 
-    if not dry and not wait_for_open(max_minutes=120):
+    # 240 minutes: the wait starts only after every agent has run, and a 03:30 PT start whose agents finish by 04:30 would
+    # give up just before the 06:30 PT open with 120 (audit 2026-09-15; yesterday's run only traded after a relaunch)
+    if not dry and not wait_for_open(max_minutes=240):
         log.info("market did not open (holiday?) — predictions recorded, no orders")
-        journal.publish_dashboard({"date": today, "weights": weights,
+        journal.publish_dashboard({"date": today, "weights": weights, "history": _previous_history(),
                                    "notes": notes + ["market did not open: predictions recorded, no orders"]})
         return 0
 
@@ -290,7 +307,10 @@ def main():
     orders = portfolio.plan(target_usd, positions, convictions, universe, equity, buying_power)
     if config.IDLE_SLEEVE:
         sleeve_usd = portfolio.sleeve_target(target_usd, equity, closes, realized)
-        sleeve_orders = portfolio.plan_sleeve(sleeve_usd, positions)
+        sleeve_orders = [] if sleeve_usd is None else portfolio.plan_sleeve(sleeve_usd, positions)
+        if sleeve_usd is None:
+            notes.append(f"idle sleeve {config.IDLE_SLEEVE}: no usable closes, position left as is")
+            sleeve_usd = 0.0
         if config.IDLE_SLEEVE in closes.columns and closes[config.IDLE_SLEEVE].dropna().size:
             last_close.setdefault(config.IDLE_SLEEVE, float(closes[config.IDLE_SLEEVE].dropna().iloc[-1]))   # trade record price
         notes.append(f"idle sleeve {config.IDLE_SLEEVE}: target ${sleeve_usd:,.0f}"

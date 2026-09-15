@@ -107,8 +107,11 @@ MIN_STOCK_BOOK = None             # e.g. 0.5: a stock book whose sized gross is 
                                   # the entry bar, per-name cap still applies (user 2026-09-15: be more aggressive when few names qualify)
 IDLE_SLEEVE = "SOXX"              # the part of equity the stock book leaves idle goes into this ETF (IDLE_SLEEVE_FRACTION of it) while
 IDLE_SLEEVE_FRACTION = 1.0        # the ETF closed above its IDLE_SLEEVE_TREND-day average (None = always); scaled with the vol target
-IDLE_SLEEVE_TREND = 50            # like the book. None = off. User 2026-09-15 ("15% invested leaves money idle"); round 29, 500 days:
+IDLE_SLEEVE_TREND = 200           # like the book. None = off. User 2026-09-15 ("15% invested leaves money idle"); round 29, 500 days:
                                   # +1152% / Sharpe 2.26 / DD 31.8% vs +895% / 2.14 / 31.1%, 2026-05 on +19.7% vs +0.9%
+                                  # 200 days (user decision 2026-09-15, round 34): over 25 years of SOXX the 50-day rule lost to
+                                  # buy-and-hold (Sharpe 0.35 vs 0.55, DD 56%) and the 200-day rule matched it (0.59, DD 42%); the
+                                  # 500-day replay is a tie (+1123% / 2.23 / 28.3% vs +1084% / 2.24 / 28.8% with 50 days)
 HEDGE_SYMBOL = "SOXX"             # optional regime hedge (round 18, 2026-09-11): while SOXX closes below its 50-day average, short SOXX by
 HEDGE_SIZE = None                 # HEDGE_SIZE x equity (capped at the long book, never net short). OFF: with the long-gross cap applied
 HEDGE_LOOKBACK = 50               # correctly it is a drawdown reducer, not a return source (150 names, daily refits: +731% / 1.78 / OOS 1.88

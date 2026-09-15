@@ -1299,3 +1299,37 @@ The two runs started under the first code were stopped unread. They are replaced
 3. Otherwise the live 50-day sleeve stays.
 
 This round adds two trials to the count. The live config changes only after the user is told the numbers and agrees.
+
+### Round 34 results (2026-09-15 07:58 PT): keep the live 50-day sleeve (a near tie)
+
+**Setup.** 470 common days, with the live flags and price cache.
+
+| Run | Return | Sharpe | Max DD | Mean sleeve | All-cash days | vs live, bps/day (t) | OOS (t) |
+|---|---|---|---|---|---|---|---|
+| `_sl0` sleeve off | +911% | 2.17 | 28.0% | 0.00 | 31 | −3.8 (−0.92) | +0.4 (+1.38) |
+| `_g1ref` live 50-day sleeve | +1084% | 2.24 | 28.8% | 0.10 | 15 | — | — |
+| `_sl200` 200-day sleeve | +1123% | 2.23 | 28.3% | 0.14 | 6 | +0.9 (+0.28) | +0.3 (+1.02) |
+
+**Decision, as pre-registered: keep the live 50-day sleeve.**
+- **The sleeve stays.** Sleeve off has a lower Sharpe than the better sleeve (2.17 against 2.24).
+- **The 200-day rule is not adopted.** Its Sharpe is 0.01 below the 50-day rule's, so condition 2 fails.
+
+**Reading.**
+- In this window the three runs are statistically indistinguishable: every difference is within |t| < 1.4.
+- The 200-day rule made slightly more, with a slightly lower drawdown and fewer than half the all-cash days.
+- The 25-year check favours the 200-day rule clearly: Sharpe 0.59 against 0.35, max drawdown 42% against 56%.
+- The pre-registered rule still keeps 50 days, because the 200-day replay Sharpe is 0.01 lower.
+- A switch is therefore the user's call, not a research result: a change on a tie in the replay, backed only by the long-history check.
+
+**Exploratory (user question, not a gate).** Concentrating the market-neutral book into 2 names per leg (`_mn3`) lost money:
+- −7% over 470 days, Sharpe −0.08, max drawdown 45.1%;
+- −73% at 30 bps;
+- −55.5 bps/day against live (t −3.46).
+
+This confirms round 29: this model's edge needs breadth.
+
+**User decision (2026-09-15, 07:55 PT).** After seeing the numbers above, the user chose to switch the sleeve to the 200-day rule and to buy SOXX today.
+
+By the pre-registered rule the 50-day sleeve would have stayed, because the 200-day replay's Sharpe was 0.01 lower. The switch is therefore the user's decision on a tie in the replay, backed by the 25-year check.
+
+Live change: `IDLE_SLEEVE_TREND = 200`. SOXX, at 499.71, is 14.0% above its 200-day average, so the sleeve is invested from today's re-run of the cycle. The re-run uses the signals recorded this morning and makes no Claude calls.

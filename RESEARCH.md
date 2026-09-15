@@ -1141,3 +1141,27 @@ Changing the live learner would need its own pre-registered test and forward sha
 - Per-agent learning (Stage B), which would add fitted parameters, is deprioritised.
 - New agents enter as shadow agents at a fixed weight of 0, and gain a vote only through a later pre-registered promotion test.
 - From now on, signal-quality gates measure the top of the ranking, fixed before the runs: the top-15 rank book and the top-minus-bottom quintile spread on the order-day-open label.
+
+**Round 32 addendum (review partner, 04:45 PT).** The partner regressed the learned-minus-prior daily return gap on SOXX. The figures below are for the clean-label pair; the live pair is similar.
+
+**What explains the 35 bps/day gap.**
+- **Not turnover or exposure level.**
+  - The prior book's extra turnover costs about 1.1 bps/day.
+  - Over the full window, gross exposure (1.01 against 0.93) and beta (1.00 against 0.96) are close.
+- **About two thirds is selection.**
+  - The top-15 rank book, which ignores sizing, is ahead by 22 bps/day with near-zero beta.
+  - Its SOXX-adjusted alpha is +22 bps/day (t 1.8), similar in both halves: OOS +25 (t 1.6), in-sample +27 (t 1.6).
+  - Part of this is still a regime-dependent beta tilt: the rank-book difference has beta +0.45 OOS and −0.32 in-sample. That fits the learner giving more weight to signals that act through beta, such as macro and risk.
+- **About one third (≈13 bps/day) is exposure timing.**
+  - The sized book's beta flips between halves: OOS learned 1.15 against prior 0.62; in-sample 0.91 against 1.21.
+  - The flip comes through conviction magnitudes, reliability scaling and the sleeve.
+  - It helped in both halves here, but it depends on the path the market took.
+
+**Recorded finding.** About 22 bps/day of beta-adjusted selection, plus a regime-dependent exposure component. The pre-registered verdict ("not demonstrated") stands.
+
+**Future signal-quality gates.** This replaces the yardstick named above before it is used anywhere.
+- The gate measures the top-15 rank book minus the equal-weight universe, on beta-adjusted returns. Equivalently, the rank-book difference's alpha after regressing on SOXX.
+- It passes at t ≥ 1 with the same sign in both halves.
+- The sized book's alpha and beta by half are reported alongside.
+
+**Freeze.** The learner and its warm start carry the edge, and part of that edge is exposure set by regime. Changing the label, warm start, agent set, λ or sizing can therefore change live exposure even when selection looks unchanged. The live configuration stays frozen. Once the live book has built up, compare its realised beta and gross against the replay (OOS beta 1.15).

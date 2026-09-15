@@ -1103,3 +1103,41 @@ For `_l1` that IC is on the signal-close label and is reported with that caveat.
 - If it doesn't: Stage B is deprioritised, and new agents enter with weights fixed in advance.
 
 Changing the live learner would need its own pre-registered test and forward shadow data. This round adds two trials to the count.
+
+### Round 32 results (2026-09-15 04:35 PT): the fitted weights make the book; their gain is in the top of the ranking, not in whole-universe IC
+
+**Run notes.** The replays ran one at a time after the live Claude stage. A first attempt ran two in parallel during that stage; it was killed for low memory before it had written anything. Both checks passed: each prior-only run's ledger and mean ICs equal its learned twin's.
+
+| Flags | Book | Return | Sharpe | Max DD | Gross | Names | Turnover | Top-15 rank book |
+|---|---|---|---|---|---|---|---|---|
+| Clean label, no refresh | `_g0` learned | +1117% | 2.22 | 31.9% | 1.01 | 11.5 | 0.36 | +818% (Sharpe 2.09) |
+| | `_l0` equal-weight prior | +157% | 1.00 | 37.0% | 0.93 | 11.0 | 0.58 | +246% (1.31) |
+| Live flags | `_g1ref` learned | +1084% | 2.24 | 28.8% | 1.00 | 11.7 | 0.36 | +792% (2.08) |
+| | `_l1` equal-weight prior | +219% | 1.23 | 34.4% | 0.94 | 11.0 | 0.59 | +278% (1.40) |
+
+**Learned minus prior, paired daily returns:**
+
+| Pair | Full window, bps/day (t) | OOS (t) | In-sample (t) |
+|---|---|---|---|
+| Clean label | +35.4 (+2.47) | +57.7 (+2.69) | +10.7 (+0.57) |
+| Live flags | +30.0 (+2.06) | +50.0 (+2.42) | +7.8 (+0.38) |
+
+**10-day IC across all names:**
+
+| Label | OOS learned / prior | In-sample learned / prior |
+|---|---|---|
+| Clean | −0.0092 / +0.0052 | +0.0420 / +0.0331 |
+| Live (signal-close) | +0.0116 / −0.0007 | +0.0420 / +0.0278 |
+
+**Pre-registered verdict: "learning helps" is not demonstrated** on the deciding clean-label pair. The P&L conditions pass by a wide margin, but the learned IC is below the prior's in the OOS half. On the live flags all three conditions pass, though that IC is measured on the contaminated label.
+
+**Reading.**
+- The fitted weights are what make the book work. Trading the equal-weight blend instead cuts +1117% to +157%. It also cuts the top-15 rank book (name selection only, no sizing) from +818% to +246%.
+- The gain sits in the top of the ranking. The learned conviction quintiles' 10-day abnormal returns run −0.02%, +0.32%, +0.27%, +0.28%, +1.39%.
+- The IC criterion measured rank correlation across all 150 names, which is the wrong yardstick for a long-only book of about 11 names. This is recorded, not used to overturn the verdict.
+
+**Consequences, as pre-registered.**
+- No live change.
+- Per-agent learning (Stage B), which would add fitted parameters, is deprioritised.
+- New agents enter as shadow agents at a fixed weight of 0, and gain a vote only through a later pre-registered promotion test.
+- From now on, signal-quality gates measure the top of the ranking, fixed before the runs: the top-15 rank book and the top-minus-bottom quintile spread on the order-day-open label.

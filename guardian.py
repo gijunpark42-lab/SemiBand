@@ -125,7 +125,7 @@ def main():
                  "action": v["action"], "reason": str(v["reason"])[:240], "executed": False}
         if v["action"] == "exit" and v["material"] and float(v["severity"]) >= config.GUARDIAN_EXIT_SEVERITY:
             try:
-                broker.close(ticker, dry_run=dry)
+                broker.close(ticker, client_order_id=f"{config.ORDER_PREFIX}{today}-{ticker}-guardian", dry_run=dry)
                 event["executed"] = not dry
                 journal.record(ticker, "SELL", f"guardian exit: {event['reason']}", float(pos.current_price),
                                notional=float(pos.market_value), dry_run=dry)

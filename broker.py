@@ -167,12 +167,18 @@ def sell(symbol, notional, client_order_id=None, dry_run=None):
     return _order(symbol, notional, OrderSide.SELL, client_order_id, dry_run)
 
 
-def close(symbol, dry_run=None):
-    """Liquidate the entire position in symbol."""
+def close(symbol, client_order_id=None, dry_run=None):
+    """Liquidate the entire position in symbol. With client_order_id the close goes out as a market order carrying that id, so
+    the foreign-order guard recognises it (Alpaca's close_position assigns its own id)."""
     if _dry(dry_run):
         log.info("DRY_RUN close %s", symbol)
         return None
-    order = _client.close_position(symbol)
+    if client_order_id:
+        qty = float(_client.get_open_position(symbol).qty)
+        order = _client.submit_order(MarketOrderRequest(symbol=symbol, qty=abs(qty), side=OrderSide.SELL if qty > 0 else OrderSide.BUY,
+                                                        time_in_force=TimeInForce.DAY, client_order_id=client_order_id))
+    else:
+        order = _client.close_position(symbol)
     log.info("CLOSE %s (order %s)", symbol, order.id)
     return order
 
@@ -199,6 +205,18 @@ def recent_orders(hours=24):
 
 
 def foreign_orders(hours=24):
-    """Orders in the window that were NOT placed by this program (other bots)."""
-    return [o for o in recent_orders(hours)
-            if not (o.client_order_id or "").startswith(config.ORDER_PREFIX)]
+    """Orders in the window that were NOT placed by this program (other bots). Ours: a client id starting with ORDER_PREFIX, or
+    an order the ledger recorded for the same New York date, symbol and side (closes sent through close_position before
+    2026-09-15 carry Alpaca's own id; one tripped the guard for the 2026-09-15 cycle in a dry run)."""
+    import ledger
+    from zoneinfo import ZoneInfo
+    mine, ny, out = ledger.order_keys(), ZoneInfo("America/New_York"), []
+    for o in recent_orders(hours):
+        if (o.client_order_id or "").startswith(config.ORDER_PREFIX):
+            continue
+        when = o.submitted_at or o.created_at
+        side = str(getattr(o.side, "value", o.side)).upper()
+        if when is not None and (when.astimezone(ny).date().isoformat(), o.symbol, side) in mine:
+            continue
+        out.append(o)
+    return out

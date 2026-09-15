@@ -98,6 +98,15 @@ def replace_predictions(date, agents, signals, price_at, benchmark_beta=None):
              for s in signals if s.agent in agents])
 
 
+def order_keys(days=4):
+    """{(date, ticker, side)} of the real (not dry-run) orders this program recorded in the last `days` calendar days: lets the
+    foreign-order guard recognise our own position closes that went out without the ORDER_PREFIX client id."""
+    with connect() as con:
+        rows = con.execute("SELECT date, ticker, side FROM orders WHERE dry_run = 0 AND date >= date('now', ?)",
+                           (f"-{days} days",)).fetchall()
+    return {(r["date"], r["ticker"], r["side"].upper()) for r in rows}
+
+
 def unscored(horizon):
     """Predictions that have no score yet for this horizon (all of them; the scorer decides maturity)."""
     with connect() as con:

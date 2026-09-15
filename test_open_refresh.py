@@ -47,6 +47,7 @@ class OpenRefresh(unittest.TestCase):
 
         notes = []
         with patch.object(cycle.market, "live_prices", return_value={"NVDA": 97.0, "SOXX": 502.0}), \
+                patch.object(cycle.market, "index_levels", return_value={"^TNX": 4.3, "^VIX": 160.0}), \
                 patch.object(cycle.market, "closes", return_value=self.closes), \
                 patch.object(cycle, "_run_agent", side_effect=fake_run), \
                 patch.object(cycle.ledger, "replace_predictions") as replace, \
@@ -56,7 +57,8 @@ class OpenRefresh(unittest.TestCase):
         self.assertEqual(frame.index[-1], pd.Timestamp("2026-09-14"))
         self.assertEqual(frame.loc["2026-09-14", "NVDA"], 97.0)       # today's print
         self.assertEqual(frame.loc["2026-09-14", "AMD"], 51.0)        # no print today: last close
-        self.assertEqual(frame.loc["2026-09-14", "^VIX"], 16.0)
+        self.assertEqual(frame.loc["2026-09-14", "^VIX"], 16.0)       # 160 is off the close's scale: last close kept
+        self.assertEqual(frame.loc["2026-09-14", "^TNX"], 4.3)        # today's index level, same scale as the history
         by = {(s.agent, s.ticker): s for s in signals}
         self.assertEqual(by[("technical", "NVDA")].reason, "open")
         self.assertEqual(by[("llm_news", "NVDA")].reason, "claude")
@@ -137,6 +139,80 @@ class Sizing(unittest.TestCase):
         self.assertEqual(one, {"A": 300_000.0})
         with patch.object(config, "MIN_STOCK_BOOK", None), patch.object(config, "VOL_TARGET", None):
             self.assertAlmostEqual(portfolio.targets({"A": 0.12}, 1_000_000)["A"], 72_000, delta=1)
+
+
+class IdleSleeve(unittest.TestCase):
+    def setUp(self):
+        idx = pd.bdate_range("2026-06-01", periods=60)
+        self.up = pd.DataFrame({"SOXX": [100.0 + k for k in range(60)]}, index=idx)      # last close above its 50-day average
+        self.down = pd.DataFrame({"SOXX": [160.0 - k for k in range(60)]}, index=idx)    # last close below it
+
+    def patches(self, **extra):
+        import config
+        values = {"IDLE_SLEEVE": "SOXX", "IDLE_SLEEVE_FRACTION": 1.0, "IDLE_SLEEVE_TREND": 50, "VOL_TARGET": 0.50,
+                  "HEDGE_SIZE": None, "MIN_ORDER_USD": 250, "REBALANCE_BAND": 0.30}
+        values.update(extra)
+        return [patch.object(config, k, v) for k, v in values.items()]
+
+    def run_with(self, fn, **extra):
+        ps = self.patches(**extra)
+        for p in ps:
+            p.start()
+        try:
+            return fn()
+        finally:
+            for p in ps:
+                p.stop()
+
+    def test_target_is_the_idle_share_in_an_uptrend_scaled_by_the_vol_target(self):
+        import portfolio
+        stocks = {"A": 100_000.0, "B": 50_000.0}
+        self.assertAlmostEqual(self.run_with(lambda: portfolio.sleeve_target(stocks, 1_000_000, self.up)), 850_000, delta=1)
+        self.assertAlmostEqual(self.run_with(lambda: portfolio.sleeve_target(stocks, 1_000_000, self.up, realized_vol=1.0)), 425_000, delta=1)
+        self.assertEqual(self.run_with(lambda: portfolio.sleeve_target(stocks, 1_000_000, self.down)), 0.0)
+        self.assertEqual(self.run_with(lambda: portfolio.sleeve_target(stocks, 1_000_000, self.up), HEDGE_SIZE=0.5, HEDGE_SYMBOL="SOXX"), 0.0)
+        self.assertEqual(self.run_with(lambda: portfolio.sleeve_target(stocks, 1_000_000, self.up), IDLE_SLEEVE=None), 0.0)
+
+    def test_orders_buy_hold_inside_the_band_and_close_when_off(self):
+        import portfolio
+
+        class Pos:
+            def __init__(self, mv):
+                self.market_value = str(mv)
+        self.assertEqual(self.run_with(lambda: portfolio.plan_sleeve(850_000, {})),
+                         [{"ticker": "SOXX", "side": "BUY", "notional": 850_000, "tag": "idle sleeve"}])
+        self.assertEqual(self.run_with(lambda: portfolio.plan_sleeve(850_000, {"SOXX": Pos(800_000)})), [])
+        self.assertEqual(self.run_with(lambda: portfolio.plan_sleeve(0.0, {"SOXX": Pos(800_000)})),
+                         [{"ticker": "SOXX", "side": "SELL", "notional": None, "tag": "idle sleeve off"}])
+        self.assertEqual(self.run_with(lambda: portfolio.plan_sleeve(300_000, {"SOXX": Pos(800_000)})),
+                         [{"ticker": "SOXX", "side": "SELL", "notional": 500_000, "tag": "idle sleeve trim"}])
+
+
+class ForeignOrderGuard(unittest.TestCase):
+    def test_our_orders_are_recognised_by_prefix_or_ledger_and_others_are_foreign(self):
+        import broker
+        from datetime import datetime, timezone
+        from types import SimpleNamespace as NS
+        when = datetime(2026, 9, 14, 13, 30, 35, tzinfo=timezone.utc)          # 09:30 ET on 2026-09-14
+        orders = [NS(client_order_id="sb2-2026-09-14-NVDA-buy-1", symbol="NVDA", side=NS(value="buy"), submitted_at=when, created_at=when),
+                  NS(client_order_id="9896ed79", symbol="SHEL", side=NS(value="sell"), submitted_at=when, created_at=when),
+                  NS(client_order_id="other-bot-1", symbol="AMD", side=NS(value="buy"), submitted_at=when, created_at=when)]
+        with patch.object(broker, "recent_orders", return_value=orders), \
+                patch.object(ledger, "order_keys", return_value={("2026-09-14", "SHEL", "SELL")}):
+            foreign = broker.foreign_orders(24)
+        self.assertEqual([o.symbol for o in foreign], ["AMD"])
+
+    def test_tagged_close_sends_a_market_order_for_the_whole_position(self):
+        import broker
+        from types import SimpleNamespace as NS
+        sent = []
+        with patch.object(broker._client, "get_open_position", return_value=NS(qty="786.6221")), \
+                patch.object(broker._client, "submit_order", side_effect=lambda req: sent.append(req) or NS(id="x")), \
+                patch.object(broker, "_dry", return_value=False):
+            broker.close("SHEL", client_order_id="sb2-2026-09-15-SHEL-sell-1")
+        self.assertEqual(sent[0].client_order_id, "sb2-2026-09-15-SHEL-sell-1")
+        self.assertAlmostEqual(float(sent[0].qty), 786.6221)
+        self.assertEqual(sent[0].symbol, "SHEL")
 
 
 if __name__ == "__main__":

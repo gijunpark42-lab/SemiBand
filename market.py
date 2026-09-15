@@ -84,6 +84,20 @@ def live_prices(symbols, max_age_hours=6) -> dict:
     return {symbol: price for symbol, (price, _) in best.items()}
 
 
+def index_levels(symbols):
+    """{symbol: latest level} for index tickers such as ^VIX and ^TNX (Alpaca has no index trades) from yfinance's fast
+    quote; a symbol that fails is left out and keeps its last close upstream."""
+    out = {}
+    for symbol in symbols:
+        try:
+            level = float(yf.Ticker(symbol).fast_info["last_price"])
+            if level > 0:
+                out[symbol] = level
+        except Exception as exc:  # one index failing must not stop the refresh
+            log.warning("index level %s: %s", symbol, exc)
+    return out
+
+
 def move_line(closes, ticker, live=None, days=20):
     """The "Recent price move" line of the Claude prompts: the newest price (a trade from today when there is one, pre-market
     included, else the last close) against the close `days` sessions back, next to the benchmark's move."""

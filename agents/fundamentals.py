@@ -20,7 +20,7 @@ def run(universe: dict, ctx: dict) -> list[Signal]:
         f = dict(data.get(ticker) or {})
         price, now = f.get("currentPrice"), live.get(ticker)
         if price and now:
-            for key in ("forwardPE", "priceToSalesTrailing12Months"):
+            for key in ("forwardPE", "trailingPE", "priceToSalesTrailing12Months", "marketCap"):   # every price-based field
                 if f.get(key) is not None:
                     f[key] = f[key] * now / price
             f["currentPrice"] = now

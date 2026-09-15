@@ -103,9 +103,10 @@ VOL_TARGET = 0.50                 # portfolio vol targeting: when the book's tra
 VOL_LOOKBACK_DAYS = 20            # trading days of the account's own daily returns behind that realised vol (no scaling until they exist)
 MIN_STOCK_BOOK = None             # e.g. 0.5: a stock book whose sized gross is below this is scaled up to it across the names that passed
                                   # the entry bar, per-name cap still applies (user 2026-09-15: be more aggressive when few names qualify)
-IDLE_SLEEVE = None                # e.g. "SOXX": the part of equity the stock book leaves idle goes into this ETF (IDLE_SLEEVE_FRACTION of
-IDLE_SLEEVE_FRACTION = 1.0        # it) while the ETF closed above its IDLE_SLEEVE_TREND-day average (None = always); scaled with the
-IDLE_SLEEVE_TREND = 50            # vol target like the book. None = off
+IDLE_SLEEVE = "SOXX"              # the part of equity the stock book leaves idle goes into this ETF (IDLE_SLEEVE_FRACTION of it) while
+IDLE_SLEEVE_FRACTION = 1.0        # the ETF closed above its IDLE_SLEEVE_TREND-day average (None = always); scaled with the vol target
+IDLE_SLEEVE_TREND = 50            # like the book. None = off. User 2026-09-15 ("15% invested leaves money idle"); round 29, 500 days:
+                                  # +1152% / Sharpe 2.26 / DD 31.8% vs +895% / 2.14 / 31.1%, 2026-05 on +19.7% vs +0.9%
 HEDGE_SYMBOL = "SOXX"             # optional regime hedge (round 18, 2026-09-11): while SOXX closes below its 50-day average, short SOXX by
 HEDGE_SIZE = None                 # HEDGE_SIZE x equity (capped at the long book, never net short). OFF: with the long-gross cap applied
 HEDGE_LOOKBACK = 50               # correctly it is a drawdown reducer, not a return source (150 names, daily refits: +731% / 1.78 / OOS 1.88

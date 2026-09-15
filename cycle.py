@@ -125,6 +125,12 @@ def open_refresh(universe, signals, today, betas, notes):
     for symbol, price in live.items():
         if symbol in row.index:
             row[symbol] = price
+    for symbol, level in market.index_levels([s for s in MACRO_EXTRA if s.startswith("^")]).items():   # VIX, 10y yield now
+        last_close = row.get(symbol)
+        if symbol in row.index and pd.notna(last_close) and last_close > 0 and abs(level / last_close - 1) <= 0.30:
+            row[symbol] = level
+        elif symbol in row.index:
+            log.warning("open refresh: %s level %.3f is not on the scale of its last close %s, kept the close", symbol, level, last_close)
     live_closes = base.copy()
     live_closes.loc[pd.Timestamp(today)] = row
     ctx = {"closes": live_closes, "today": today, "live_prices": live}
@@ -282,6 +288,15 @@ def main():
     ledger.save_shadow_targets(today, shadow_mode, shadow_convictions, shadow_targets, last_close,
                                config.VOL_TARGET, active=False)
     orders = portfolio.plan(target_usd, positions, convictions, universe, equity, buying_power)
+    if config.IDLE_SLEEVE:
+        sleeve_usd = portfolio.sleeve_target(target_usd, equity, closes, realized)
+        sleeve_orders = portfolio.plan_sleeve(sleeve_usd, positions)
+        if config.IDLE_SLEEVE in closes.columns and closes[config.IDLE_SLEEVE].dropna().size:
+            last_close.setdefault(config.IDLE_SLEEVE, float(closes[config.IDLE_SLEEVE].dropna().iloc[-1]))   # trade record price
+        notes.append(f"idle sleeve {config.IDLE_SLEEVE}: target ${sleeve_usd:,.0f}"
+                     + ("" if sleeve_usd else " (off: below its trend average or no idle equity)"))
+        orders = ([o for o in orders if o["side"] == "SELL"] + [o for o in sleeve_orders if o["side"] == "SELL"]
+                  + [o for o in orders if o["side"] == "BUY"] + [o for o in sleeve_orders if o["side"] == "BUY"])
     log.info("equity $%.0f cash $%.0f buying power $%.0f positions %d targets %d orders %d",
              equity, cash, buying_power, len(positions), len(target_usd), len(orders))
 
@@ -299,7 +314,7 @@ def main():
                 broker.buy(t, round(o["notional"] / slices, 2), coid + "-1", dry_run=dry)
                 size = o["notional"]
             elif o["notional"] is None:
-                broker.close(t, dry_run=dry)
+                broker.close(t, client_order_id=coid + "-1", dry_run=dry)
                 size = float(positions[t].market_value) if t in positions else None
             else:
                 broker.sell(t, round(o["notional"] / slices, 2), coid + "-1", dry_run=dry)

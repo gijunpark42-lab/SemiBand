@@ -83,3 +83,37 @@ def plan(target_usd, positions, convictions, universe, equity, buying_power):
     elif budget <= 0:
         buys = []
     return sells + buys
+
+
+def sleeve_target(target_usd, equity, closes, realized_vol=None):
+    """Dollars for config.IDLE_SLEEVE: IDLE_SLEEVE_FRACTION of the equity the stock book leaves idle, while the ETF closed
+    above its IDLE_SLEEVE_TREND-day average (the backtest's rule), scaled with the vol target like the book. 0.0 when off."""
+    etf = config.IDLE_SLEEVE
+    if not etf or equity <= 0 or etf not in closes.columns or (config.HEDGE_SIZE and config.HEDGE_SYMBOL == etf):
+        return 0.0
+    c = closes[etf].dropna()
+    n = config.IDLE_SLEEVE_TREND
+    if n and (len(c) < n or float(c.iloc[-1]) <= float(c.iloc[-n:].mean())):
+        return 0.0
+    idle = max(0.0, 1.0 - sum(target_usd.values()) / equity)
+    scale = min(1.0, config.VOL_TARGET / realized_vol) if (config.VOL_TARGET and realized_vol and realized_vol > config.VOL_TARGET) else 1.0
+    usd = config.IDLE_SLEEVE_FRACTION * idle * scale * equity
+    return round(usd, 2) if usd >= config.MIN_ORDER_USD else 0.0
+
+
+def plan_sleeve(target, positions):
+    """The order that moves the config.IDLE_SLEEVE position to `target` dollars, with the stocks' rebalance band; [] if none."""
+    etf = config.IDLE_SLEEVE
+    if not etf:
+        return []
+    held = float(positions[etf].market_value) if etf in positions else 0.0
+    if target <= 0:
+        return [{"ticker": etf, "side": "SELL", "notional": None, "tag": "idle sleeve off"}] if held > 0 else []
+    diff = target - held
+    if held > 0 and abs(diff) < config.REBALANCE_BAND * target:
+        return []
+    if diff >= config.MIN_ORDER_USD:
+        return [{"ticker": etf, "side": "BUY", "notional": round(diff, 2), "tag": "idle sleeve"}]
+    if diff <= -config.MIN_ORDER_USD:
+        return [{"ticker": etf, "side": "SELL", "notional": round(-diff, 2), "tag": "idle sleeve trim"}]
+    return []

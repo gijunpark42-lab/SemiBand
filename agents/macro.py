@@ -38,7 +38,8 @@ def regime(closes: pd.DataFrame) -> tuple[float, str]:
         why.append(f"VIX {v:.0f}")
     tnx = closes["^TNX"].dropna()
     if len(tnx) > 21:
-        d = float(tnx.iloc[-1] - tnx.iloc[-21]) / 10  # ^TNX is yield x 10
+        d = float(tnx.iloc[-1] - tnx.iloc[-21])   # percentage points: Yahoo's ^TNX history is the yield in percent (2026-09-15: 4.961);
+                                                   # the old "/ 10" assumed yield x 10, so this rule could never fire
         if d > 0.30:
             score -= 0.2
             why.append(f"10y +{d:.2f}pt/20d")

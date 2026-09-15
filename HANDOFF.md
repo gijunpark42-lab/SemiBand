@@ -296,3 +296,4 @@ touched since, `git status`, the tail of `RESEARCH.md`, and `state/run_daily.log
   (the SHEL sell is no longer foreign). Also: the open refresh now takes today's ^VIX and ^TNX levels from yfinance, and the
   fundamentals re-pricing covers trailing P/E and market cap as well. User request logged for a research round: agents that
   improve themselves recursively, with the stacking learner still adjusting their weights.
+- 2026-09-15 02:40 PT: macro 10-year-yield unit fix adopted (replay _sz5 vs _sz1: max DD 31.8% to 29.4%, return unchanged, paired t +0.01); RESEARCH.md round 29 addendum. Review partner and audit agent still running.

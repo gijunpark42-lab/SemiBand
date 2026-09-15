@@ -892,3 +892,14 @@ Reading:
 
 Caveats: the gain is not statistically significant (t = +1.20) and concentrated in one regime; SOXX is also the benchmark,
 so a sleeve-heavy book tracks SOXX by design; the replay trades the sleeve at the open like the stocks.
+
+Addendum 2026-09-15 02:40 PT — macro 10-year-yield unit fix (`agents/macro.py`). Yahoo's ^TNX history is the yield in
+percent (4.961 on 2026-09-14), but the rule divided the 20-day change by 10, so its ±0.30-point thresholds never fired. Replay
+`_sz5` (the adopted round-29 setup plus the fix) against `_sz1`:
+
+| Run | Return | Sharpe | Max DD | OOS Sharpe | IS Sharpe | At 30 bps |
+|---|---|---|---|---|---|---|
+| `_sz1` yield rule silent | +1152% | 2.26 | 31.8% | 2.22 | 2.33 | +713% / 1.87 |
+| **`_sz5` yield rule fixed (adopted)** | +1158% | 2.27 | 29.4% | 2.23 | 2.35 | +722% / 1.89 |
+
+Paired daily difference +0.02 bps/day, t = +0.01. Adopted as a correctness fix: return unchanged, drawdown 2.4 points lower.

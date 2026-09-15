@@ -215,5 +215,17 @@ class ForeignOrderGuard(unittest.TestCase):
         self.assertEqual(sent[0].symbol, "SHEL")
 
 
+class MacroYields(unittest.TestCase):
+    def test_ten_year_rule_reads_the_yield_in_percent(self):
+        import numpy as np
+        from agents import macro
+        idx = pd.bdate_range("2025-09-01", periods=260)
+        closes = pd.DataFrame({"SOXX": np.linspace(400, 500, 260), "SPY": np.linspace(600, 700, 260), "^VIX": [20.0] * 260,
+                               "^TNX": [4.0] * 239 + list(np.linspace(4.0, 4.5, 21))}, index=idx)
+        with patch.object(macro.market, "fred_latest", return_value=None):
+            _, why = macro.regime(closes)
+        self.assertIn("10y +0.50pt/20d", why)                        # the old "/ 10" made this +0.05 and the rule silent
+
+
 if __name__ == "__main__":
     unittest.main()

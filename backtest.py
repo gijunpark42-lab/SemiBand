@@ -234,19 +234,22 @@ def publish_progress(payload):
         log.warning("progress publish failed: %s", exc)
 
 
-def long_short_weights(convictions, betas, n, leg):
-    """Market-neutral weights (round 33): the top n convictions long at leg/n each, the bottom n short, the short leg
-    resized (bounded 0.5-2x) so the book's beta is about zero. Fewer than two names -> no book. -> {ticker: weight}"""
-    ranked = sorted(convictions, key=lambda tk: convictions[tk])
+def long_short_weights(convictions, betas, n, gross):
+    """Market-neutral weights (round 33): the top n convictions long and the bottom n short, equal weight within each
+    leg. The book's gross is `gross`, split so the legs' betas cancel: long gross/(1+r), short gross*r/(1+r), with
+    r = mean long beta / mean short beta bounded 0.5-2. Non-finite convictions are ignored; fewer than two names -> no
+    book. -> {ticker: weight}"""
+    finite = {tk: c for tk, c in convictions.items() if math.isfinite(c)}
+    ranked = sorted(finite, key=lambda tk: finite[tk])
     k = min(n, len(ranked) // 2)
     if k == 0:
         return {}
     longs, shorts = ranked[-k:], ranked[:k]
-    w = {tk: leg / k for tk in longs}
-    beta_long = sum(leg / k * betas.get(tk, 1.0) for tk in longs)
-    beta_short = sum(leg / k * betas.get(tk, 1.0) for tk in shorts)
-    ratio = min(2.0, max(0.5, beta_long / beta_short)) if beta_short > 0 else 1.0
-    w.update({tk: -leg / k * ratio for tk in shorts})
+    beta_long = sum(betas.get(tk, 1.0) for tk in longs) / k
+    beta_short = sum(betas.get(tk, 1.0) for tk in shorts) / k
+    r = min(2.0, max(0.5, beta_long / beta_short)) if beta_short > 0 else 1.0
+    w = {tk: gross / (1 + r) / k for tk in longs}
+    w.update({tk: -gross * r / (1 + r) / k for tk in shorts})
     return w
 
 
@@ -472,9 +475,9 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
         realized = (float(np.std([c["ret"] for c in curve[-config.VOL_LOOKBACK_DAYS:]])) * math.sqrt(252)
                     if config.VOL_TARGET and len(curve) >= config.VOL_LOOKBACK_DAYS else None)
         long_short = run_info.get("long_short")
-        if long_short:   # market-neutral book (round 33): each leg GROSS_TARGET / 2, scaled by the vol target like the live book
+        if long_short:   # market-neutral book (round 33): gross GROSS_TARGET split so the legs' betas cancel, under the vol target
             scale = min(1.0, config.VOL_TARGET / realized) if (config.VOL_TARGET and realized and realized > config.VOL_TARGET) else 1.0
-            w = long_short_weights(traded, prediction_betas, long_short, config.GROSS_TARGET / 2 * scale)
+            w = long_short_weights(traded, prediction_betas, long_short, config.GROSS_TARGET * scale)
         else:
             targets = portfolio.targets(traded, config.CAPITAL, realized_vol=realized)   # dollars, same rules as live
             w = {tk: v / config.CAPITAL for tk, v in targets.items()}   # -> weights
@@ -498,6 +501,8 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
             c0, c1 = P[i + shift, j], P[i + 1 + shift, j]
             return None if (np.isnan(c0) or np.isnan(c1) or c0 <= 0) else float(c1 / c0) - 1
         ret = sum(w_i * r for tk, w_i in w.items() if (r := day_ret(tk)) is not None)
+        leg_ret = {side: sum(w_i * r for tk, w_i in w.items() if (w_i > 0) == (side == "long") and w_i != 0
+                             and not tk.startswith("__") and (r := day_ret(tk)) is not None) for side in ("long", "short")}
         ret -= abs(w.get("__HEDGE__", 0.0)) * 0.0002          # ~5%/yr borrow drag on the short side (as in sweep.py)
         ret -= sum(-x for tk, x in w.items() if x < 0 and not tk.startswith("__")) * 0.0002   # the same borrow drag on short stocks
         ret -= turnover * config.COST_BPS / 10_000
@@ -513,6 +518,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
                       "held": sorted(tk for tk in w if not tk.startswith("__")),
                       "ic_learned": day_ic[0], "ic_prior": day_ic[1],
                       "net": round(sum(w.values()), 3), "short": round(sum(-x for x in w.values() if x < 0), 3),
+                      "ret_long": leg_ret["long"], "ret_short": leg_ret["short"],
                       "sleeve": round(w.get("__SLEEVE__", 0.0), 3),
                       "ret": ret, "turnover": turnover,
                       "soxx": float(px[config.BENCHMARK].iloc[i + 1 + shift] / px[config.BENCHMARK].iloc[base]),
@@ -625,7 +631,7 @@ if __name__ == "__main__":
     p.add_argument("--refresh-agents", default=None, help="with --open-refresh: comma list of the agents that see the open row (default: config.OPEN_REFRESH_AGENTS, as live), e.g. technical,risk,macro,fundamentals,events")
     p.add_argument("--learn-preopen", action="store_true", help="with --open-refresh: trade on the refreshed signals but record and learn from the signals computed before the open (hybrid)")
     p.add_argument("--prior-only", action="store_true", help="trade on the equal-weight prior blend instead of the fitted weights (learner ablation); the learner is still fit daily and both ICs are recorded per day")
-    p.add_argument("--long-short", type=int, default=None, help="market-neutral book (round 33): long the top N and short the bottom N convictions, each leg GROSS_TARGET/2 under the vol target, short leg beta-matched, 2 bps/day borrow, no sleeve")
+    p.add_argument("--long-short", type=int, default=None, help="market-neutral book (round 33): long the top N and short the bottom N convictions, gross GROSS_TARGET under the vol target split so the legs' betas cancel, 2 bps/day borrow, no sleeve")
     p.add_argument("--position-cap", type=float, default=None, help="override MAX_POSITION_PCT, e.g. 0.30")
     p.add_argument("--min-book", type=float, default=None, help="override MIN_STOCK_BOOK, e.g. 0.5")
     p.add_argument("--idle-sleeve", default=None, help="ETF for idle equity, SOXX or SPY (sets IDLE_SLEEVE)")

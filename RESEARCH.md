@@ -1208,3 +1208,21 @@ This round does not change what the learner learns from. Predictions for all 150
 - **If it passes:** live support for shorts is built and applied from the next cycle, and the user is told the measured numbers. That support means portfolio sizing, Alpaca shortability and borrow checks, guards, tests and partner review.
 - **If it fails:** live stays long-only. No N tuning after the results.
 - Either way this round adds two trials to the count.
+
+**Round 33 amendment (07:45 PT, before any result).**
+
+**The error in the first code.** The review partner found that the first implementation (`f359677`) did not keep the pre-registered gross. It sized each leg at 0.75 of equity and then resized the short leg by the beta ratio. Gross could therefore range from 1.13 to 2.25, and the book could run net short in dollars, so a pass could have been leverage.
+
+**The correction**, made to the stated design before any result was seen:
+- The book's gross is `GROSS_TARGET` × vol scale, split so the legs' betas cancel: long G/(1+r), short G·r/(1+r).
+- Non-finite convictions are ignored.
+- Each curve day records the long and short legs' returns.
+
+The two runs started under the first code were stopped unread. They are replaced by `_mn1b` (N = 10, decides) and `_mn2b` (N = 15, robustness).
+
+**Stricter conditions.** These were added before any result. A pass must meet the original five conditions plus:
+
+6. The book's realised SOXX beta is within ±0.25 in both halves, before and after 2025-09-24. A pass with material beta is a beta bet, not a market-neutral result.
+7. Before any live adoption, a confirmation run must also beat the live setup on return and Sharpe. That run restricts shorts to names Alpaca flags shortable and easy-to-borrow today, and charges 10 bps/day borrow on the smaller half of the universe by market cap. This is a proxy, not point-in-time, and it is run only if conditions 1–6 pass.
+
+**Also reported:** the short leg's own beta-adjusted return per unit of short exposure. This is the clean test of whether the short signal adds anything, separate from the live comparison, which mostly measures beta in a +145% SOXX window.

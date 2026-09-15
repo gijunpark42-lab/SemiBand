@@ -45,19 +45,23 @@ class RefreshFlags(unittest.TestCase):
 
 
 class LongShortWeights(unittest.TestCase):
-    def test_top_long_bottom_short_with_the_short_leg_beta_matched(self):
+    def test_top_long_bottom_short_beta_matched_within_the_gross(self):
         conv = {"A": 0.3, "B": 0.1, "C": -0.1, "D": -0.4}
         betas = {"A": 1.5, "B": 1.5, "C": 1.0, "D": 1.0}
-        w = backtest.long_short_weights(conv, betas, 1, 0.75)
+        w = backtest.long_short_weights(conv, betas, 1, 1.5)
         self.assertEqual(sorted(w), ["A", "D"])
-        self.assertAlmostEqual(w["A"], 0.75)
-        self.assertAlmostEqual(w["D"], -0.75 * 1.5)                     # the low-beta short is scaled up to offset the long
+        self.assertAlmostEqual(w["A"], 0.6)                               # gross / (1 + r) with r = 1.5
+        self.assertAlmostEqual(w["D"], -0.9)                              # the low-beta short leg is the larger one
+        self.assertAlmostEqual(sum(abs(x) for x in w.values()), 1.5)      # gross never exceeds the target
         self.assertAlmostEqual(sum(x * betas[t] for t, x in w.items()), 0.0)
 
-    def test_the_beta_ratio_is_bounded_and_a_one_name_universe_holds_nothing(self):
+    def test_the_beta_ratio_is_bounded_and_bad_or_tiny_inputs_are_handled(self):
         w = backtest.long_short_weights({"A": 0.2, "B": -0.2}, {"A": 5.0, "B": 0.5}, 1, 1.0)
-        self.assertAlmostEqual(w["B"], -2.0)                              # capped at 2x
+        self.assertAlmostEqual(w["A"], 1 / 3)                             # r capped at 2
+        self.assertAlmostEqual(w["B"], -2 / 3)
         self.assertEqual(backtest.long_short_weights({"A": 0.2}, {}, 3, 1.0), {})
+        w = backtest.long_short_weights({"A": 0.2, "B": float("nan"), "C": -0.2}, {}, 1, 1.0)
+        self.assertEqual(sorted(w), ["A", "C"])                           # a non-finite conviction is ignored
 
 
 class PriceCacheRace(unittest.TestCase):

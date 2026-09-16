@@ -1353,3 +1353,28 @@ Live change: `IDLE_SLEEVE_TREND = 200`. SOXX, at 499.71, is 14.0% above its 200-
 QQQ is not in the replay's price set, so it appears only in the 25-year check.
 
 **Rule.** No automatic adoption: the user chooses the mandate. The recommendation I will give is fixed here: rank by Sharpe; prefer a lower-volatility vehicle only if its Sharpe is within 0.05 of the SOXX sleeve's and its max drawdown is at least 3 points lower. The replay assumes cash earns 0, which understates every cash-heavy variant by roughly 4–5% a year over this window; that is noted, not corrected. This round adds three trials to the count.
+
+### Round 35 results (2026-09-15 23:58 PT): keep SOXX as the idle vehicle
+
+470 common days, live flags, 200-day gate on every sleeve.
+
+| Run | Idle vehicle | Return | Sharpe | Max DD | Return at 30 bps | Mean sleeve | All-cash days | vs SOXX sleeve, bps/day (t) | OOS (t) |
+|---|---|---|---|---|---|---|---|---|---|
+| `_sl200` | SOXX (live) | +1123% | 2.23 | 28.3% | +702% | 0.14 | 6 | — | — |
+| `_sxh200` | SOXX, half the idle equity | +1024% | 2.24 | 28.2% | +643% | 0.07 | 6 | −2.3 (−0.89) | +0.1 (+1.01) |
+| `_mix200` | SOXX + SPY, half each | +1020% | 2.22 | 30.6% | +631% | 0.15 | 2 | −2.3 (−0.98) | −1.3 (−2.01) |
+| `_sl0` | cash | +911% | 2.17 | 28.0% | +574% | 0.00 | 31 | −4.7 (−0.90) | +0.2 (+1.01) |
+| `_sp200` | SPY | +908% | 2.16 | 32.9% | +555% | 0.16 | 2 | −4.7 (−0.99) | −2.6 (−2.01) |
+
+**Decision by the pre-registered rule: keep SOXX.** No lower-volatility vehicle has both a Sharpe within 0.05 of the SOXX sleeve's and a max drawdown at least 3 points lower. The half-SOXX sleeve matches on Sharpe (2.24) but lowers the drawdown by only 0.1 point at a cost of 99 points of return.
+
+**Reading.**
+- The 25-year ETF check and the strategy replay disagree on drawdown, and the replay is the pre-registered evidence. Over 25 years a SOXX+broad-index mix cut the sleeve's own drawdown by a third; inside the strategy, over 2024–26, the mix and the SPY sleeve had *higher* drawdowns (30.6% and 32.9% against 28.3%).
+- The reason is gate timing. In the April 2025 semiconductor crash SOXX fell through its 200-day average before SPY did, so the SOXX sleeve was out while a SPY-gated sleeve was still invested. For a semiconductor book, the semiconductor index's own trend is the better exit signal for its idle money.
+- Out of sample the mix lost 1.3 bps/day to the SOXX sleeve (t −2.0), the one statistically clear difference in the table.
+- Sleeve off costs about 200 points of return over the window at a similar Sharpe (2.17 against 2.23), which restates round 34.
+- Caveat, as before: the window holds one bull market and one sharp crash, and cash earns 0 in the replay.
+
+**Follow-ups.**
+- The multi-ETF sleeve code written for this round stays unapplied (`tmp/patch_round35b.py`); a future mix would need its own pre-registered test.
+- One part of that patch is a live bug fix independent of the vehicle: `plan()` counts a sleeve sale made in the same cycle toward the stock book's buy budget, so a re-entry day is not capped by a sleeve about to be sold (audit item; material now that the sleeve is about 100% of equity). It goes to the branch with a test and a review, and live after a rehearsal.

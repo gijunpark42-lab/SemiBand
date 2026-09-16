@@ -150,7 +150,7 @@ class IdleSleeve(unittest.TestCase):
     def patches(self, **extra):
         import config
         values = {"IDLE_SLEEVE": "SOXX", "IDLE_SLEEVE_FRACTION": 1.0, "IDLE_SLEEVE_TREND": 50, "VOL_TARGET": 0.50,
-                  "HEDGE_SIZE": None, "MIN_ORDER_USD": 250, "REBALANCE_BAND": 0.30}
+                  "HEDGE_SIZE": None, "MIN_ORDER_USD": 250, "REBALANCE_BAND": 0.30, "GROSS_TARGET": 1.5}
         values.update(extra)
         return [patch.object(config, k, v) for k, v in values.items()]
 
@@ -191,6 +191,20 @@ class IdleSleeve(unittest.TestCase):
                          [{"ticker": "SOXX", "side": "SELL", "notional": None, "tag": "idle sleeve off"}])
         self.assertEqual(self.run_with(lambda: portfolio.plan_sleeve(300_000, {"SOXX": Pos(800_000)})),
                          [{"ticker": "SOXX", "side": "SELL", "notional": 500_000, "tag": "idle sleeve trim"}])
+
+    def test_a_sleeve_sold_in_the_same_cycle_frees_the_stock_buy_budget(self):
+        import portfolio
+
+        class Pos:
+            def __init__(self, mv):
+                self.market_value = str(mv)
+        # re-entry day: the model wants $600k of stock A while a $1.0M sleeve is still held (about to be sold)
+        args = ({"A": 600_000.0}, {"SOXX": Pos(1_000_000)}, {"A": 0.5}, {"A": "Alpha"}, 1_000_000, 1_000_000)
+        capped = self.run_with(lambda: portfolio.plan(*args))
+        self.assertEqual(capped[0]["notional"], 500_000)                       # room to the 1.5x ceiling with the sleeve still counted
+        freed = self.run_with(lambda: portfolio.plan(*args, extra_proceeds=1_000_000))
+        self.assertEqual(freed[0]["notional"], 600_000)                        # the sleeve sale in the same cycle frees the room
+        self.assertEqual(self.run_with(lambda: portfolio.plan(*args, extra_proceeds=-5.0))[0]["notional"], 500_000)   # never negative
 
 
 class ForeignOrderGuard(unittest.TestCase):

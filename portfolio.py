@@ -34,11 +34,13 @@ def targets(convictions, equity, realized_vol=None):
     return {t: round(w * equity, 2) for t, w in weights.items() if w * equity >= config.MIN_ORDER_USD}
 
 
-def plan(target_usd, positions, convictions, universe, equity, buying_power):
+def plan(target_usd, positions, convictions, universe, equity, buying_power, extra_proceeds=0.0):
     """-> list of {ticker, side, notional|None(close), reason_tag}. Sells first, then buys.
 
     positions = {symbol: alpaca Position}. Holdings outside the universe are
     left alone (they should not exist after the fresh-start liquidation).
+    extra_proceeds: dollars the same cycle sells outside the universe before the buys (the idle sleeve), so a
+    re-entry day is not capped by a sleeve that is about to be sold (audit 2026-09-15).
     """
     held = {s: float(p.market_value) for s, p in positions.items() if s in universe}
     held_total = sum(float(p.market_value) for p in positions.values())
@@ -70,7 +72,7 @@ def plan(target_usd, positions, convictions, universe, equity, buying_power):
 
     # Budget for buys: stay within GROSS_TARGET x equity after the sells, and
     # within what the broker will actually lend (buying power + proceeds).
-    proceeds = sum((held[o["ticker"]] if o["notional"] is None else o["notional"]) for o in sells)
+    proceeds = sum((held[o["ticker"]] if o["notional"] is None else o["notional"]) for o in sells) + max(extra_proceeds, 0.0)
     room_to_gross = equity * config.GROSS_TARGET - (held_total - proceeds)
     budget = max(0.0, min(room_to_gross, max(buying_power, 0.0) + proceeds))
     want = sum(o["notional"] for o in buys)

@@ -304,7 +304,7 @@ def main():
                                config.VOL_TARGET, active=True)
     ledger.save_shadow_targets(today, shadow_mode, shadow_convictions, shadow_targets, last_close,
                                config.VOL_TARGET, active=False)
-    orders = portfolio.plan(target_usd, positions, convictions, universe, equity, buying_power)
+    sleeve_orders, sleeve_proceeds = [], 0.0
     if config.IDLE_SLEEVE:
         sleeve_usd = portfolio.sleeve_target(target_usd, equity, closes, realized)
         sleeve_orders = [] if sleeve_usd is None else portfolio.plan_sleeve(sleeve_usd, positions)
@@ -315,6 +315,12 @@ def main():
             last_close.setdefault(config.IDLE_SLEEVE, float(closes[config.IDLE_SLEEVE].dropna().iloc[-1]))   # trade record price
         notes.append(f"idle sleeve {config.IDLE_SLEEVE}: target ${sleeve_usd:,.0f}"
                      + ("" if sleeve_usd else " (off: below its trend average or no idle equity)"))
+        # a sleeve sale goes out with the other sells, before the buys: count it in the stock book's buy budget, so a
+        # re-entry day is not capped by a sleeve about to be sold (audit 2026-09-15; the sleeve can be ~100% of equity)
+        sleeve_proceeds = sum((float(positions[o["ticker"]].market_value) if o["notional"] is None else o["notional"])
+                              for o in sleeve_orders if o["side"] == "SELL" and (o["notional"] is not None or o["ticker"] in positions))
+    orders = portfolio.plan(target_usd, positions, convictions, universe, equity, buying_power, extra_proceeds=sleeve_proceeds)
+    if sleeve_orders:
         orders = ([o for o in orders if o["side"] == "SELL"] + [o for o in sleeve_orders if o["side"] == "SELL"]
                   + [o for o in orders if o["side"] == "BUY"] + [o for o in sleeve_orders if o["side"] == "BUY"])
     log.info("equity $%.0f cash $%.0f buying power $%.0f positions %d targets %d orders %d",

@@ -418,7 +418,8 @@ def main():
         notes.append(f"estimated trading cost this cycle ${sum(d['est_cost_usd'] for d in done):,.0f} "
                      f"({config.COST_BPS} bps per order; commission $0)")
     ledger.add_cycle(today, equity, cash, len(positions), len(done), "; ".join(notes))
-    ranked = sorted(convictions.items(), key=lambda kv: -abs(kv[1]))
+    ranked = sorted(convictions.items(), key=lambda kv: -kv[1])       # best longs first: with demeaned convictions about half are
+                                                                       # negative, and |conv| would rank the most-avoided names on top
 
     # Decision records: for every order, exactly how the number was reached.
     decisions = []

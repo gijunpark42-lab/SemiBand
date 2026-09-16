@@ -166,7 +166,7 @@ def rank_order(conv, conv_rank):
 def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mode="close", agents=None, end=None,
         open_refresh=False, label_open=False, label_next_close=False, refresh_agents=None, learn_preopen=False,
         prior_only=False, long_short=None, sleeve_mix=None, rank_order_mode=False, target_clip_sigma=None,
-        intercept=None, drop_dir=(), demean=False):
+        intercept=None, drop_dir=(), demean=None):
     """tag: suffix for the output files (state/backtest<tag>.sqlite / backtest_report<tag>.json)
     so a long build can run while sweeps read the default files.
     exec_mode: 'close' = trade at the close the signals were computed on (optimistic);
@@ -204,7 +204,8 @@ def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mod
                 "refresh_agents": list(refresh_agents) if refresh_agents is not None else None, "learn_preopen": learn_preopen,
                 "prior_only": prior_only, "long_short": long_short, "sleeve_mix": list(sleeve_mix) if sleeve_mix else None,
                 "rank_order": rank_order_mode, "target_clip_sigma": target_clip_sigma,
-                "intercept": intercept, "drop_dir": list(drop_dir), "demean": demean,
+                "intercept": intercept, "drop_dir": list(drop_dir),
+                "demean": bool(config.DEMEAN_CONVICTION) if demean is None else bool(demean),   # None = as the live cycle
                 "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     publish_progress(dict(run_info, status="loading", pct=0.0, message="downloading prices and earnings"))
     try:
@@ -583,7 +584,8 @@ if __name__ == "__main__":
     p.add_argument("--target-clip-sigma", type=float, default=None, help="round 37 control: clip the return target at +/- k sigma per horizon instead of the +/-15%% winsor")
     p.add_argument("--intercept", choices=("in", "fit_only"), default=None, help="round 38: fit an unpenalised intercept; in = added to convictions, fit_only = recorded only")
     p.add_argument("--drop-dir", default="", help="round 38: comma list of agents whose direction-only feature is dropped at fit time, e.g. supply_chain,neighbors")
-    p.add_argument("--demean", action="store_true", help="round 38 reference: subtract the day's cross-sectional mean conviction before sizing (as DEMEAN_CONVICTION live)")
+    p.add_argument("--demean", action=argparse.BooleanOptionalAction, default=None,
+                   help="subtract the day's cross-sectional mean conviction before sizing; default follows config.DEMEAN_CONVICTION (True since 2026-09-16, round 38); --no-demean = the raw control")
     p.add_argument("--prior-only", action="store_true", help="trade on the equal-weight prior blend instead of the fitted weights (learner ablation); the learner is still fit daily and both ICs are recorded per day")
     p.add_argument("--long-short", type=int, default=None, help="market-neutral book (round 33): long the top N and short the bottom N convictions, gross GROSS_TARGET under the vol target split so the legs' betas cancel, 2 bps/day borrow, no sleeve")
     p.add_argument("--position-cap", type=float, default=None, help="override MAX_POSITION_PCT, e.g. 0.30")

@@ -121,3 +121,11 @@ def plan_sleeve(target, positions):
     if diff <= -config.MIN_ORDER_USD:
         return [{"ticker": etf, "side": "SELL", "notional": round(-diff, 2), "tag": "idle sleeve trim"}]
     return []
+
+
+def without_sleeve_proceeds(order, fallback_buys):
+    """A stock BUY after the sleeve's sale failed at the broker: the same order resized to the budget that did not count the
+    sleeve's proceeds (fallback_buys = {ticker: notional} from plan() without extra_proceeds); None = no room for it there."""
+    if order["ticker"] not in fallback_buys:
+        return None
+    return dict(order, notional=fallback_buys[order["ticker"]], tag=order["tag"] + " (sleeve sale failed: budget without its proceeds)")

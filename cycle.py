@@ -320,6 +320,10 @@ def main():
         sleeve_proceeds = sum((float(positions[o["ticker"]].market_value) if o["notional"] is None else o["notional"])
                               for o in sleeve_orders if o["side"] == "SELL" and (o["notional"] is not None or o["ticker"] in positions))
     orders = portfolio.plan(target_usd, positions, convictions, universe, equity, buying_power, extra_proceeds=sleeve_proceeds)
+    fallback_buys = {}                # the buys sized without the sleeve's proceeds, used only if its sale fails at the broker
+    if sleeve_proceeds > 0:
+        fallback_buys = {o["ticker"]: o["notional"] for o in portfolio.plan(target_usd, positions, convictions, universe, equity, buying_power)
+                         if o["side"] == "BUY"}
     if sleeve_orders:
         orders = ([o for o in orders if o["side"] == "SELL"] + [o for o in sleeve_orders if o["side"] == "SELL"]
                   + [o for o in orders if o["side"] == "BUY"] + [o for o in sleeve_orders if o["side"] == "BUY"])
@@ -331,8 +335,14 @@ def main():
     # dashboard is published) so we do not pay the whole opening spread at once.
     slices = 1 if dry else max(1, config.EXECUTION_SLICES)
     done, later = [], []
+    sleeve_sell_failed = False
     for o in orders:
         t = o["ticker"]
+        if o["side"] == "BUY" and sleeve_sell_failed and t in universe:   # never hold the sleeve AND the buys sized on its sale
+            o = portfolio.without_sleeve_proceeds(o, fallback_buys)
+            if o is None:
+                notes.append(f"order BUY {t} skipped: the sleeve sale failed and the budget without it has no room")
+                continue
         reason = reason_line(convictions.get(t, 0.0), breakdown.get(t, {})) + f" | {o['tag']}"
         coid = f"{config.ORDER_PREFIX}{today}-{t}-{o['side'].lower()}"
         try:
@@ -348,6 +358,7 @@ def main():
         except Exception as exc:
             log.error("order %s %s failed: %s", o["side"], t, exc)
             notes.append(f"order {o['side']} {t} failed: {exc}")
+            sleeve_sell_failed |= o["side"] == "SELL" and t == config.IDLE_SLEEVE
             continue
         if o["notional"] is not None and slices > 1:
             later.append((t, o["side"], round(o["notional"] / slices, 2), coid))

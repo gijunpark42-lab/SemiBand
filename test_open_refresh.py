@@ -206,6 +206,20 @@ class IdleSleeve(unittest.TestCase):
         self.assertEqual(freed[0]["notional"], 600_000)                        # the sleeve sale in the same cycle frees the room
         self.assertEqual(self.run_with(lambda: portfolio.plan(*args, extra_proceeds=-5.0))[0]["notional"], 500_000)   # never negative
 
+    def test_a_failed_sleeve_sale_resizes_the_buys_to_the_budget_without_it(self):
+        import portfolio
+
+        class Pos:
+            def __init__(self, mv):
+                self.market_value = str(mv)
+        args = ({"A": 600_000.0}, {"SOXX": Pos(1_000_000)}, {"A": 0.5}, {"A": "Alpha"}, 1_000_000, 1_000_000)
+        fallback = {o["ticker"]: o["notional"] for o in self.run_with(lambda: portfolio.plan(*args)) if o["side"] == "BUY"}
+        full = self.run_with(lambda: portfolio.plan(*args, extra_proceeds=1_000_000))[0]
+        resized = portfolio.without_sleeve_proceeds(full, fallback)
+        self.assertEqual((full["notional"], resized["notional"]), (600_000, 500_000))
+        self.assertIn("sleeve sale failed", resized["tag"])
+        self.assertIsNone(portfolio.without_sleeve_proceeds(full, {}))            # no room without the sleeve: skip the buy
+
 
 class ForeignOrderGuard(unittest.TestCase):
     def test_our_orders_are_recognised_by_prefix_or_ledger_and_others_are_foreign(self):

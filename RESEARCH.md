@@ -1488,3 +1488,35 @@ The rank model's daily 10-day IC was 0.0234 against the return model's 0.0257 on
 **Reading.** Fitting on per-date ranks did not order names better; with the sizing held fixed by construction it lowered the top-15 rank book from +792% to +575% and turned the book over faster (0.41 against 0.36). Whatever the learner's edge at the top of the ranking is, the return magnitudes it fits on carry information the ranks discard.
 
 **Two records.** (1) Condition 1's cross-run check (per-date `ic_learned` / `ic_prior` identical to the baseline) did not hold, because `_sl200` ran on the 2026-09-15 price download and both round 37 runs on the 2026-09-16 one; the within-run multiset assertion held on every day, and the price difference cannot account for a gap of this size. A same-day baseline is the right comparator for any future run. (2) The sigma clip is applied after the ±15% winsor, so the control is "tighter than", not "instead of", the winsor.
+
+## 2026-09-16 — round 38, pre-registered before any replay: an explicit intercept for the stacking ridge
+
+**Why.** The graph agents' live rows (and the replay's since mid-2026) are almost always positive, and the learner's negative direction-only weights on them subtract about −0.1 from every conviction. The ridge has no intercept, so an always-positive feature acts as one. The review partner refitted the live dataset in memory (live ledger at 1.0, the `_sz5` warm start at 0.5, decay to 09-15, λ 150, beta target) four ways and applied each to the 09-15 rows:
+
+| Refit | Intercept 10d / 20d | Fit-level 10d / 20d | Graph share of the level | 09-15 mean conviction | Names ≥ 0.10 |
+|---|---|---|---|---|---|
+| base (live) | — | −0.063 / −0.080 | −0.044 / −0.056 (about 70%) | −0.092 | 0 |
+| a1: unpenalised intercept, in convictions | −0.076 / −0.124 | −0.104 / −0.149 | −0.019 / −0.016 | −0.102 | 0 |
+| a2: intercept fitted, excluded from convictions | same | — | — | −0.002 | 1 |
+| c: intercept, graph direction-only terms dropped | −0.094 / −0.144 | | ≈ 0 | +0.025 (excluded) | 3 |
+| b: base demeaned (`DEMEAN_CONVICTION`) | — | — | — | 0 by construction | 18 |
+
+Walk-forward IC (last 10 dates): base −0.078 / −0.054; a1 unchanged (a constant does not move a within-date Spearman); c −0.055 / −0.018.
+
+**Reading, fixed before the replays.** The decay-weighted target mean is −0.104 (10d) and −0.149 (20d) in conviction units: the average universe name has lagged beta × SOXX every month since April 2026 (10-day beta-abnormal: Apr −2.3%, May −3.0%, Jun −2.1%, Jul +0.1%, Aug −1.3%), and the model forecasts that to continue. That is why it holds cash and the sleeve holds SOXX. About a third of the graph agents' negative weights is that level in disguise; the rest survives an intercept. The fragility is the proxy: the level rides on a feature whose scale follows earnings-ai's ingestion profile (the Jul–Aug statement flood doubled it live). An explicit intercept keeps the feature and removes the fragility; it does not open today's book. Demeaning under the base model would buy about 18 graph-contrarian names, an artifact of the inflated direction weights, not "the same ranking with more exposure".
+
+**Diagnostics to run first (cheap, on the existing ledgers).** The intercept's time series by refit date on the warm start (does its sign follow the monthly means above?), and its correlation with the next 20 days' realised mean beta-abnormal return. Near-zero correlation would mean the level is a bias rather than a forecast, and a2 becomes the candidate.
+
+**Runs.** Live flags, one price cache, a same-day baseline.
+
+| Tag | Model | Role | Gate |
+|---|---|---|---|
+| `_i0` | live | same-day baseline | — |
+| `_i1` | a1: unpenalised intercept (constant feature, prior 0), added to convictions | robustness candidate | sized-book paired t ≥ −1 (non-inferiority); rank-book alpha t ≥ −0.5; the graph agents' share of the level near zero across refits |
+| `_i2` | a2: intercept fitted, excluded from convictions | exposure-off reference | Sharpe not lower, max DD ≤ baseline + 2 points, OOS paired ≥ 0; report names ≥ 0.10 per day and gross by month |
+| `_i3` | c: intercept, graph direction-only terms dropped | ordering candidate | round 32 yardstick (rank-book alpha t ≥ 1, same sign both halves) and sized-book paired ≥ 0 full and OOS |
+| `_i4` | b: `DEMEAN_CONVICTION` | exposure-off reference | as `_i2` |
+
+At most one adoptable. `_i1`'s adoption reason is robustness, not P&L; `_i2` or `_i4` would need the drawdown condition, and the expectation is that both fail it by holding stocks through Apr–Jun 2026. Live wiring only after the freeze and with a warm start that has no old-formula rows.
+
+**Implementation notes** (from the review): a per-column λ in `ridge()` with the intercept unpenalised; `NONNEG` leaves it unconstrained; the constant column appended in `dataset()` after loading so the source cache is untouched; `walk_forward_ic` and `agent_ic` handle the extra column; the model JSON gains `"intercept": {h: b}` with a missing key read as 0; `predict()` adds mix_h · b_h and reports it as a separate "level" in the breakdown; `predict(signals, None)` and `--prior-only` stay intercept-free; the dashboard shows intercept × scale as the expected beta-abnormal return of the average name (today about −0.6% per 10 days).

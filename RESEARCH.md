@@ -1459,3 +1459,14 @@ No gate reaches the pre-registered +0.30 Sharpe improvement in 2019–23; the tw
 5. The round 32 yardstick: the beta-adjusted alpha of (`_rk1` top-15 rank book − `_sl200` top-15 rank book) has t ≥ 1 with the same sign in both halves.
 
 **Control rule.** If `_cl1` delivers at least 80% of `_rk1`'s gain in the sized-book paired difference, the clip is adopted instead of the rank model. Two trials, at most one adoptable; adoption goes live only after the user is told and the live freeze has run, and needs its own live wiring (a second daily fit and the mapping in `cycle.convict`).
+
+### 2026-09-16 — reference: pre-backfill baselines from a separate session (earnings-ai backfill pre-work)
+
+A separate agent session prepared for the user's planned backfill of 2024-25 transcripts into earnings-ai (the graph's dated statements start 2025-10: 4,156 statements, none earlier, so the 2024-26 replays run almost entirely on the price stack). It left two baselines in state/ and a handoff; nothing was committed there. Placed against the round 31-35 baselines (469 common days, 5 bps):
+
+| Run | Flags | Return | Sharpe | Max DD | vs `_sl200` bps/day (t) |
+|---|---|---|---|---|---|
+| `_pre_backfill` | no refresh, signal-close label, 200-day sleeve | +1135% | 2.18 | 31.5% | +0.5 (+0.09) |
+| `_pre_backfill_live` | refresh + order-day-open label | +793% | 1.91 | 35.1% | −6.5 (−1.48) |
+
+The second run is the clean-label form (the same setting as `_g1`, +767%), not the live label; the live reference for any post-backfill comparison is `_sl200` (refresh, signal-close label, 200-day sleeve). The handoff also claims a look-ahead in the graph agents' replay path (`supply_chain.run` and `neighbors` reading today's exposure.json counts and `_heat` regardless of the simulated date; `--graph-asof` picking one snapshot for the whole run) that a backfill would inflate and saturate; the review partner is verifying it against `PointInTimeMap`. Order for Trading if the user backfills: verify or fix that path first, then backfill, then replay with `_sl200`'s flags and once more without the graph agents to isolate the effect. `llm_backtest` (a point-in-time test of `llm_guidance`) calls Claude and runs only with the user's go-ahead outside the cycle.

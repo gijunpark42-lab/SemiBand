@@ -1380,3 +1380,34 @@ QQQ is not in the replay's price set, so it appears only in the 25-year check.
 - One part of that patch is a live bug fix independent of the vehicle: `plan()` counts a sleeve sale made in the same cycle toward the stock book's buy budget, so a re-entry day is not capped by a sleeve about to be sold (audit item; material now that the sleeve is about 100% of equity). It goes to the branch with a test and a review, and live after a rehearsal.
 
 **Correction (review partner, 2026-09-16 00:20 PT).** The mechanism stated above is wrong in one respect. SPY's 200-day gate was also OFF through all of April 2025 (2025-03-10 to 05-12, briefly on 03-24/25). The difference between a SOXX-gated and a SPY-gated sleeve in the replay is that SOXX crossed first: its gate was OFF from 2025-02-21 while SPY's stayed ON until 03-10, about 12 sessions in which a SPY-gated sleeve stayed invested as semiconductors fell, plus SOXX's May whipsaw (ON 05-13, OFF 05-19, ON 06-03). The replay verdict therefore rests on one episode of about 12 sessions, not on a general property of the vehicles. The decision stands under the pre-registered rule; the record is corrected so the wrong mechanism is not carried forward.
+
+## 2026-09-16 — round 36, pre-registered before any result: an external regime identifier for the stock book
+
+**Why.** The strategy's one structural weakness is known since 2026-09-11: the price stack that made +1100% in 2024–26 lost money from 2019 to 2023 (−17%, Sharpe −0.14, max DD 43%). Round 21 showed that gates driven by the strategy's own P&L whipsaw in the bad years, and concluded that only something identifying the regime *ahead of time* could help. Nothing external has been tested. The user asked on 2026-09-16 for the most valuable improvements; this is the first.
+
+**What is screened.** Nine indicators, each known at close t, gating the stock book decided at that close (the SOXX sleeve keeps its own 200-day gate and is excluded from the screen):
+
+| Indicator | Risk-on when |
+|---|---|
+| breadth 200 | more than half the universe closes above its 200-day average |
+| breadth 50 | more than half above its 50-day average |
+| SOXX > 200d | SOXX above its 200-day average (the sleeve's rule, applied to stocks) |
+| SOXX/SPY RS | SOXX outperformed SPY over 60 sessions |
+| VIX | VIX below its 200-day average |
+| credit | HYG/IEF above its 200-day average |
+| rates | 10-year yield lower than 63 sessions ago |
+| SOXX vol | SOXX 20-day realised vol below its 1-year median |
+| breadth 200 & SOXX > 200d | both |
+
+Two modes each: stocks to cash (OFF) or halved (HALF). 18 trials.
+
+**Data.** The 2019–23 window is a fresh replay of the live setup restricted to the five price agents (`_pre2024b`: 1,200 days ending 2023-12-29, next-open, open refresh, SOXX 200-day sleeve). The 2024–26 window is `_sl200`. The screen gates the replay's daily stock-leg return offline; it ignores the vol target's reaction and learner effects, so a winner gets a real replay before anything else.
+
+**Selection rule, fixed now.** A gate passes only if, against the ungated stock legs:
+1. 2019–23 Sharpe improves by at least +0.30;
+2. 2024–26 total return stays at or above 85% of ungated and Sharpe within 0.15;
+3. at most 12 switches a year in both windows.
+
+Among passing gates the one with the highest 2019–23 Sharpe is replayed for real on both windows. The replay must reproduce condition 1 and 2 to be adopted; adoption goes live only after the user is told and the live freeze period has run. If nothing passes, the record says so and the item is closed.
+
+**Caveats.** Survivorship favours the 2019–23 replay (today's 150 names). Eighteen trials count toward the deflated Sharpe of anything adopted. The 2019–23 window has no graph or Claude signals.

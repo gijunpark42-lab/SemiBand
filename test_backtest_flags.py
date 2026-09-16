@@ -64,6 +64,24 @@ class LongShortWeights(unittest.TestCase):
         self.assertEqual(sorted(w), ["A", "C"])                           # a non-finite conviction is ignored
 
 
+class RankOrder(unittest.TestCase):
+    def test_the_return_models_values_are_assigned_in_the_rank_models_order(self):
+        conv = {"A": 0.30, "B": 0.10, "C": -0.20, "D": 0.05}
+        conv_rank = {"A": 0.1, "B": 0.9, "C": 0.5, "D": -0.4}          # the rank model likes B most, then C, A, D
+        out = backtest.rank_order(conv, conv_rank)
+        self.assertEqual(out, {"B": 0.30, "C": 0.10, "A": 0.05, "D": -0.20})
+        self.assertEqual(sorted(out.values()), sorted(conv.values()))           # the multiset sizing sees is unchanged
+
+    def test_normal_scores_are_per_date_ranks_with_tied_means(self):
+        import learner
+        import numpy as np
+        s = learner.normal_scores(np.array([0.05, -0.10, 0.05, 0.30]))
+        self.assertAlmostEqual(s[1], -s[3])                                     # lowest and highest are symmetric
+        self.assertAlmostEqual(s[0], s[2])                                      # ties share a rank
+        self.assertAlmostEqual(float(s.sum()), 0.0, places=9)
+        self.assertEqual(list(learner.normal_scores(np.array([1.0]))), [0.0])
+
+
 class PriceCacheRace(unittest.TestCase):
     def test_a_run_that_loses_the_race_trades_on_the_winners_prices(self):
         idx = pd.bdate_range("2026-09-01", periods=3)

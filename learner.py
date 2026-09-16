@@ -49,6 +49,7 @@ PRIOR_STRENGTH = config.LEARNER_PRIOR_STRENGTH      # lambda: pseudo-observation
 LAMBDA_GRID = tuple(config.LEARNER_LAMBDA_GRID)
 CV_MIN_DATES = 8               # walk-forward CV needs this many distinct prediction dates
 WINSOR = 0.15                  # clip realised abnormal returns at +/-15%
+TARGET_CLIP_SIGMA = None       # research (round 37): clip the return target at +/- this many sigma per horizon instead of WINSOR
 DEFAULT_SCALE = {5: 0.02, 10: 0.03, 20: 0.045, 40: 0.065, 60: 0.08}   # typical |abnormal| per horizon until measured
 DIR_TERMS = True               # False: drop the direction-only features (7 fewer parameters; research flag, live keeps True)
 NONNEG = False                 # True: weights constrained >= 0 (non-negative ridge via NNLS on the augmented system); research flag
@@ -83,13 +84,13 @@ def _rows(db_path, horizon, asof, since_scored=None, dates=None, target_mode="ra
     """Scored rows from one ledger file. since_scored: only rows scored on/after that date (what changed since
     the last load); dates: only these prediction dates. With asof, only predictions whose outcome was known by then."""
     import sqlite3
-    if target_mode not in ("raw", "beta"):
+    if target_mode not in ("raw", "beta", "rank"):
         raise ValueError(f"unknown learner target mode: {target_mode}")
     if not db_path.exists():
         return []
     con = sqlite3.connect(db_path)
     con.row_factory = sqlite3.Row
-    target = "s.beta_abnormal" if target_mode == "beta" else "s.abnormal"
+    target = "s.abnormal" if target_mode == "raw" else "s.beta_abnormal"   # rank (round 37) ranks the beta-adjusted return per date
     base = (f"SELECT p.date, p.ticker, p.agent, p.direction, p.confidence, {target} AS target, s.scored_date "
             "FROM predictions p JOIN scores s ON s.prediction_id = p.id AND s.horizon = ?")
     try:
@@ -107,7 +108,7 @@ def _rows(db_path, horizon, asof, since_scored=None, dates=None, target_mode="ra
         con.close()
     if asof is not None:
         rows = [r for r in rows if r["scored_date"] <= asof.isoformat()]
-    if target_mode == "beta" and any(r["target"] is None or not math.isfinite(r["target"]) for r in rows):
+    if target_mode in ("beta", "rank") and any(r["target"] is None or not math.isfinite(r["target"]) for r in rows):
         raise RuntimeError(f"incomplete beta targets in {db_path.name} at {horizon}d; run migration before fitting")
     return [r for r in rows if r["target"] is not None]
 
@@ -159,9 +160,13 @@ def _load_source(db_path, sw, horizon, names, target_mode="raw"):
                 ent["last_scored"] = r["scored_date"]
         for d, groups in per.items():
             tks = sorted(groups)
+            if target_mode == "rank":       # round 37: per-date normal scores of the target, no winsor (the scale is the rank's)
+                y_d = normal_scores(np.array([float(groups[tk]["y"]) for tk in tks]))
+            else:
+                y_d = np.array([float(np.clip(groups[tk]["y"], -WINSOR, WINSOR)) for tk in tks])
             ent["by_date"][d] = (
                 np.array([features(groups[tk]["agents"], names) for tk in tks]),
-                np.array([float(np.clip(groups[tk]["y"], -WINSOR, WINSOR)) for tk in tks]),
+                y_d,
                 np.array([groups[tk]["scored_date"] for tk in tks]),
             )
         ent["stamp"], ent["arrays"] = stamp, None
@@ -180,6 +185,24 @@ def _load_source(db_path, sw, horizon, names, target_mode="raw"):
     return X, y, dates, scored_dates, np.full(len(y), sw)
 
 
+def normal_scores(y):
+    """Per-date rank target (round 37): the normal score of each value's rank within its date, (rank - 0.5) / n mapped through
+    the inverse normal CDF; ties share their mean rank. A single row scores 0."""
+    from statistics import NormalDist
+    n = len(y)
+    if n < 2:
+        return np.zeros(n)
+    order = np.argsort(y, kind="stable")
+    ranks = np.empty(n)
+    ranks[order] = np.arange(1, n + 1, dtype=float)
+    for v in np.unique(y):                                     # ties -> mean rank
+        m = y == v
+        if m.sum() > 1:
+            ranks[m] = ranks[m].mean()
+    inv = NormalDist().inv_cdf
+    return np.array([inv((r - 0.5) / n) for r in ranks])
+
+
 def dataset(horizon: int, names: list, asof=None, target_mode="raw"):
     """-> (X, y_raw, prediction_dates, scored_dates, source_weight) at this horizon.
 
@@ -194,7 +217,7 @@ def dataset(horizon: int, names: list, asof=None, target_mode="raw"):
     # ledger.DB to their own replay; mixing in state/backtest.sqlite would duplicate or contaminate that trial.
     if ledger.DB == live and bt.exists() and config.WARM_START_WEIGHT > 0:
         sources.append((bt, config.WARM_START_WEIGHT))
-    if target_mode not in ("raw", "beta"):
+    if target_mode not in ("raw", "beta", "rank"):
         raise ValueError(f"unknown learner target mode: {target_mode}")
     parts = [_load_source(p, sw, horizon, names, target_mode) for p, sw in sources if p.exists()]
     if not parts:
@@ -293,6 +316,9 @@ def fit(today: date | None = None, asof: date | None = None, target_mode: str | 
     model = {"fitted": today.isoformat(), "target_mode": target_mode, "agents": names, "horizons": {}}
     for h in config.HORIZONS:
         X, y_raw, dates, scored_dates, sw = dataset(h, names, asof, target_mode)
+        if TARGET_CLIP_SIGMA and target_mode != "rank" and len(y_raw) >= 40:   # round 37 control: a sigma clip instead of WINSOR
+            lim = TARGET_CLIP_SIGMA * float(np.std(y_raw))
+            y_raw = np.clip(y_raw, -lim, lim)
         ords = _ordinals(dates)
         scale = float(np.std(y_raw)) if len(y_raw) >= 40 else DEFAULT_SCALE[h]
         scale = max(scale, 0.01)

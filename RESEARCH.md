@@ -1438,3 +1438,24 @@ The stock book under today's rules is weakly positive in the window where v2.3 l
 No gate reaches the pre-registered +0.30 Sharpe improvement in 2019–23; the two that improve Sharpe at all (+0.05 to +0.07, the volatility gates) cut the 2024–26 return by 84–92%. The rest lower both windows.
 
 **Reading.** The same conclusion as round 21, now for external signals too: the weak years are choppy, and any gate that switches the book off also switches off the recoveries. The stock book's protection in bad years comes from what it already does (small books, cash as a position, the vol target), and the sleeve's own 200-day rule handles the idle money. The item is closed; no gate goes forward to a replay. Eighteen trials are added to the count.
+
+## 2026-09-16 — round 37, pre-registered before any run: a rank learning target, with the conviction scale held fixed
+
+**Why.** Round 32 found the learner's value at the top of the ranking while whole-universe IC is about 0.02, and the learner's walk-forward criterion is already a rank correlation. A model fitted on per-date ranks of the beta-adjusted return may order names better. The review partner's design (2026-09-16) removes the confound that such a model changes the conviction *scale* and therefore the sizing: the return model's conviction values are kept as a daily multiset and assigned to names in the rank model's order (quantile mapping), so gross, vol scaling and the sleeve are identical by construction and only the ordering changes.
+
+**Runs.** Live flags (`_sl200`: 500 days, next-open, open refresh, signal-close label, SOXX 200-day sleeve), one shared price cache.
+
+| Tag | Change | Role |
+|---|---|---|
+| `_sl200` | none | baseline (already run) |
+| `_rk1` | `--rank-order`: a second ridge fitted daily on per-date normal scores of the beta-adjusted 10/20-day return (no ±15% winsor); names take the return model's conviction values in the rank model's order | candidate |
+| `_cl1` | `--target-clip-sigma 2.5`: the return target clipped at ±2.5σ per horizon instead of ±15% | control: the cheap "robust to tails" version |
+
+**Gate for `_rk1`, all required:**
+1. Per-date sorted convictions equal the baseline's to 1e-12 (asserted in the replay; proves the confound is gone).
+2. The rank model's daily realised 10-day IC is at or above the return model's on the same dates.
+3. Sized-book paired daily difference against `_sl200` ≥ 0 over the full window and OOS (before 2025-09-24).
+4. Turnover at most 1.2× the baseline's, or the return at 30 bps not lower.
+5. The round 32 yardstick: the beta-adjusted alpha of (`_rk1` top-15 rank book − `_sl200` top-15 rank book) has t ≥ 1 with the same sign in both halves.
+
+**Control rule.** If `_cl1` delivers at least 80% of `_rk1`'s gain in the sized-book paired difference, the clip is adopted instead of the rank model. Two trials, at most one adoptable; adoption goes live only after the user is told and the live freeze has run, and needs its own live wiring (a second daily fit and the mapping in `cycle.convict`).

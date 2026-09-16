@@ -1370,7 +1370,7 @@ QQQ is not in the replay's price set, so it appears only in the 25-year check.
 
 **Reading.**
 - The 25-year ETF check and the strategy replay disagree on drawdown, and the replay is the pre-registered evidence. Over 25 years a SOXX+broad-index mix cut the sleeve's own drawdown by a third; inside the strategy, over 2024–26, the mix and the SPY sleeve had *higher* drawdowns (30.6% and 32.9% against 28.3%).
-- The reason is gate timing. In the April 2025 semiconductor crash SOXX fell through its 200-day average before SPY did, so the SOXX sleeve was out while a SPY-gated sleeve was still invested. For a semiconductor book, the semiconductor index's own trend is the better exit signal for its idle money.
+- The reason is gate timing. *(Corrected below: the divergence window was 2025-02-21 to 03-10, before the April crash, during which both gates were off.)* SOXX fell through its 200-day average before SPY did, so the SOXX sleeve was out while a SPY-gated sleeve was still invested. For a semiconductor book, the semiconductor index's own trend is the better exit signal for its idle money.
 - Out of sample the mix lost 1.3 bps/day to the SOXX sleeve (t −2.0), the one statistically clear difference in the table.
 - Sleeve off costs about 200 points of return over the window at a similar Sharpe (2.17 against 2.23), which restates round 34.
 - Caveat, as before: the window holds one bull market and one sharp crash, and cash earns 0 in the replay.

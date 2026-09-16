@@ -1333,3 +1333,23 @@ This confirms round 29: this model's edge needs breadth.
 By the pre-registered rule the 50-day sleeve would have stayed, because the 200-day replay's Sharpe was 0.01 lower. The switch is therefore the user's decision on a tie in the replay, backed by the 25-year check.
 
 Live change: `IDLE_SLEEVE_TREND = 200`. SOXX, at 499.71, is 14.0% above its 200-day average, so the sleeve is invested from today's re-run of the cycle. The re-run uses the signals recorded this morning and makes no Claude calls.
+
+## 2026-09-15 — round 35, pre-registered before any replay: which vehicle should idle equity default to?
+
+**Why.** After the sleeve moved to the 200-day rule, the user asked whether SOXX is the right default at all, whether an ETF mix would be better, and whether "hold the sector index and trade on top of it" is a sound structure for a fund.
+
+**Framing, stated before the numbers.** The stock universe is the semiconductor supply chain and the benchmark is SOXX, so the fund is a semiconductor fund whether or not the sleeve exists. The sleeve only decides what the fund holds when the model has no pick: the sector index (a benchmark-neutral sector fund), cash (an absolute-return fund), or something in between. That is a mandate choice for the user. The replays measure what each choice cost over 2024–26, and the 25-year ETF check shows how each vehicle behaved through two crashes.
+
+**Runs.** 500 days, the live flags and price cache, 200-day gate throughout; only the idle vehicle differs.
+
+| Tag | Idle vehicle | Status |
+|---|---|---|
+| `_sl0` | cash (sleeve off) | already run |
+| `_sl200` | SOXX, all idle equity (live since today) | already run |
+| `_sxh200` | SOXX, half the idle equity, the rest cash | new |
+| `_sp200` | SPY, all idle equity | new |
+| `_mix200` | SOXX and SPY, half each, each on its own 200-day gate | new (`--sleeve-mix SOXX,SPY`) |
+
+QQQ is not in the replay's price set, so it appears only in the 25-year check.
+
+**Rule.** No automatic adoption: the user chooses the mandate. The recommendation I will give is fixed here: rank by Sharpe; prefer a lower-volatility vehicle only if its Sharpe is within 0.05 of the SOXX sleeve's and its max drawdown is at least 3 points lower. The replay assumes cash earns 0, which understates every cash-heavy variant by roughly 4–5% a year over this window; that is noted, not corrected. This round adds three trials to the count.

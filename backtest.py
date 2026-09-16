@@ -255,7 +255,7 @@ def long_short_weights(convictions, betas, n, gross):
 
 def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mode="close", agents=None, end=None,
         open_refresh=False, label_open=False, label_next_close=False, refresh_agents=None, learn_preopen=False,
-        prior_only=False, long_short=None):
+        prior_only=False, long_short=None, sleeve_mix=None):
     """tag: suffix for the output files (state/backtest<tag>.sqlite / backtest_report<tag>.json)
     so a long build can run while sweeps read the default files.
     exec_mode: 'close' = trade at the close the signals were computed on (optimistic);
@@ -291,7 +291,7 @@ def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mod
                 "agents_requested": agents, "open_refresh": open_refresh, "label_open": label_open,
                 "label_next_close": label_next_close,
                 "refresh_agents": list(refresh_agents) if refresh_agents is not None else None, "learn_preopen": learn_preopen,
-                "prior_only": prior_only, "long_short": long_short,
+                "prior_only": prior_only, "long_short": long_short, "sleeve_mix": list(sleeve_mix) if sleeve_mix else None,
                 "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     publish_progress(dict(run_info, status="loading", pct=0.0, message="downloading prices and earnings"))
     try:
@@ -344,6 +344,9 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
     B = C[:, col[config.BENCHMARK]]
     P = px.to_numpy(dtype=float) if px is not closes else C
     pcol = {tk: j for j, tk in enumerate(px.columns)}
+    for etf in run_info.get("sleeve_mix") or ():
+        if etf not in col or etf not in pcol:
+            raise ValueError(f"--sleeve-mix: {etf} is not in the replay's price set (closes and opens)")
     # per-ticker full-history series for risk / macro (the agents slice them as of each day: same pandas
     # operations on the same values as recomputing from the day's prefix, computed once instead of daily)
     bench_ret_full = closes[config.BENCHMARK].pct_change()
@@ -484,7 +487,16 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
         if config.HEDGE_SIZE and B[i] < float(np.nanmean(B[max(0, i - config.HEDGE_LOOKBACK): i + 1])):   # regime hedge, as live
             scale = min(1.0, config.VOL_TARGET / realized) if (config.VOL_TARGET and realized and realized > config.VOL_TARGET) else 1.0
             w["__HEDGE__"] = -min(config.HEDGE_SIZE * scale, sum(w.values()))   # capped at the long gross: a hedge, never a net short
-        if config.IDLE_SLEEVE and not long_short:                    # idle equity into an ETF while it trades above its average, as live
+        mix = run_info.get("sleeve_mix")
+        if mix and not long_short:   # research (round 35): idle equity split equally across ETFs, each held while above its own average
+            n_tr = config.IDLE_SLEEVE_TREND
+            scale = min(1.0, config.VOL_TARGET / realized) if (config.VOL_TARGET and realized and realized > config.VOL_TARGET) else 1.0
+            idle = max(0.0, scale - sum(v for tk, v in w.items() if not tk.startswith("__")))
+            for etf in mix:
+                s = C[:, col[etf]]
+                if idle > 0 and (n_tr is None or (i >= n_tr and s[i] > float(np.nanmean(s[i - n_tr + 1: i + 1])))):
+                    w[f"__SLEEVE_{etf}__"] = config.IDLE_SLEEVE_FRACTION * idle / len(mix)
+        elif config.IDLE_SLEEVE and not long_short:                  # idle equity into an ETF while it trades above its average, as live
             s = C[:, col[config.IDLE_SLEEVE]]
             n_tr = config.IDLE_SLEEVE_TREND
             if n_tr is None or (i >= n_tr and s[i] > float(np.nanmean(s[i - n_tr + 1: i + 1]))):
@@ -497,7 +509,8 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
                 w[tk] = prev_w[tk]
         turnover = sum(abs(w.get(tk, 0) - prev_w.get(tk, 0)) for tk in set(w) | set(prev_w))
         def day_ret(tk):
-            j = pcol[config.BENCHMARK if tk == "__HEDGE__" else config.IDLE_SLEEVE if tk == "__SLEEVE__" else tk]
+            j = pcol[config.BENCHMARK if tk == "__HEDGE__" else config.IDLE_SLEEVE if tk == "__SLEEVE__"
+                     else tk[9:-2] if tk.startswith("__SLEEVE_") else tk]
             c0, c1 = P[i + shift, j], P[i + 1 + shift, j]
             return None if (np.isnan(c0) or np.isnan(c1) or c0 <= 0) else float(c1 / c0) - 1
         ret = sum(w_i * r for tk, w_i in w.items() if (r := day_ret(tk)) is not None)
@@ -519,7 +532,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
                       "ic_learned": day_ic[0], "ic_prior": day_ic[1],
                       "net": round(sum(w.values()), 3), "short": round(sum(-x for x in w.values() if x < 0), 3),
                       "ret_long": leg_ret["long"], "ret_short": leg_ret["short"],
-                      "sleeve": round(w.get("__SLEEVE__", 0.0), 3),
+                      "sleeve": round(sum(v for tk, v in w.items() if tk.startswith("__SLEEVE")), 3),
                       "ret": ret, "turnover": turnover,
                       "soxx": float(px[config.BENCHMARK].iloc[i + 1 + shift] / px[config.BENCHMARK].iloc[base]),
                       "spy": float(px["SPY"].iloc[i + 1 + shift] / px["SPY"].iloc[base])})
@@ -561,7 +574,8 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
         "sizing": {"size": config.SIZE_PER_CONVICTION, "cap": config.MAX_POSITION_PCT, "gross": config.GROSS_TARGET,
                    "long_short": run_info.get("long_short"),
                    "min_book": config.MIN_STOCK_BOOK, "idle_sleeve": config.IDLE_SLEEVE,
-                   "sleeve_fraction": config.IDLE_SLEEVE_FRACTION, "sleeve_trend": config.IDLE_SLEEVE_TREND},
+                   "sleeve_fraction": config.IDLE_SLEEVE_FRACTION, "sleeve_trend": config.IDLE_SLEEVE_TREND,
+                   "sleeve_mix": run_info.get("sleeve_mix")},
         "agents": PIT_AGENTS,
         "portfolio": {
             "total_return": round(curve[-1]["portfolio"] - 1, 4),
@@ -635,6 +649,7 @@ if __name__ == "__main__":
     p.add_argument("--position-cap", type=float, default=None, help="override MAX_POSITION_PCT, e.g. 0.30")
     p.add_argument("--min-book", type=float, default=None, help="override MIN_STOCK_BOOK, e.g. 0.5")
     p.add_argument("--idle-sleeve", default=None, help="ETF for idle equity, SOXX or SPY (sets IDLE_SLEEVE)")
+    p.add_argument("--sleeve-mix", default=None, help="research: comma list of ETFs from the replay's price set (e.g. SOXX,SPY) that split the idle equity equally, each held while above its own --sleeve-trend average; give --idle-sleeve too for the fraction and trend")
     p.add_argument("--sleeve-fraction", type=float, default=1.0, help="share of the idle equity put in the sleeve")
     p.add_argument("--sleeve-trend", type=int, default=50, help="only while the ETF closed above this many days' average; 0 = always")
     p.add_argument("--graph-asof", default=None, help="ISO date: build the supply-chain map from the newest graph snapshot dated <= this (state/graph_snapshots) instead of today's graph")
@@ -661,5 +676,6 @@ if __name__ == "__main__":
             exec_mode=args.exec_mode, agents=tuple(x for x in args.agents.split(",") if x) if args.agents else None, end=args.end,
             open_refresh=args.open_refresh, label_open=args.label_open, label_next_close=args.label_next_close,
             refresh_agents=tuple(x for x in args.refresh_agents.split(",") if x) if args.refresh_agents is not None else None,
-            learn_preopen=args.learn_preopen, prior_only=args.prior_only, long_short=args.long_short)
+            learn_preopen=args.learn_preopen, prior_only=args.prior_only, long_short=args.long_short,
+            sleeve_mix=tuple(x for x in args.sleeve_mix.split(",") if x) if args.sleeve_mix else None)
     print(json.dumps({k: v for k, v in r.items() if k != "curve"}, indent=2)[:4000])

@@ -1537,3 +1537,36 @@ At most one adoptable. `_i1`'s adoption reason is robustness, not P&L; `_i2` or 
 **Equivalence test before merging.** With `SHADOW_AGENTS = ()`, convictions, orders, the model file and the dashboard must be identical to the current code on a state-copy rehearsal, and a 60-day replay must be byte-identical on the pinned graph snapshot.
 
 **First shadow agent.** Insider open-market purchases (Finnhub, Form 4 code P, point-in-time by filing date, known from the next session; purchases only, ≥ 2 distinct officer or director buyers within 30 days as the strong form, decayed with age, bucketed by size relative to the buyer's holdings). Coverage measured on 2026-09-16: 472 purchases across 71 names since 2024-01, 14.8 a month but lumpy and TSM-heavy, so its case rests on the replay; horizon 20 days; incremental IC over `mean_reversion` reported, because purchases cluster after drawdowns.
+
+### Round 38 results (2026-09-16 08:50 PT): the level is a bias, not a forecast; demeaning passes its gate
+
+Five 500-day replays on one price cache and one graph snapshot (dir `2026-09-16`, hash `e5a7f9ef606e`, unchanged through the batch), same-day baseline. Every run exited cleanly.
+
+**Diagnostic: does the fitted level forecast the average name's beta-abnormal return?** From `_i1`, the level per day (intercept × the model's stored scale) against the realised per-name-winsorised cross-sectional mean at the same horizon:
+
+| Horizon | Level mean (sd) | Realised mean (sd) | Correlation (20-day block bootstrap 95%) | Same sign | Level > 0 | MSE level vs zero forecast (×1e-4) | Monthly sign agreement |
+|---|---|---|---|---|---|---|---|
+| 10d | +0.48% (0.48) | +0.13% (2.11) | +0.13 (−0.24 .. +0.47) | 62% | 87% of days | 4.55 vs 4.48 → zero better | 16/24 |
+| 20d | +0.90% (0.87) | +0.11% (2.83) | +0.09 (−0.31 .. +0.43) | 61% | 89% of days | 8.96 vs 8.02 → zero better | 13/24 |
+
+By the pre-registered reading the level is a bias — an exponentially weighted trailing mean that lags the monthly turns (positive through the 2024–25 rally, negative only from June 2026) — not a forecast. Note that in the replay the level was positive on nine days in ten, so its live effect since April 2026 (a negative level holding the book in cash) is the exception, not the rule.
+
+**Replays** (470 common days, 5 bps):
+
+| Run | Model | Return | Sharpe | Max DD | Return at 30 bps | Names | Gross | Turnover | vs `_i0`, bps/day (t) | OOS (t) | Gate |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `_i0` | live (same-day baseline) | +1157% | 2.23 | 29.5% | +721% | 11.7 | 1.05 | 0.36 | — | — | — |
+| `_i1` | a1: intercept in convictions | +887% | 2.11 | 38.2% | +483% | 12.4 | 1.12 | 0.45 | −5.8 (−1.29) | −6.4 (−0.96) | FAIL (t < −1; rank-book alpha t −1.34 IS) |
+| `_i2` | a2: intercept fitted, excluded | +941% | 2.27 | 23.5% | +570% | 10.5 | 1.00 | 0.38 | −5.3 (−1.04) | −1.1 (−0.14) | FAIL (OOS paired < 0, by a hair) |
+| `_i3` | c: intercept + graph direction terms dropped | +882% | 2.09 | 38.2% | +481% | 12.4 | 1.12 | 0.45 | −5.8 (−1.29) | −6.4 (−0.96) | FAIL (full-window rank-book alpha t −0.79) |
+| `_i4` | b: `DEMEAN_CONVICTION` | +1110% | 2.25 | 24.7% | +640% | 13.8 | 1.10 | 0.42 | −1.1 (−0.26) | +0.7 (+0.23) | **PASS** (Sharpe ≥, max DD ≤ +2, OOS ≥ 0) |
+
+Final graph-agent direction weights (10d / 20d): `_i0` supply_chain −0.171 / −0.298, neighbors −0.294 / −0.324; `_i1` −0.108 / −0.214, −0.260 / −0.282 with intercept −0.059 / −0.079 (scaled units). About a third of the graph agents' negative direction weights is the level in disguise, as the in-memory diagnostic predicted.
+
+**Reading.**
+- An explicit intercept in the convictions (`_i1`) makes the book worse: the fitted level is applied every day, and since it lags the turns it adds exposure late in rallies and cuts it late in recoveries (max drawdown 38%).
+- Removing the level — by the ridge's own estimate (`_i2`) or cross-sectionally (`_i4`) — lowers the maximum drawdown by 5–6 points at a return difference inside noise. The expectation that the exposure-off references would fail on drawdown by holding stocks through April–June 2026 did not hold: in those months the relative winners still did better than the level implied, and the vol target caps the rest.
+- `_i4` keeps the baseline's ordering by construction (its rank line equals `_i0`'s); what changes is how many names clear the 0.10 bar on a given day: fewer when the level was pushing convictions up (2024–25), more when it was pushing them down (2026). Mean gross April–August 2026: 0.69 / 1.24 / 1.37 / 1.43 / 1.41 against a cash-heavy baseline.
+- Costs: the demeaned book turns over faster (0.42 against 0.36 a day), so at 30 bps its return is +640% against +721%.
+
+**Pre-registered verdict.** `_i4` (`DEMEAN_CONVICTION = True`) is the one adoptable variant; `_i1`, `_i2`, `_i3` are rejected. The adoption itself is decided after the review partner's critique and a state-copy rehearsal on today's signals (below). Five trials are added to the count.

@@ -54,6 +54,9 @@ DEFAULT_SCALE = {5: 0.02, 10: 0.03, 20: 0.045, 40: 0.065, 60: 0.08}   # typical 
 DIR_TERMS = True               # False: drop the direction-only features (7 fewer parameters; research flag, live keeps True)
 NONNEG = False                 # True: weights constrained >= 0 (non-negative ridge via NNLS on the augmented system); research flag
 MIN_RELIABILITY = 0.02
+INTERCEPT = None               # research (round 38): 'in' = fit an unpenalised intercept and add it to convictions; 'fit_only' = fit it,
+                               # record it, leave convictions without it. None = the live model (no intercept)
+DROP_DIR = ()                  # research (round 38): agents whose direction-only feature is zeroed at fit time (their w_dir stays at the prior 0)
 
 
 def agents():
@@ -252,21 +255,42 @@ def decay(dates, today):
     return decay_ord(_ordinals(dates), today)
 
 
-def ridge(X, y, d, lam, w0):
-    """Posterior mean of w under the Gaussian prior N(w0, I/lam) and observation weights d."""
+def ridge(X, y, d, lam, w0, free_last=False):
+    """Posterior mean of w under the Gaussian prior N(w0, I/lam) and observation weights d.
+    free_last: the last column (an intercept, round 38) is unpenalised."""
     if len(y) == 0:
         return w0.copy()
+    lam_vec = np.full(X.shape[1], float(lam))
+    if free_last:
+        lam_vec[-1] = 0.0
     if NONNEG:
         # same objective, weights >= 0:  min || sqrt(d)(Xw - y) ||^2 + lam || w - w0 ||^2  s.t. w >= 0
         from scipy.optimize import nnls
         sd = np.sqrt(d)[:, None]
-        A_aug = np.vstack([X * sd, np.sqrt(lam) * np.eye(X.shape[1])])
-        b_aug = np.concatenate([np.sqrt(d) * y, np.sqrt(lam) * w0])
+        A_aug = np.vstack([X * sd, np.sqrt(lam_vec)[:, None] * np.eye(X.shape[1])])
+        b_aug = np.concatenate([np.sqrt(d) * y, np.sqrt(lam_vec) * w0])
         return nnls(A_aug, b_aug, maxiter=50 * X.shape[1])[0]
     Xd = X * d[:, None]
-    A = X.T @ Xd + lam * np.eye(X.shape[1])
-    b = X.T @ (d * y) + lam * w0
+    A = X.T @ Xd + np.diag(lam_vec)
+    b = X.T @ (d * y) + lam_vec * w0
     return np.linalg.solve(A, b)
+
+
+def _augment(X, names):
+    """Research (round 38): zero the direction-only columns of DROP_DIR agents and append a constant column when INTERCEPT is
+    set. Works on a copy, so the source cache is untouched. -> (X_aug, w0_aug); unchanged inputs when both flags are off."""
+    n = len(names)
+    w0 = prior_weights(n)
+    if not DROP_DIR and not INTERCEPT:
+        return X, w0
+    X = X.copy()
+    for i, a in enumerate(names):
+        if a in DROP_DIR:
+            X[:, n + i] = 0.0
+    if INTERCEPT:
+        X = np.column_stack([X, np.ones(len(X))])
+        w0 = np.concatenate([w0, [0.0]])
+    return X, w0
 
 
 def ic(pred, y):
@@ -278,7 +302,7 @@ def ic(pred, y):
     return float(np.corrcoef(rp, ry)[0, 1])
 
 
-def walk_forward_ic(X, y_raw, dates, scored_dates, source_weight, w0, lam, today, horizon, last_k=10, ords=None):
+def walk_forward_ic(X, y_raw, dates, scored_dates, source_weight, w0, lam, today, horizon, last_k=10, ords=None, free_last=False):
     """Mean IC over the last_k dates, each predicted from a model that only saw rows whose
     outcome was already known on that date (prediction date + horizon), so overlapping
     return windows cannot leak the answer into the training set."""
@@ -299,7 +323,8 @@ def walk_forward_ic(X, y_raw, dates, scored_dates, source_weight, w0, lam, today
         scale = float(np.std(y_raw[train])) if train.sum() >= 40 else DEFAULT_SCALE[horizon]
         scale = max(scale, 0.01)
         d = decay_ord(ords[train], d0) * source_weight[train]
-        w = ridge(X[train], y_raw[train] / scale, d, lam, w0)
+        w = (ridge(X[train], y_raw[train] / scale, d, lam, w0, free_last=True) if free_last
+             else ridge(X[train], y_raw[train] / scale, d, lam, w0))
         ics.append(ic(X[test] @ w, y_raw[test]))
     return float(np.mean(ics)) if ics else None
 
@@ -314,25 +339,28 @@ def fit(today: date | None = None, asof: date | None = None, target_mode: str | 
     n = len(names)
     w0 = prior_weights(n)
     model = {"fitted": today.isoformat(), "target_mode": target_mode, "agents": names, "horizons": {}}
+    if INTERCEPT or DROP_DIR:                                 # research flags on record; a live model never carries them
+        model["intercept_mode"], model["drop_dir"] = INTERCEPT, list(DROP_DIR)
     for h in config.HORIZONS:
         X, y_raw, dates, scored_dates, sw = dataset(h, names, asof, target_mode)
         if TARGET_CLIP_SIGMA and target_mode != "rank" and len(y_raw) >= 40:   # round 37 control: a sigma clip instead of WINSOR
             lim = TARGET_CLIP_SIGMA * float(np.std(y_raw))
             y_raw = np.clip(y_raw, -lim, lim)
+        X_aug, w0_aug = _augment(X, names)
         ords = _ordinals(dates)
         scale = float(np.std(y_raw)) if len(y_raw) >= 40 else DEFAULT_SCALE[h]
         scale = max(scale, 0.01)
         y = y_raw / scale
         lam, cv = PRIOR_STRENGTH, None
         if len(set(dates)) >= CV_MIN_DATES:
-            scores = {l: walk_forward_ic(X, y_raw, dates, scored_dates, sw, w0, l, today, h, ords=ords)
+            scores = {l: walk_forward_ic(X_aug, y_raw, dates, scored_dates, sw, w0_aug, l, today, h, ords=ords, free_last=bool(INTERCEPT))
                       for l in LAMBDA_GRID}
             scores = {l: s for l, s in scores.items() if s is not None}
             if scores:
                 lam = max(scores, key=scores.get)
                 cv = scores[lam]
         d = decay_ord(ords, today) * sw if len(dates) else np.zeros(0)
-        w = ridge(X, y, d, lam, w0)
+        w = ridge(X_aug, y, d, lam, w0_aug, free_last=True) if INTERCEPT else ridge(X_aug, y, d, lam, w0_aug)
         agent_ic = {}
         for i, a in enumerate(names):
             mask = X[:, i] != 0
@@ -345,6 +373,8 @@ def fit(today: date | None = None, asof: date | None = None, target_mode: str | 
             "w_dir": {a: round(float(w[n + i]), 4) for i, a in enumerate(names)},
             "agent_ic": agent_ic,
         }
+        if INTERCEPT:
+            model["horizons"][str(h)]["intercept"] = round(float(w[2 * n]), 6)   # scaled units; x scale = the average name's expected target
     model["effective_weights"] = effective_weights(model)
     config.STATE_DIR.mkdir(exist_ok=True)
     path = model_file or (MODEL_FILE if target_mode == config.LEARNER_TARGET_MODE
@@ -426,7 +456,7 @@ def predict(signals, model=None):
         contrib = {a: 0.0 for a in per_agent}
         for h, v in model["horizons"].items():
             w = np.array([v["w_conf"][a] for a in names] + [v["w_dir"][a] for a in names])
-            pred += mix[h] * float(x @ w)
+            pred += mix[h] * (float(x @ w) + (float(v.get("intercept") or 0.0) if model.get("intercept_mode") == "in" else 0.0))
             for i, a in enumerate(names):
                 if a in per_agent:
                     contrib[a] += mix[h] * (v["w_conf"][a] * x[i] + v["w_dir"][a] * x[n + i])

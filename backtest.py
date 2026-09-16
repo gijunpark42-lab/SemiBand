@@ -165,7 +165,8 @@ def rank_order(conv, conv_rank):
 
 def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mode="close", agents=None, end=None,
         open_refresh=False, label_open=False, label_next_close=False, refresh_agents=None, learn_preopen=False,
-        prior_only=False, long_short=None, sleeve_mix=None, rank_order_mode=False, target_clip_sigma=None):
+        prior_only=False, long_short=None, sleeve_mix=None, rank_order_mode=False, target_clip_sigma=None,
+        intercept=None, drop_dir=(), demean=False):
     """tag: suffix for the output files (state/backtest<tag>.sqlite / backtest_report<tag>.json)
     so a long build can run while sweeps read the default files.
     exec_mode: 'close' = trade at the close the signals were computed on (optimistic);
@@ -203,6 +204,7 @@ def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mod
                 "refresh_agents": list(refresh_agents) if refresh_agents is not None else None, "learn_preopen": learn_preopen,
                 "prior_only": prior_only, "long_short": long_short, "sleeve_mix": list(sleeve_mix) if sleeve_mix else None,
                 "rank_order": rank_order_mode, "target_clip_sigma": target_clip_sigma,
+                "intercept": intercept, "drop_dir": list(drop_dir), "demean": demean,
                 "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     publish_progress(dict(run_info, status="loading", pct=0.0, message="downloading prices and earnings"))
     try:
@@ -248,6 +250,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
     learner.MODEL_FILE = config.STATE_DIR / f"backtest_model{run_info.get('tag') or ''}.json"   # per tag: parallel runs never share it
     rank_model_file = config.STATE_DIR / f"backtest_model{run_info.get('tag') or ''}_rank.json"
     learner.TARGET_CLIP_SIGMA = run_info.get("target_clip_sigma")
+    learner.INTERCEPT, learner.DROP_DIR = run_info.get("intercept"), tuple(run_info.get("drop_dir") or ())   # round 38
     live_agents = config.AGENTS
     config.AGENTS = PIT_AGENTS                       # the prior and the sizing see only the simulated agents
 
@@ -369,6 +372,9 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
             conv_rank, _ = learner.predict(signals, rank_model)
             traded = rank_order(conv, conv_rank)
             assert sorted(traded.values()) == sorted(conv.values()) and set(traded) == set(conv)
+        if run_info.get("demean") and traded:                          # round 38 reference: as cycle.convict with DEMEAN_CONVICTION
+            mean_conv = sum(traded.values()) / len(traded)
+            traded = {tk: c - mean_conv for tk, c in traded.items()}
         day_ic = (None, None)
         # IC of today's convictions against the 10-day outcome (evaluated later in the loop's own scores)
         y10 = {}
@@ -453,6 +459,8 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
                       "n": len([tk for tk in w if not tk.startswith("__")]), "hedge": round(-w.get("__HEDGE__", 0.0), 2),
                       "held": sorted(tk for tk in w if not tk.startswith("__")),
                       "ic_learned": day_ic[0], "ic_prior": day_ic[1], "ic_rank": ic_rank_day,
+                      "level": ({h: round((v.get("intercept") or 0.0) * v["scale"], 6) for h, v in model["horizons"].items()}
+                                if run_info.get("intercept") else None),   # the average name's expected beta-abnormal return
                       "net": round(sum(w.values()), 3), "short": round(sum(-x for x in w.values() if x < 0), 3),
                       "ret_long": leg_ret["long"], "ret_short": leg_ret["short"],
                       "sleeve": round(sum(v for tk, v in w.items() if tk.startswith("__SLEEVE")), 3),
@@ -479,6 +487,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
     ledger.DB = config.STATE_DIR / "ledger.sqlite"   # restore the live ledger path
     learner.MODEL_FILE = config.STATE_DIR / "model.json"
     learner.TARGET_CLIP_SIGMA = None
+    learner.INTERCEPT, learner.DROP_DIR = None, ()
     config.AGENTS = live_agents
 
     rets = np.diff(np.log([1.0] + [c["portfolio"] for c in curve]))
@@ -496,6 +505,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
         "learn_preopen": bool(run_info.get("learn_preopen")),
         "prior_only": bool(run_info.get("prior_only")),
         "rank_order": bool(run_info.get("rank_order")), "target_clip_sigma": run_info.get("target_clip_sigma"),
+        "intercept": run_info.get("intercept"), "drop_dir": run_info.get("drop_dir"), "demean": bool(run_info.get("demean")),
         "sizing": {"size": config.SIZE_PER_CONVICTION, "cap": config.MAX_POSITION_PCT, "gross": config.GROSS_TARGET,
                    "long_short": run_info.get("long_short"),
                    "min_book": config.MIN_STOCK_BOOK, "idle_sleeve": config.IDLE_SLEEVE,
@@ -571,6 +581,9 @@ if __name__ == "__main__":
     p.add_argument("--learn-preopen", action="store_true", help="with --open-refresh: trade on the refreshed signals but record and learn from the signals computed before the open (hybrid)")
     p.add_argument("--rank-order", action="store_true", help="round 37: fit a second ridge on per-date normal scores of the target and trade the return model's conviction values in that model's order (sizing unchanged by construction)")
     p.add_argument("--target-clip-sigma", type=float, default=None, help="round 37 control: clip the return target at +/- k sigma per horizon instead of the +/-15%% winsor")
+    p.add_argument("--intercept", choices=("in", "fit_only"), default=None, help="round 38: fit an unpenalised intercept; in = added to convictions, fit_only = recorded only")
+    p.add_argument("--drop-dir", default="", help="round 38: comma list of agents whose direction-only feature is dropped at fit time, e.g. supply_chain,neighbors")
+    p.add_argument("--demean", action="store_true", help="round 38 reference: subtract the day's cross-sectional mean conviction before sizing (as DEMEAN_CONVICTION live)")
     p.add_argument("--prior-only", action="store_true", help="trade on the equal-weight prior blend instead of the fitted weights (learner ablation); the learner is still fit daily and both ICs are recorded per day")
     p.add_argument("--long-short", type=int, default=None, help="market-neutral book (round 33): long the top N and short the bottom N convictions, gross GROSS_TARGET under the vol target split so the legs' betas cancel, 2 bps/day borrow, no sleeve")
     p.add_argument("--position-cap", type=float, default=None, help="override MAX_POSITION_PCT, e.g. 0.30")
@@ -605,5 +618,6 @@ if __name__ == "__main__":
             refresh_agents=tuple(x for x in args.refresh_agents.split(",") if x) if args.refresh_agents is not None else None,
             learn_preopen=args.learn_preopen, prior_only=args.prior_only, long_short=args.long_short,
             sleeve_mix=tuple(x for x in args.sleeve_mix.split(",") if x) if args.sleeve_mix else None,
-            rank_order_mode=args.rank_order, target_clip_sigma=args.target_clip_sigma)
+            rank_order_mode=args.rank_order, target_clip_sigma=args.target_clip_sigma,
+            intercept=args.intercept, drop_dir=tuple(x for x in args.drop_dir.split(",") if x), demean=args.demean)
     print(json.dumps({k: v for k, v in r.items() if k != "curve"}, indent=2)[:4000])

@@ -8,6 +8,7 @@ import logging
 import os
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -19,6 +20,8 @@ log = logging.getLogger(__name__)
 DEADLINE = None                # aware datetime; after it ask_json refuses new calls at once (the cycle sets it for its Claude stage)
 TIMINGS = []                   # end-to-end seconds (queue wait + the call, timeouts included) since the last timing_summary()
 SKIPPED = 0                    # calls refused by the deadline since the last timing_summary()
+STAGE_SKIPPED = 0              # calls refused since the cycle reset it at the start of its Claude stage (dashboard note)
+_LOCK = threading.Lock()
 
 
 class StageDeadline(RuntimeError):
@@ -91,7 +94,10 @@ def ask_json(system, user, schema=OPINION_SCHEMA, model=None, timeout=None, tool
     global SKIPPED
     timeout = timeout or config.LLM_TIMEOUT
     if DEADLINE is not None and datetime.now(timezone.utc) >= DEADLINE:
-        SKIPPED += 1
+        global STAGE_SKIPPED
+        with _LOCK:
+            SKIPPED += 1
+            STAGE_SKIPPED += 1
         raise StageDeadline(f"Claude stage deadline {DEADLINE.astimezone().strftime('%H:%M')} passed: call skipped")
     body = {
         "claude_tools": tools,

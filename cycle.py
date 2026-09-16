@@ -91,8 +91,12 @@ def run_agents(universe, ctx, model, held, use_llm):
     if config.LLM_STAGE_DEADLINE:      # no new Claude call after this ET time: the Claude stage must end before the open
         llm.DEADLINE = pd.Timestamp(f"{ctx['today']} {config.LLM_STAGE_DEADLINE}", tz="America/New_York").tz_convert("UTC").to_pydatetime()
     llm.timing_summary()                # start the stage's timings clean
+    llm.STAGE_SKIPPED = 0
     try:
         for name in llm_agents:
+            if llm.DEADLINE is not None and pd.Timestamp.now(tz="UTC") >= pd.Timestamp(llm.DEADLINE):
+                log.warning("agent %-13s skipped: Claude stage deadline %s ET passed", name, config.LLM_STAGE_DEADLINE)
+                continue
             signals += _run_agent(name, subset, ctx)
             summary = llm.timing_summary()
             if summary:
@@ -270,6 +274,8 @@ def main():
         log.info("reusing %d signals recorded earlier on %s", len(signals), today)
     else:
         signals = run_agents(universe, ctx, model, positions, use_llm=not args.no_llm)
+        if llm.STAGE_SKIPPED:
+            notes.append(f"Claude stage cut at {config.LLM_STAGE_DEADLINE} ET: {llm.STAGE_SKIPPED} calls skipped, rule agents carried the rest")
         prediction_betas = learning_targets.latest_betas(closes, {s.ticker for s in signals}, today)
         ledger.add_predictions(today, signals, last_close, prediction_betas)
     if reuse and not dry:

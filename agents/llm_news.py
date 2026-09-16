@@ -40,6 +40,8 @@ def _one(ticker, company, search=False):
     user = f"Ticker: {ticker} ({company})\nHeadlines, newest first:\n{lines}\n{extra}\n{FOOTER}"
     try:
         o = llm.ask_json(SYSTEM, user)
+    except llm.StageDeadline:   # the cycle's Claude stage was cut: quiet, the stage log carries the count
+        return None
     except Exception as exc:
         log.warning("%s %s: %s", NAME, ticker, exc)
         return None

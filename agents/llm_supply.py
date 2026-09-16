@@ -76,6 +76,8 @@ def _one(build, ticker, company, price_line):
             f"{report[:REPORT_CHARS]}\n\nTrading is commission-free but each order costs about 5 bps in slippage, and there is no obligation to trade: a direction near 0 with low confidence is a valid answer. Give your opinion as JSON.")
     try:
         o = llm.ask_json(SYSTEM, user)
+    except llm.StageDeadline:   # the cycle's Claude stage was cut: quiet, the stage log carries the count
+        return None
     except Exception as exc:  # one bad call must not kill the cycle
         log.warning("%s %s: %s", NAME, ticker, exc)
         return None

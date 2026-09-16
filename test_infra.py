@@ -51,6 +51,18 @@ class ClaudeStageDeadline(unittest.TestCase):
                 llm.ask_json("s", "u")
         self.assertEqual(llm.timing_summary(), (0, 0.0, 0.0, 0.0, 1))                # one skipped, no timings, then reset
         self.assertIsNone(llm.timing_summary())
+        self.assertGreaterEqual(llm.STAGE_SKIPPED, 1)                                # the stage total survives the per-agent reset
+        llm.STAGE_SKIPPED = 0
+
+    def test_an_agent_goes_quiet_when_the_stage_is_cut(self):
+        from datetime import datetime, timedelta, timezone
+        from agents import llm_news
+        item = [{"when": "2026-09-16", "title": "x", "publisher": "y"}]
+        with patch.object(llm, "DEADLINE", datetime.now(timezone.utc) - timedelta(seconds=1)), patch.object(config, "LLM_TIMEOUT", 480), \
+                patch.object(llm_news.market, "headlines", return_value=item), self.assertNoLogs(llm_news.log, level="WARNING"):
+            self.assertIsNone(llm_news._one("NVDA", "NVIDIA"))                       # refused by the deadline: None, no warning
+        self.assertEqual(llm.timing_summary()[4], 1)
+        llm.STAGE_SKIPPED = 0
 
     def test_end_to_end_seconds_are_gathered_per_call_including_failures(self):
         class Resp(io.BytesIO):

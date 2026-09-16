@@ -76,6 +76,8 @@ def _one(ticker, company, node, price_line):
             + "\n\nTrading is commission-free but each order costs about 5 bps in slippage, and there is no obligation to trade: a direction near 0 with low confidence is a valid answer. Give your opinion as JSON.")
     try:
         o = llm.ask_json(SYSTEM, user)
+    except llm.StageDeadline:   # the cycle's Claude stage was cut: quiet, the stage log carries the count
+        return None
     except Exception as exc:
         log.warning("%s %s: %s", NAME, ticker, exc)
         return None

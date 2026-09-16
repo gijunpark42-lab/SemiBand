@@ -1411,3 +1411,30 @@ Two modes each: stocks to cash (OFF) or halved (HALF). 18 trials.
 Among passing gates the one with the highest 2019–23 Sharpe is replayed for real on both windows. The replay must reproduce condition 1 and 2 to be adopted; adoption goes live only after the user is told and the live freeze period has run. If nothing passes, the record says so and the item is closed.
 
 **Caveats.** Survivorship favours the 2019–23 replay (today's 150 names). Eighteen trials count toward the deflated Sharpe of anything adopted. The 2019–23 window has no graph or Claude signals.
+
+### Round 36 results (2026-09-16 01:00 PT): no external regime indicator passes; the item is closed
+
+**The 2019–23 replay under the live setup** (`_pre2024b`: five price agents, next-open, open refresh, beta-adjusted target, SOXX 200-day sleeve, 1,170 days 2019-04-09 → 2023-11-29):
+
+| | Return | Sharpe | Max DD |
+|---|---|---|---|
+| whole book (sleeve averaged 0.39 of equity) | +63% | 0.34 | 32.5% |
+| stock legs only, gross of costs | +28% | 0.34 | 26% |
+| the 2026-09-11 v2.3 replay of the same window, for reference | −17% | −0.14 | 43% |
+
+The stock book under today's rules is weakly positive in the window where v2.3 lost. What changed since 09-11: the beta-adjusted learning target, the open refresh with its label, the macro yield fix, the events guards and the sleeve. Survivorship (today's 150 names) favours both replays equally. One window; not a claim of edge.
+
+**The screen** (18 trials: nine indicators × OFF/HALF, gating the stock legs offline). Ungated: 2019–23 +28% / 0.34 / 26%; 2024–26 +996% / 2.49 / 27%.
+
+| Indicator | Mode | 2019–23 return / Sharpe / DD | 2024–26 return / Sharpe / DD |
+|---|---|---|---|
+| SOXX 20d vol below 1y median | OFF | +27% / 0.41 / 23% | +157% / 1.71 / 25% |
+| VIX below 200d | OFF | +28% / 0.39 / 27% | +81% / 1.06 / 40% |
+| breadth 200 > 50% | HALF | +23% / 0.32 / 21% | +816% / 2.48 / 23% |
+| SOXX > 200d | HALF | +19% / 0.28 / 21% | +659% / 2.45 / 26% |
+| SOXX/SPY 60d RS | HALF | +17% / 0.27 / 24% | +607% / 2.52 / 19% |
+| all others | | worse than ungated in 2019–23 | −30% to −70% of the 2024–26 return |
+
+No gate reaches the pre-registered +0.30 Sharpe improvement in 2019–23; the two that improve Sharpe at all (+0.05 to +0.07, the volatility gates) cut the 2024–26 return by 84–92%. The rest lower both windows.
+
+**Reading.** The same conclusion as round 21, now for external signals too: the weak years are choppy, and any gate that switches the book off also switches off the recoveries. The stock book's protection in bad years comes from what it already does (small books, cash as a position, the vol target), and the sleeve's own 200-day rule handles the idle money. The item is closed; no gate goes forward to a replay. Eighteen trials are added to the count.

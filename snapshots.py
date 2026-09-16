@@ -60,6 +60,9 @@ def take(today=None):
         if last.get("hashes") == hashes:
             return None
         dest = ROOT / today
+        if (dest / "manifest.json").exists():   # the graph changed again the same day: keep the first snapshot untouched (research
+            from datetime import datetime         # pins it by date, dir_for(<date>) ignores the suffixed copy, later dates pick it up)
+            dest = ROOT / f"{today}_{datetime.now():%H%M}"
         dest.mkdir(parents=True, exist_ok=True)
         for sub, name in FILES:
             src = config.EARNINGS_AI_DIR / sub / name if sub else config.EARNINGS_AI_DIR / name
@@ -67,8 +70,8 @@ def take(today=None):
                 (dest / sub).mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src, dest / sub / name)
         (dest / "manifest.json").write_text(json.dumps({"date": today, "hashes": hashes}, indent=1), encoding="utf-8")
-        log.info("graph snapshot %s (%d files)", today, len(hashes))
-        return today
+        log.info("graph snapshot %s (%d files)", dest.name, len(hashes))
+        return dest.name
     except Exception as exc:
         log.warning("graph snapshot failed: %s", exc)
         return None

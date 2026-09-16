@@ -35,6 +35,9 @@ LLM_EFFORT = "max"                # Claude Code effort for the live Opus calls (
 LLM_WORKERS = 6                   # concurrent claude -p calls; also the server's slot count when the cycle starts it. 450 calls at max's ~100 s
                                   # need 6 slots to finish in ~2.1 h (3 slots: ~4.4 h, past the 06:30 PT open); each claude process is ~235 MB.
                                   # 2026-09-13 at xhigh: 41 s / call, 3 slots, ~1.7 h
+LLM_TIMEOUT = 480                 # seconds a Claude call may take end to end (queue wait + the call). The local server allows
+                                  # 420 s per call and its slots are shared with the earnings-ai Ask engine; on 2026-09-16 at max
+                                  # effort 14 calls of 300-420 s were abandoned at the old 300 s while the server finished them
 LLM_MAX_TICKERS = None            # None = every universe name gets the 3 Claude agents (user 2026-09-13: all 150). Before: 100 = top names by
                                   # preliminary |conviction| plus holdings. 2026-09-11: Opus HIGH measured 16 s and ~1k output
                                   # tokens per call, so 100 names x 3 agents = ~40 min with 2 workers, well inside the 03:30 -> 06:30 PT window

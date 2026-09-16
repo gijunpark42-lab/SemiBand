@@ -64,9 +64,11 @@ def ensure_server(wait_s=40):
     return False
 
 
-def ask_json(system, user, schema=OPINION_SCHEMA, model=None, timeout=300, tools=""):
+def ask_json(system, user, schema=OPINION_SCHEMA, model=None, timeout=None, tools=""):
     """One chat completion with a JSON schema; returns the parsed object.
-    tools: comma list of Claude Code built-ins to allow, e.g. "WebSearch" (server-side web search)."""
+    tools: comma list of Claude Code built-ins to allow, e.g. "WebSearch" (server-side web search).
+    timeout: seconds end to end (queue wait + the call); None = config.LLM_TIMEOUT."""
+    timeout = timeout or config.LLM_TIMEOUT
     body = {
         "claude_tools": tools,
         "model": model or config.LLM_MODEL,

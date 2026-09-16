@@ -37,6 +37,46 @@ class ClaudeCallTimeout(unittest.TestCase):
         self.assertEqual(seen, [480, 30])
 
 
+class ClaudeStageDeadline(unittest.TestCase):
+    def test_calls_after_the_deadline_are_refused_at_once_and_counted(self):
+        from datetime import datetime, timedelta, timezone
+
+        def never(req, timeout=None):
+            raise AssertionError("a call was made after the deadline")
+
+        llm.timing_summary()
+        with patch.object(llm, "DEADLINE", datetime.now(timezone.utc) - timedelta(seconds=1)), \
+                patch.object(llm.urllib.request, "urlopen", never), patch.object(config, "LLM_TIMEOUT", 480):
+            with self.assertRaises(llm.StageDeadline):
+                llm.ask_json("s", "u")
+        self.assertEqual(llm.timing_summary(), (0, 0.0, 0.0, 0.0, 1))                # one skipped, no timings, then reset
+        self.assertIsNone(llm.timing_summary())
+
+    def test_end_to_end_seconds_are_gathered_per_call_including_failures(self):
+        class Resp(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def ok(req, timeout=None):
+            return Resp(json.dumps({"choices": [{"message": {"content": "{}"}}]}).encode())
+
+        def boom(req, timeout=None):
+            raise TimeoutError("timed out")
+
+        llm.timing_summary()
+        with patch.object(llm, "DEADLINE", None), patch.object(config, "LLM_TIMEOUT", 480):
+            with patch.object(llm.urllib.request, "urlopen", ok):
+                llm.ask_json("s", "u")
+            with patch.object(llm.urllib.request, "urlopen", boom), self.assertRaises(TimeoutError):
+                llm.ask_json("s", "u")
+        calls, mean, p90, mx, skipped = llm.timing_summary()
+        self.assertEqual((calls, skipped), (2, 0))
+        self.assertGreaterEqual(mx, mean)
+
+
 class SameDaySnapshots(unittest.TestCase):
     def test_a_second_snapshot_the_same_day_gets_its_own_directory(self):
         with tempfile.TemporaryDirectory() as tmp:

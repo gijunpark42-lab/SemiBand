@@ -37,7 +37,7 @@ import portfolio
 import score
 import snapshots
 import universe as universe_mod
-from agents import moderator
+from agents import llm, moderator
 from agents.base import Signal
 from agents.macro import EXTRA as MACRO_EXTRA
 
@@ -88,8 +88,18 @@ def run_agents(universe, ctx, model, held, use_llm):
     keep = set(ranked[:config.LLM_MAX_TICKERS]) | (set(held) & set(universe))
     order = [t for t in universe if t in held] + [t for t in ranked if t in keep and t not in held]
     subset = {t: universe[t] for t in order}          # holdings first, then by prelim |conviction|
-    for name in llm_agents:
-        signals += _run_agent(name, subset, ctx)
+    if config.LLM_STAGE_DEADLINE:      # no new Claude call after this ET time: the Claude stage must end before the open
+        llm.DEADLINE = pd.Timestamp(f"{ctx['today']} {config.LLM_STAGE_DEADLINE}", tz="America/New_York").tz_convert("UTC").to_pydatetime()
+    llm.timing_summary()                # start the stage's timings clean
+    try:
+        for name in llm_agents:
+            signals += _run_agent(name, subset, ctx)
+            summary = llm.timing_summary()
+            if summary:
+                log.info("agent %-13s claude calls %d: end-to-end mean %.0fs, p90 %.0fs, max %.0fs, skipped by the deadline %d",
+                         name, *summary)
+    finally:
+        llm.DEADLINE = None             # the moderator runs after the open and must not be refused
     return signals
 
 

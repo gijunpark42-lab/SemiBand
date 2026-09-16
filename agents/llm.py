@@ -11,10 +11,30 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 
 import config
 
 log = logging.getLogger(__name__)
+DEADLINE = None                # aware datetime; after it ask_json refuses new calls at once (the cycle sets it for its Claude stage)
+TIMINGS = []                   # end-to-end seconds (queue wait + the call, timeouts included) since the last timing_summary()
+SKIPPED = 0                    # calls refused by the deadline since the last timing_summary()
+
+
+class StageDeadline(RuntimeError):
+    """Raised instead of calling Claude once DEADLINE has passed."""
+
+
+def timing_summary():
+    """(calls, mean s, p90 s, max s, skipped) gathered since the last call, then reset; None when nothing was gathered."""
+    global SKIPPED
+    if not TIMINGS and not SKIPPED:
+        return None
+    t = sorted(TIMINGS)
+    out = (len(t), (sum(t) / len(t)) if t else 0.0, (t[int(0.9 * (len(t) - 1))] if t else 0.0), (t[-1] if t else 0.0), SKIPPED)
+    TIMINGS.clear()
+    SKIPPED = 0
+    return out
 
 OPINION_SCHEMA = {
     "type": "object",
@@ -68,7 +88,11 @@ def ask_json(system, user, schema=OPINION_SCHEMA, model=None, timeout=None, tool
     """One chat completion with a JSON schema; returns the parsed object.
     tools: comma list of Claude Code built-ins to allow, e.g. "WebSearch" (server-side web search).
     timeout: seconds end to end (queue wait + the call); None = config.LLM_TIMEOUT."""
+    global SKIPPED
     timeout = timeout or config.LLM_TIMEOUT
+    if DEADLINE is not None and datetime.now(timezone.utc) >= DEADLINE:
+        SKIPPED += 1
+        raise StageDeadline(f"Claude stage deadline {DEADLINE.astimezone().strftime('%H:%M')} passed: call skipped")
     body = {
         "claude_tools": tools,
         "model": model or config.LLM_MODEL,
@@ -80,7 +104,11 @@ def ask_json(system, user, schema=OPINION_SCHEMA, model=None, timeout=None, tool
         data=json.dumps(body).encode("utf-8"),
         headers={"Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        data = json.load(r)
+    t0 = time.time()
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            data = json.load(r)
+    finally:
+        TIMINGS.append(time.time() - t0)
     content = data["choices"][0]["message"]["content"]
     return json.loads(content)

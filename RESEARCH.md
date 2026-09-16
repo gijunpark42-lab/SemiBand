@@ -1470,3 +1470,21 @@ A separate agent session prepared for the user's planned backfill of 2024-25 tra
 | `_pre_backfill_live` | refresh + order-day-open label | +793% | 1.91 | 35.1% | −6.5 (−1.48) |
 
 The second run is the clean-label form (the same setting as `_g1`, +767%), not the live label; the live reference for any post-backfill comparison is `_sl200` (refresh, signal-close label, 200-day sleeve). The handoff also claims a look-ahead in the graph agents' replay path (`supply_chain.run` and `neighbors` reading today's exposure.json counts and `_heat` regardless of the simulated date; `--graph-asof` picking one snapshot for the whole run) that a backfill would inflate and saturate; the review partner is verifying it against `PointInTimeMap`. Order for Trading if the user backfills: verify or fix that path first, then backfill, then replay with `_sl200`'s flags and once more without the graph agents to isolate the effect. `llm_backtest` (a point-in-time test of `llm_guidance`) calls Claude and runs only with the user's go-ahead outside the cycle.
+
+### Round 37 results (2026-09-16 01:25 PT): the rank target orders names worse; live stays
+
+469 common days at 5 bps against the live baseline `_sl200`.
+
+| Run | Return | Sharpe | Max DD | Return at 30 bps | Turnover | Top-15 rank book | vs live, bps/day (t) | OOS (t) | Rank-book alpha vs live, OOS / IS (t) |
+|---|---|---|---|---|---|---|---|---|---|
+| `_sl200` live | +1129% | 2.24 | 28.3% | +709% | 0.36 | +792% (2.08) | — | — | — |
+| `_rk1` rank-ordered convictions | +1001% | 2.17 | 31.5% | +583% | 0.41 | +575% (1.90) | −2.5 (−0.64) | −2.6 (−0.43) | −7.1 (−1.49) / −2.7 (−0.34) |
+| `_cl1` ±2.5σ clip control | +1181% | 2.26 | 29.5% | +740% | 0.36 | +772% (2.06) | +1.0 (+1.03) | −0.0 (−0.02) | −0.4 (−0.67) / −0.2 (−0.09) |
+
+The rank model's daily 10-day IC was 0.0234 against the return model's 0.0257 on the same days.
+
+**Gate:** `_rk1` fails conditions 2, 3 and 5 (and 1, see below). Decision, as pre-registered: keep live, no tuning. The clip control is inside noise (+1.0 bps/day, t 1.0, OOS flat) and is not adopted either; by the control rule it would only have replaced a passing rank model.
+
+**Reading.** Fitting on per-date ranks did not order names better; with the sizing held fixed by construction it lowered the top-15 rank book from +792% to +575% and turned the book over faster (0.41 against 0.36). Whatever the learner's edge at the top of the ranking is, the return magnitudes it fits on carry information the ranks discard.
+
+**Two records.** (1) Condition 1's cross-run check (per-date `ic_learned` / `ic_prior` identical to the baseline) did not hold, because `_sl200` ran on the 2026-09-15 price download and both round 37 runs on the 2026-09-16 one; the within-run multiset assertion held on every day, and the price difference cannot account for a gap of this size. A same-day baseline is the right comparator for any future run. (2) The sigma clip is applied after the ±15% winsor, so the control is "tighter than", not "instead of", the winsor.

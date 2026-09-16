@@ -28,11 +28,13 @@ TRADINGAGENTS_DIR = Path(os.getenv("TRADINGAGENTS_DIR", "C:/Users/calif/dev/Trad
 LLM_URL = os.getenv("LOCAL_CLAUDE_URL", "http://127.0.0.1:8765/v1")
 LLM_MODEL = "claude-opus-5"         # LIVE cycle + guardian only. 2026-09-11: Fable max ~10k tokens and 55 s per call; Opus max 105 s and up to 15k tokens -> the local server runs opus at HIGH effort
 LLM_MODEL_RESEARCH = "claude-sonnet-5"   # any research / backtest script that calls Claude uses this (cheap, low effort), never Fable max
-LLM_EFFORT = "xhigh"              # Claude Code effort for the live Opus calls (low/medium/high/xhigh/max); handed to the local server when the
-                                  # cycle starts it (LOCAL_CLAUDE_EFFORT_DEEP). 2026-09-13 (user): xhigh. Measured: high 16 s / ~1.1k output
-                                  # tokens per call, max ~100 s / ~7.5k; a running server keeps the effort it was started with
-LLM_WORKERS = 3                   # concurrent claude -p calls; also the server's slot count when the cycle starts it. 2026-09-13: xhigh measured
-                                  # 41 s / call, so 150 names x 3 agents = 450 calls -> ~1.7 h with 3 workers (2.6 h with 2) inside the 03:30 -> 06:30 PT window
+LLM_EFFORT = "max"                # Claude Code effort for the live Opus calls (low/medium/high/xhigh/max); handed to the local server when the
+                                  # cycle starts it (LOCAL_CLAUDE_EFFORT_DEEP). 2026-09-15 (user): max for the 03:30 cycle. Measured: high 16 s /
+                                  # ~1.1k output tokens per call, xhigh 18-30 s (2026-09-15), max ~100 s / ~7.5k (2026-09-11); a running server keeps
+                                  # the effort it was started with, so a change applies to the next cycle that starts the server
+LLM_WORKERS = 6                   # concurrent claude -p calls; also the server's slot count when the cycle starts it. 450 calls at max's ~100 s
+                                  # need 6 slots to finish in ~2.1 h (3 slots: ~4.4 h, past the 06:30 PT open); each claude process is ~235 MB.
+                                  # 2026-09-13 at xhigh: 41 s / call, 3 slots, ~1.7 h
 LLM_MAX_TICKERS = None            # None = every universe name gets the 3 Claude agents (user 2026-09-13: all 150). Before: 100 = top names by
                                   # preliminary |conviction| plus holdings. 2026-09-11: Opus HIGH measured 16 s and ~1k output
                                   # tokens per call, so 100 names x 3 agents = ~40 min with 2 workers, well inside the 03:30 -> 06:30 PT window

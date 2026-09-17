@@ -110,7 +110,8 @@ class TranscriptsOnly(unittest.TestCase):
         self.assertGreater(s_full.direction, s_calls.direction)      # the two filing rows carried the extra tight markers
         with patch.object(config, "GRAPH_TRANSCRIPTS_ONLY", True):
             self.assertTrue(graph_pit.PointInTimeMap().transcripts_only)   # None = follow config
-        self.assertFalse(graph_pit.PointInTimeMap().transcripts_only)
+        with patch.object(config, "GRAPH_TRANSCRIPTS_ONLY", False):
+            self.assertFalse(graph_pit.PointInTimeMap().transcripts_only)
 
     def test_groups_come_from_the_maps_chain_tags(self):
         pit = graph_pit.PointInTimeMap()

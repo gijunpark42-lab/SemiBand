@@ -109,8 +109,9 @@ DEMEAN_CONVICTION = True          # subtract the day's cross-sectional mean conv
 DEMEAN_GROUP = None               # round 39 candidate (2026-09-16): "chain" = demean within two graph groups: power = names whose only chain
                                   # tag is power_cooling, chip = everything else. None = one cross-sectional mean
 DEMEAN_GROUP_MIN = 5              # a group with fewer names than this uses the whole mean
-GRAPH_TRANSCRIPTS_ONLY = False    # round 39 candidate: the graph agents' point-in-time map skips SEC-filing rows (10-K/10-Q/8-K/20-F/6-K/40-F,
-                                  # third-party notes), as the Claude agents already do (2026-09-13)
+GRAPH_TRANSCRIPTS_ONLY = True     # the graph agents' point-in-time map skips SEC-filing rows (10-K/10-Q/8-K/20-F/6-K/40-F, third-party
+                                  # notes), as the Claude agents do since 09-13. Adopted 2026-09-17 (round 41, protocol v4 on the VM: +2.3 bp/d,
+                                  # t +1.5, Sharpe 2.20 vs 2.11, max DD +0.8 pts, 5/6 blocks not worse). Live from the 09-18 cycle
 TECHNICAL_RESIDUAL = False        # round 40 candidate (2026-09-17, Blitz-Huij-Martens residual momentum): technical's rel20/rel60 subtract
                                   # beta x SOXX instead of SOXX (trailing 60-day pair beta, clipped to 0..3); False = plain relative return
 GROSS_TARGET = 1.50               # CEILING on gross exposure (150% of equity = 50% margin); not a target, cash is a position

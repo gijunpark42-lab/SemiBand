@@ -34,6 +34,30 @@ def targets(convictions, equity, realized_vol=None):
     return {t: round(w * equity, 2) for t, w in weights.items() if w * equity >= config.MIN_ORDER_USD}
 
 
+def beta_floor(weights, betas, floor, cap, sleeve="__SLEEVE__"):
+    """Round 42 candidate: raise the book's benchmark beta to `floor` with the idle-sleeve ETF (beta 1). weights = {ticker:
+    weight}, the sleeve under `sleeve`, other "__" keys untouched; betas = {ticker: beta}, missing -> 1.0. The sleeve grows
+    while gross <= cap; past the cap the stock weights are scaled down together so that gross == cap and beta == floor.
+    A book already at the floor, or one that cannot be traded for beta, is returned unchanged. -> new weights"""
+    stocks = {t: x for t, x in weights.items() if not t.startswith("__")}
+    other = sum(abs(x) for t, x in weights.items() if t.startswith("__") and t != sleeve)
+    gross = sum(abs(x) for x in stocks.values())
+    beta = sum(x * betas.get(t, 1.0) for t, x in stocks.items())
+    if beta + weights.get(sleeve, 0.0) >= floor:
+        return dict(weights)
+    need = floor - beta                                  # total sleeve weight that brings the book to the floor
+    if gross + other + need <= cap:
+        return {**weights, sleeve: need}
+    if gross - beta <= 1e-9:
+        return dict(weights)
+    k = (cap - other - floor) / (gross - beta)
+    if not 0.0 < k < 1.0:
+        return dict(weights)
+    out = {t: (x * k if not t.startswith("__") else x) for t, x in weights.items()}
+    out[sleeve] = floor - k * beta
+    return out
+
+
 def plan(target_usd, positions, convictions, universe, equity, buying_power, extra_proceeds=0.0):
     """-> list of {ticker, side, notional|None(close), reason_tag}. Sells first, then buys.
 

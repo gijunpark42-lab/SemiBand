@@ -167,7 +167,8 @@ def rank_order(conv, conv_rank):
 def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mode="close", agents=None, end=None,
         open_refresh=False, label_open=False, label_next_close=False, refresh_agents=None, learn_preopen=False,
         prior_only=False, long_short=None, sleeve_mix=None, rank_order_mode=False, target_clip_sigma=None,
-        intercept=None, drop_dir=(), demean=None, demean_group=None, graph_transcripts_only=None, technical_residual=None):
+        intercept=None, drop_dir=(), demean=None, demean_group=None, graph_transcripts_only=None, technical_residual=None,
+        margin_rate=0.0, gross_target=None, beta_floor=None):
     """tag: suffix for the output files (state/backtest<tag>.sqlite / backtest_report<tag>.json)
     so a long build can run while sweeps read the default files.
     exec_mode: 'close' = trade at the close the signals were computed on (optimistic);
@@ -210,6 +211,7 @@ def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mod
                 "demean_group": (config.DEMEAN_GROUP if demean_group is None else demean_group) or None,           # round 39
                 "graph_transcripts_only": bool(config.GRAPH_TRANSCRIPTS_ONLY) if graph_transcripts_only is None else bool(graph_transcripts_only),
                 "technical_residual": bool(config.TECHNICAL_RESIDUAL) if technical_residual is None else bool(technical_residual),   # round 40
+                "margin_rate": float(margin_rate or 0.0), "gross_target": gross_target, "beta_floor": beta_floor,                  # round 42
                 "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     publish_progress(dict(run_info, status="loading", pct=0.0, message="downloading prices and earnings"))
     try:
@@ -257,9 +259,11 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
     rank_model_file = config.STATE_DIR / f"backtest_model{run_info.get('tag') or ''}_rank.json"
     learner.TARGET_CLIP_SIGMA = run_info.get("target_clip_sigma")
     learner.INTERCEPT, learner.DROP_DIR = run_info.get("intercept"), tuple(run_info.get("drop_dir") or ())   # round 38
-    live_agents, live_residual = config.AGENTS, config.TECHNICAL_RESIDUAL
+    live_agents, live_residual, live_gross = config.AGENTS, config.TECHNICAL_RESIDUAL, config.GROSS_TARGET
     config.AGENTS = PIT_AGENTS                       # the prior and the sizing see only the simulated agents
     config.TECHNICAL_RESIDUAL = bool(run_info.get("technical_residual"))   # round 40: the technical agent reads it per call
+    if run_info.get("gross_target"):                                       # round 42: portfolio.targets reads the ceiling per call
+        config.GROSS_TARGET = float(run_info["gross_target"])
 
     # numpy views of the price frames: the day loop reads single cells thousands of times (same float64 values as .iloc)
     C = closes.to_numpy(dtype=float)
@@ -439,6 +443,12 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
                 idle = max(0.0, scale - sum(v for tk, v in w.items() if not tk.startswith("__")))   # total capped at the vol target
                 if idle > 0:
                     w["__SLEEVE__"] = config.IDLE_SLEEVE_FRACTION * idle
+        floor = run_info.get("beta_floor")
+        if floor and config.IDLE_SLEEVE and not long_short:            # round 42: trend-gated beta floor through the sleeve ETF
+            s = C[:, col[config.IDLE_SLEEVE]]
+            n_tr = config.IDLE_SLEEVE_TREND
+            if n_tr is None or (i >= n_tr and s[i] > float(np.nanmean(s[i - n_tr + 1: i + 1]))):
+                w = portfolio.beta_floor(w, prediction_betas, float(floor), config.GROSS_TARGET)
         for tk in w:                                                 # rebalance band, as portfolio.plan() does live: a held name is
             if tk in prev_w and abs(w[tk] - prev_w[tk]) < config.REBALANCE_BAND * abs(w[tk]):   # not resized for a move under 30% of target
                 w[tk] = prev_w[tk]
@@ -454,6 +464,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
         ret -= abs(w.get("__HEDGE__", 0.0)) * 0.0002          # ~5%/yr borrow drag on the short side (as in sweep.py)
         ret -= sum(-x for tk, x in w.items() if x < 0 and not tk.startswith("__")) * 0.0002   # the same borrow drag on short stocks
         ret -= turnover * config.COST_BPS / 10_000
+        ret -= max(0.0, sum(x for x in w.values() if x > 0) - 1.0) * run_info.get("margin_rate", 0.0) / 252   # round 42: margin interest
         equity *= 1 + ret
         turnover_total += turnover
         prev_w = w
@@ -494,7 +505,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
     learner.MODEL_FILE = config.STATE_DIR / "model.json"
     learner.TARGET_CLIP_SIGMA = None
     learner.INTERCEPT, learner.DROP_DIR = None, ()
-    config.AGENTS, config.TECHNICAL_RESIDUAL = live_agents, live_residual
+    config.AGENTS, config.TECHNICAL_RESIDUAL, config.GROSS_TARGET = live_agents, live_residual, live_gross
 
     rets = np.diff(np.log([1.0] + [c["portfolio"] for c in curve]))
     soxx = np.diff(np.log([1.0] + [c["soxx"] for c in curve]))
@@ -514,6 +525,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
         "intercept": run_info.get("intercept"), "drop_dir": run_info.get("drop_dir"), "demean": bool(run_info.get("demean")),
         "demean_group": run_info.get("demean_group"), "graph_transcripts_only": bool(run_info.get("graph_transcripts_only")),
         "technical_residual": bool(run_info.get("technical_residual")),
+        "margin_rate": run_info.get("margin_rate"), "gross_target": run_info.get("gross_target"), "beta_floor": run_info.get("beta_floor"),
         "sizing": {"size": config.SIZE_PER_CONVICTION, "cap": config.MAX_POSITION_PCT, "gross": config.GROSS_TARGET,
                    "long_short": run_info.get("long_short"),
                    "min_book": config.MIN_STOCK_BOOK, "idle_sleeve": config.IDLE_SLEEVE,
@@ -599,6 +611,10 @@ if __name__ == "__main__":
                    help="round 39: the graph agents skip SEC-filing rows; default follows config.GRAPH_TRANSCRIPTS_ONLY")
     p.add_argument("--technical-residual", action=argparse.BooleanOptionalAction, default=None,
                    help="round 40: technical's relative returns are beta-adjusted residuals; default follows config.TECHNICAL_RESIDUAL")
+    p.add_argument("--margin-rate", type=float, default=0.0, help="round 42: annual interest charged on long gross above 1.0, e.g. 0.07")
+    p.add_argument("--gross-target", type=float, default=None, help="round 42: override GROSS_TARGET for the run, e.g. 2.0")
+    p.add_argument("--beta-floor", type=float, default=None,
+                   help="round 42: while the sleeve ETF is above its trend average, raise the book's beta to this floor with the ETF")
     p.add_argument("--prior-only", action="store_true", help="trade on the equal-weight prior blend instead of the fitted weights (learner ablation); the learner is still fit daily and both ICs are recorded per day")
     p.add_argument("--long-short", type=int, default=None, help="market-neutral book (round 33): long the top N and short the bottom N convictions, gross GROSS_TARGET under the vol target split so the legs' betas cancel, 2 bps/day borrow, no sleeve")
     p.add_argument("--position-cap", type=float, default=None, help="override MAX_POSITION_PCT, e.g. 0.30")
@@ -636,5 +652,6 @@ if __name__ == "__main__":
             rank_order_mode=args.rank_order, target_clip_sigma=args.target_clip_sigma,
             intercept=args.intercept, drop_dir=tuple(x for x in args.drop_dir.split(",") if x), demean=args.demean,
             demean_group=None if args.demean_group is None else ("" if args.demean_group == "none" else args.demean_group),
-            graph_transcripts_only=args.graph_transcripts_only, technical_residual=args.technical_residual)
+            graph_transcripts_only=args.graph_transcripts_only, technical_residual=args.technical_residual,
+            margin_rate=args.margin_rate, gross_target=args.gross_target, beta_floor=args.beta_floor)
     print(json.dumps({k: v for k, v in r.items() if k != "curve"}, indent=2)[:4000])

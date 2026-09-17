@@ -1632,3 +1632,24 @@ Data effect (informational, same flags, same price day): old graph `_i4` +1110% 
 **Recorded, not planned.** `llm_news` horizon mismatch (headline signals fade in 1–2 days, Lopez-Lira & Tang 2023, arXiv 2304.07619; Heston & Sinha 2017): rule for live evidence only — if after 60 live sessions llm_news's 10/20-day IC is near zero outside insider-trade and conference news, narrow it to those topics. Posterior-variance sizing (Kan & Zhou 2007) is moot: sizing is conviction × 0.60, not posterior variance. Analyst-revision features (Jegadeesh et al. 2004): no revision history in the data.
 
 **Dropped.** The Kim, Muhn & Nikolaev LLM financial-statement paper (reported as inapplicable by the reviewing session). Anything that requires LLM calls outside the scheduled cycle.
+
+## 2026-09-17 01:45 PT — protocol v3, pre-registered before any further result: purged alternating blocks replace the contiguous 70/30 split from round 41 on
+
+**Why.** Under the contiguous split (validation = 2024-10..2026-01, test = 2026-02..08) the validation window is the 2024–25 semis rally and the test window holds the 2026 crash and recovery. Two candidates that trim beta exposure, filings-out (round 39 `_n1`) and residual momentum (round 40 `_r1`), each lost by a hair in validation (t −0.64 both) and won the one-shot test (+6 and +10 bp/d, t +1.3 and +1.0) with lower drawdowns. A selection window that contains one regime cannot judge regime-dependent changes; changing the rule for those two rounds after seeing their results would be selection leakage, so their verdicts stand (not adopted) and the rule changes only for what comes next.
+
+**Rule from round 41.** The common days are cut into six equal contiguous blocks; blocks 1, 3, 5 are the validation set and blocks 2, 4, 6 the test set; 20 trading days are purged from the start of every block (the 10/20-day labels overlap the previous block). The gate reads the union of the validation blocks (Sharpe not lower, max DD ≤ base + 2 pts, paired ≥ 0); the union of the test blocks is scored once per adopted candidate and vetoes adoption when its paired t < −1 or its max DD > base + 2 pts. Both unions contain rally and sell-off days. Trial counting, same-day baseline and the graph pin stay.
+
+**Re-test, pre-registered.** `_n1` (GRAPH_TRANSCRIPTS_ONLY) and `_r1` (TECHNICAL_RESIDUAL) are re-run in the round 41 batch on that day's price cache and judged under v3 (2 trials added). Their current verdicts are not changed by anything computed on today's curves under v3; that computation is reported below for information only, never as a decision.
+
+### Round 40 results (2026-09-17 01:50 PT): residual momentum fails the pre-registered gate; lower drawdown out of sample; 2019–23 residual run pending
+
+Runs on snapshot `2026-09-16_1917` (hash 85395ac5981a, unchanged), price cache of 09-17, 470 common days 2024-10-01..2026-08-17. `_p0` (2019–23 baseline, live rules with demean, five price agents, 1,170 days) finished: +65% / Sharpe 0.35 / max DD 41.6% (SOXX +170%). `_p1` (2019–23 residual) was killed twice by the memory guard (a 1,200-day replay does not fit beside the user's open applications tonight; 2.4 GB free) and is queued for the daytime, after the 09-17 Claude stage.
+
+| Run | Validation (329 d) | Test (121 d, once) | Full (informational) | vs base validation (t) | vs base test (t) | Gate |
+|---|---|---|---|---|---|---|
+| `_r0` baseline | +559% / 2.38 / 24.0% | +41% / 1.16 / 27.3% | +947% / 2.08 / 27.3% | — | — | base |
+| `_r1` residual momentum | +513% / 2.31 / 25.6% | +60% / 1.64 / 22.6% | +1019% / 2.18 / 25.6% | −2.4 bp/d (−0.64) | +10.1 bp/d (+0.99) | FAIL (Sharpe 2.31 < 2.38, paired < 0) |
+
+Learned 10-day IC 0.029 (`_r1`) vs 0.031 (`_r0`); turnover 0.39 vs 0.40; names and gross unchanged. Under the v3 split computed for information only (never a decision): `_r1` validation −2.0 bp/d (t −0.60), Sharpe 1.72 vs 1.79 → FAIL as well; test +3.3 bp/d (t +0.38), max DD 22.6% vs 27.3%. The same computation on round 39: `_n1` passes v3 validation (+3.1 bp/d, t +1.06) but its test max DD 28.7% vs 26.6% trips the veto by 0.1 pt; `_n2` passes validation and is vetoed by its 33.3% drawdown.
+
+**Reading.** Residual momentum's only consistent effect is a smaller drawdown (full 25.6% vs 27.3%, test 22.6% vs 27.3%); its return effect is inside noise in both splits. Not adopted. It stays a re-test candidate in the round 41 batch under protocol v3 (fresh price day), together with `_n1`; the 2019–23 pair (`_p1` vs `_p0`) is the robustness read for that batch. Trials this round: 3 finished (+1 pending).

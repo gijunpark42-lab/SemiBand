@@ -1593,3 +1593,22 @@ Final graph-agent direction weights (10d / 20d): `_i0` supply_chain −0.171 / �
 - `_n2`: `--demean-group chain` (`DEMEAN_GROUP`): demean within two groups, power = names whose only chain tag is power_cooling, chip = everything else (a group under 5 names uses the whole mean). Hypothesis: the 11-of-14 power/cooling book of 09-16 is a theme bet the plain demean created; neutralising the theme keeps the relative winners of both groups. Gate as `_n1`.
 - `_n3`: both switches, run only if both pass; gate vs the better single.
 Stop rule: at most four replays; a variant that fails stays off. Adoption for 09-17 needs a state-copy rehearsal and the review partner. Trials this round: up to 4.
+
+### Round 39 results (2026-09-16 19:50 PT): the enriched graph is inside noise; filings-out has no validation power; chain-neutral fails its one-shot test; the warm start moves to the new-graph ledger
+
+Three 500-day replays on snapshot `2026-09-16_1917` (hash 85395ac5981a, unchanged through the batch), same-day price cache, 470 common days 2024-09-30..2026-08-14. Gate under the new protocol: validation 2024-09-30..2026-01-22 (329 d), embargo 20 d, test 2026-02-23..2026-08-14 (121 d, scored once).
+
+| Run | Validation return / Sharpe / max DD | Test (one shot) return / Sharpe / max DD | Full (informational) | vs `_n0` validation paired (t) | vs `_n0` test paired (t) | Gate |
+|---|---|---|---|---|---|---|
+| `_n0` new-graph baseline | +523% / 2.30 / 24.7% | +65% / 1.68 / 26.6% | +1030% / 2.14 / 26.6% | — | — | base |
+| `_n1` filings out of the graph agents | +517% / 2.29 / 24.7% | +77% / 1.88 / 28.7% | +1152% / 2.24 / 28.7% | −0.32 bp/d (−0.64) | +6.0 bp/d (+1.32) | FAIL (Sharpe 2.29 < 2.30, paired < 0) |
+| `_n2` chain-neutral demean | +568% / 2.41 / 23.3% | +45% / 1.25 / 33.3% | +1006% / 2.13 / 33.3% | +1.98 bp/d (+0.54) | −11.1 bp/d (−1.49) | validation PASS, test window clearly worse |
+
+Data effect (informational, same flags, same price day): old graph `_i4` +1110% / 2.25 / 24.7% against new graph `_n0` +1030% / 2.14 / 26.6%, paired −1.2 bp/d (t −0.26); before 2025-10 the two are identical (no graph rows), so all of the difference sits in 2025-10..2026-08 (−2.6 bp/d, t −0.26): the enriched 2026 calls neither help nor hurt the replay. Learned 10-day IC 0.031 (`_n0`) vs 0.027 (`_i4`).
+
+**Reading.**
+- `_n1`: the graph agents are nearly silent before 2025-10, so the validation window cannot see a graph-agent change; the variant differs from the baseline only in the graph-covered months, which are the test window (where it is +6 bp/d, t +1.3, with a higher drawdown). By the pre-registered rule the test cannot pick it. Not adopted; re-test in a round whose validation window contains graph-covered months (from 2026-01 the graph has 12 months of rows), or on live sessions.
+- `_n2`: it helps in the 2024–25 rally (validation +2 bp/d) and hurts in the 2026 semis sell-off (test −11 bp/d, max DD 33% against 27%): demeaning within the chip group keeps buying the least-bad chips while the group falls, the trade-off named in the hypothesis. The one-shot test is the honest out-of-sample report and it says no. Not adopted. Protocol addendum from round 40: a candidate whose one-shot test is significantly worse (paired t < −1 or max DD > base + 2 pts) is not adopted; the test stays one-shot and is never used to rank.
+- The switches `GRAPH_TRANSCRIPTS_ONLY` and `DEMEAN_GROUP` stay off; both remain available as replay flags.
+- Warm start: the live learner's history (`state/backtest.sqlite` = `_sz5`, generated on the pre-enrichment graph) is replaced by `_n0`'s ledger, generated on the enriched graph the live agents now read (train = serve; the rehearsal on a state copy showed the same live graph-agent rows either way: supply_chain +0.529, neighbors +0.557). Rehearsal of tomorrow's fit on the new warm start with today's reused signals (evening prices): effective weights supply_chain −0.234, neighbors +0.184, risk 0.083, fundamentals and the three Claude agents 0.079, macro −0.067, technical 0.046, mean_reversion 0.045 (control on the old warm start: risk 0.181, fundamentals/Claude 0.116, technical 0.077, neighbors 0.068, supply_chain −0.058, macro −0.083); demean −0.159 (control −0.105); a 19-order rebalance into a mixed book (top: SHEL, STM, D, ETR, XEL, TXN, ENTG, ES; also MSFT, AMZN) with the sleeve off, against the control's trim to 10 names with the sleeve back on. The old file is kept as `state/backtest_sz5_before_n0_20260916.sqlite`.
+- Trials this round: 3 replays (`_n3` not run: `_n2` failed).

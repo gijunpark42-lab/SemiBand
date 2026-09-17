@@ -1753,3 +1753,16 @@ Off raises return with more drawdown and a lower Sharpe, stricter does the oppos
 ### Shadow agent `insider` — replay result (2026-09-17 16:35 PT, `_s0`, VM): recorded, no measurable edge; runs live as a shadow only
 
 4,384 rows recorded (8.7 names a day, 59 distinct names), 4,342 scored at 20 days; the book equals the baseline's (non-voting). Event-study spread of signalled names over all other names: +0.23% per 20 days over 500 dates, overlap-adjusted t +0.23; by half-year +1.5%, +1.1%, −2.0%, −0.2%, +3.7% (2026H2, 33 dates); share of dates positive 47%; pooled rank IC among signalled rows −0.08 (more buyers or dollars did not mean more return). Signalled rows averaged +2.12% against +1.47% for all rows, but that raw gap is not date-matched. Reading: no edge is visible in this window; the published +0.8%/month is not there at half strength either. Under the pre-registered rule the agent goes live as a shadow (the spread is not negative), recorded and scored, never voting, and the voting question is revisited only with t ≥ 2 in a later replay or after 60 live sessions. Trials: 1.
+
+### Audit re-baseline (2026-09-17 17:00 PT, VM, fixed replay): the corrected headline is +1,028% / Sharpe 2.14 / max DD 30.1%
+
+Same day, same machine, live config (filings-out, demean, sleeve 200d), 7% margin interest, 5 bps, snapshot 2026-09-17:
+
+| Run | Return / Sharpe / max DD | vs `_a0` paired (t, Newey-West) | What it isolates |
+|---|---|---|---|
+| `_a0` fixed replay (drifted holdings, no FRED look-ahead) | **+1028% / 2.14 / 30.1%** | — | the new baseline for every later round |
+| `_a1` `--no-drift` (old convention) | +1090% / 2.18 / 30.2% | +1.1 bp/d (+1.33, +1.63) | the free constant-weight rebalancing: ~62 points of total return, ~3% a year |
+| `_a2` `--earnings-shift 5` | +1001% / 2.11 / 30.8% | −0.5 bp/d (−0.20, −0.22) | perfect knowledge of earnings dates: small |
+| `_x0` (pre-fix code, same day) | +1090% / 2.18 / 30.2% | identical to `_a1` | the FRED terms never acted on the VM (no key there); the look-ahead was a laptop-only defect |
+
+Report fields now present in every run: equal-weight buy-and-hold of the same 142 priced names over the same window and marks **+245%** (against SOXX +152%), missing-price name-days 33 of ~6,500, deflated Sharpe 0.82 with 330 trials (expected best-of-330 Sharpe under no skill 1.46), bootstrap Sharpe CI about [1.1, 3.4]. At 30 bps the corrected book is roughly +600%. Reading for the user: the honest replay says the selection engine multiplies the universe's own +245% about four times over this window, the number is real at about 80% confidence after the search that produced it, and the live expectation stays Sharpe ~1 (the out-of-sample window was spent by rounds 10–43). `_b0` / `_b1` (2019–23, drift on/off) are the same check on the older window and are recorded when they finish.

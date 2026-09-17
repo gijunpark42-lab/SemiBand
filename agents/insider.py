@@ -22,7 +22,8 @@ from agents.base import Signal, clip
 
 NAME = "insider"
 WINDOW_DAYS = 60                  # a filing counts for this many calendar days
-FETCH_BUDGET_S = 300              # the daily refresh never holds the rule-agent stage longer than this
+FETCH_BUDGET_S = int(os.getenv("INSIDER_FETCH_BUDGET_S", "300"))   # the refresh never holds a cycle longer than this; the nightly
+                                                                    # task (SemiBand-Insider, 01:35 PT) runs it with a long budget
 MAX_429 = 3                       # consecutive throttles that end the refresh (the rest keep yesterday's files)
 MIN_USD = 10_000                  # smaller purchases are ignored
 HISTORY_FROM = "2024-01-01"
@@ -130,3 +131,13 @@ def run(universe: dict, ctx: dict) -> list[Signal]:
         out.append(Signal(NAME, ticker, direction, confidence, 20,
                           f"{buyers} insider(s) bought ${usd:,.0f} on the open market; newest filing {(today - newest).days}d ago").clipped())
     return out
+
+
+if __name__ == "__main__":                                 # nightly refresh outside the cycle: python -X utf8 -m agents.insider
+    import sys
+    import universe as universe_mod
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    names = universe_mod.load()
+    n = refresh(names)
+    log.info("insider refresh: %d of %d names fetched (budget %ds)", n, len(names), FETCH_BUDGET_S)
+    sys.exit(0)

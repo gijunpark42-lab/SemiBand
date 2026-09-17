@@ -37,7 +37,7 @@ import portfolio
 import score
 import snapshots
 import universe as universe_mod
-from agents import llm, moderator
+from agents import graph_pit, llm, moderator
 from agents.base import Signal
 from agents.macro import EXTRA as MACRO_EXTRA
 
@@ -107,18 +107,20 @@ def run_agents(universe, ctx, model, held, use_llm):
     return signals
 
 
-def convict(signals, model, shadow_model, notes=None):
-    """Convictions from the active model, its breakdown, and the shadow model's convictions (demeaned when configured)."""
+def convict(signals, model, shadow_model, notes=None, groups=None):
+    """Convictions from the active model, its breakdown, and the shadow model's convictions (demeaned when configured;
+    groups = {ticker: group} demeans within DEMEAN_GROUP groups, round 39)."""
     convictions, breakdown = learner.predict(signals, model)
     shadow_convictions, _ = learner.predict(signals, shadow_model) if shadow_model else ({}, {})
     if config.DEMEAN_CONVICTION and convictions:
-        mean_conv = sum(convictions.values()) / len(convictions)
-        convictions = {t: c - mean_conv for t, c in convictions.items()}
+        convictions, means = learner.demean(convictions, groups, config.DEMEAN_GROUP_MIN)
         if notes is not None:
-            notes.append(f"convictions demeaned by {mean_conv:+.3f}")
+            if "all" in means:
+                notes.append(f"convictions demeaned by {means['all']:+.3f}")
+            else:
+                notes.append("convictions demeaned by " + ", ".join(f"{g} {m:+.3f}" for g, m in sorted(means.items())))
     if config.DEMEAN_CONVICTION and shadow_convictions:
-        shadow_mean = sum(shadow_convictions.values()) / len(shadow_convictions)
-        shadow_convictions = {t: c - shadow_mean for t, c in shadow_convictions.items()}
+        shadow_convictions, _ = learner.demean(shadow_convictions, groups, config.DEMEAN_GROUP_MIN)
     return convictions, breakdown, shadow_convictions
 
 
@@ -282,7 +284,8 @@ def main():
         REUSE_MARKER.unlink(missing_ok=True)
     shadow_mode = "raw" if config.LEARNER_TARGET_MODE == "beta" else "beta"
     shadow_model = learner.load(shadow_mode)
-    convictions, breakdown, shadow_convictions = convict(signals, model, shadow_model, notes)
+    groups = graph_pit.groups(universe) if config.DEMEAN_CONVICTION and config.DEMEAN_GROUP else None
+    convictions, breakdown, shadow_convictions = convict(signals, model, shadow_model, notes, groups)
 
     # 240 minutes: the wait starts only after every agent has run, and a 03:30 PT start whose agents finish by 04:30 would
     # give up just before the 06:30 PT open with 120 (audit 2026-09-15; yesterday's run only traded after a relaunch)
@@ -295,7 +298,7 @@ def main():
     if config.OPEN_REFRESH_AGENTS:
         signals, live = open_refresh(universe, signals, today, prediction_betas, notes)
         if live:
-            convictions, breakdown, shadow_convictions = convict(signals, model, shadow_model)
+            convictions, breakdown, shadow_convictions = convict(signals, model, shadow_model, groups=groups)
 
     acct = broker.account()          # fresh numbers at the open
     equity, cash = float(acct.equity), float(acct.cash)

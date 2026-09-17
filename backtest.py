@@ -59,6 +59,7 @@ import universe as universe_mod
 from agents import macro, mean_reversion, ml_ranker, momentum, risk, sue, technical, events
 from agents.base import Signal, clip
 from agents import indicators
+from agents import graph_pit
 from agents.graph_pit import PointInTimeMap
 
 log = logging.getLogger("backtest")
@@ -166,7 +167,7 @@ def rank_order(conv, conv_rank):
 def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mode="close", agents=None, end=None,
         open_refresh=False, label_open=False, label_next_close=False, refresh_agents=None, learn_preopen=False,
         prior_only=False, long_short=None, sleeve_mix=None, rank_order_mode=False, target_clip_sigma=None,
-        intercept=None, drop_dir=(), demean=None):
+        intercept=None, drop_dir=(), demean=None, demean_group=None, graph_transcripts_only=None):
     """tag: suffix for the output files (state/backtest<tag>.sqlite / backtest_report<tag>.json)
     so a long build can run while sweeps read the default files.
     exec_mode: 'close' = trade at the close the signals were computed on (optimistic);
@@ -206,6 +207,8 @@ def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mod
                 "rank_order": rank_order_mode, "target_clip_sigma": target_clip_sigma,
                 "intercept": intercept, "drop_dir": list(drop_dir),
                 "demean": bool(config.DEMEAN_CONVICTION) if demean is None else bool(demean),   # None = as the live cycle
+                "demean_group": (config.DEMEAN_GROUP if demean_group is None else demean_group) or None,           # round 39
+                "graph_transcripts_only": bool(config.GRAPH_TRANSCRIPTS_ONLY) if graph_transcripts_only is None else bool(graph_transcripts_only),
                 "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     publish_progress(dict(run_info, status="loading", pct=0.0, message="downloading prices and earnings"))
     try:
@@ -242,7 +245,8 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
     else:
         px, shift = closes, 0
     earnings = market.earnings(tickers, limit=40)
-    pit = PointInTimeMap()
+    pit = PointInTimeMap(transcripts_only=run_info.get("graph_transcripts_only"))
+    groups = graph_pit.groups_from(pit, universe) if run_info.get("demean_group") == "chain" else None   # round 39
 
     # RSI over the whole history once per ticker (causal, so identical to the day-by-day prefix computation)
     indicators.PRECOMPUTED = {tk: indicators.rsi_series(closes[tk].dropna()) for tk in tickers if tk in closes.columns}
@@ -373,9 +377,8 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
             conv_rank, _ = learner.predict(signals, rank_model)
             traded = rank_order(conv, conv_rank)
             assert sorted(traded.values()) == sorted(conv.values()) and set(traded) == set(conv)
-        if run_info.get("demean") and traded:                          # round 38 reference: as cycle.convict with DEMEAN_CONVICTION
-            mean_conv = sum(traded.values()) / len(traded)
-            traded = {tk: c - mean_conv for tk, c in traded.items()}
+        if run_info.get("demean") and traded:                          # as cycle.convict: DEMEAN_CONVICTION (round 38), DEMEAN_GROUP (round 39)
+            traded, _ = learner.demean(traded, groups, config.DEMEAN_GROUP_MIN)
         day_ic = (None, None)
         # IC of today's convictions against the 10-day outcome (evaluated later in the loop's own scores)
         y10 = {}
@@ -507,6 +510,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
         "prior_only": bool(run_info.get("prior_only")),
         "rank_order": bool(run_info.get("rank_order")), "target_clip_sigma": run_info.get("target_clip_sigma"),
         "intercept": run_info.get("intercept"), "drop_dir": run_info.get("drop_dir"), "demean": bool(run_info.get("demean")),
+        "demean_group": run_info.get("demean_group"), "graph_transcripts_only": bool(run_info.get("graph_transcripts_only")),
         "sizing": {"size": config.SIZE_PER_CONVICTION, "cap": config.MAX_POSITION_PCT, "gross": config.GROSS_TARGET,
                    "long_short": run_info.get("long_short"),
                    "min_book": config.MIN_STOCK_BOOK, "idle_sleeve": config.IDLE_SLEEVE,
@@ -586,6 +590,10 @@ if __name__ == "__main__":
     p.add_argument("--drop-dir", default="", help="round 38: comma list of agents whose direction-only feature is dropped at fit time, e.g. supply_chain,neighbors")
     p.add_argument("--demean", action=argparse.BooleanOptionalAction, default=None,
                    help="subtract the day's cross-sectional mean conviction before sizing; default follows config.DEMEAN_CONVICTION (True since 2026-09-16, round 38); --no-demean = the raw control")
+    p.add_argument("--demean-group", choices=("chain", "none"), default=None,
+                   help="round 39: demean within graph groups (chain = power-only names vs the rest); none = off; default follows config.DEMEAN_GROUP")
+    p.add_argument("--graph-transcripts-only", action=argparse.BooleanOptionalAction, default=None,
+                   help="round 39: the graph agents skip SEC-filing rows; default follows config.GRAPH_TRANSCRIPTS_ONLY")
     p.add_argument("--prior-only", action="store_true", help="trade on the equal-weight prior blend instead of the fitted weights (learner ablation); the learner is still fit daily and both ICs are recorded per day")
     p.add_argument("--long-short", type=int, default=None, help="market-neutral book (round 33): long the top N and short the bottom N convictions, gross GROSS_TARGET under the vol target split so the legs' betas cancel, 2 bps/day borrow, no sleeve")
     p.add_argument("--position-cap", type=float, default=None, help="override MAX_POSITION_PCT, e.g. 0.30")
@@ -621,5 +629,7 @@ if __name__ == "__main__":
             learn_preopen=args.learn_preopen, prior_only=args.prior_only, long_short=args.long_short,
             sleeve_mix=tuple(x for x in args.sleeve_mix.split(",") if x) if args.sleeve_mix else None,
             rank_order_mode=args.rank_order, target_clip_sigma=args.target_clip_sigma,
-            intercept=args.intercept, drop_dir=tuple(x for x in args.drop_dir.split(",") if x), demean=args.demean)
+            intercept=args.intercept, drop_dir=tuple(x for x in args.drop_dir.split(",") if x), demean=args.demean,
+            demean_group=None if args.demean_group is None else ("" if args.demean_group == "none" else args.demean_group),
+            graph_transcripts_only=args.graph_transcripts_only)
     print(json.dumps({k: v for k, v in r.items() if k != "curve"}, indent=2)[:4000])

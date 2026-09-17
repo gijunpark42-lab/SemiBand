@@ -106,6 +106,11 @@ SIZE_PER_CONVICTION = 0.60        # position = conviction x this (conviction 0.1
 DEMEAN_CONVICTION = True          # subtract the day's cross-sectional mean conviction (pick relative winners, less beta). Round 38 (2026-09-16):
                                   # the ridge's implicit level is a trailing-mean bias with no forecast power; demeaned 500-day replay +1110% vs
                                   # +1157% (inside noise), Sharpe 2.25 vs 2.23, max DD 24.7% vs 29.5%. Adopted 2026-09-16 (afternoon run + 09-17 cycle)
+DEMEAN_GROUP = None               # round 39 candidate (2026-09-16): "chain" = demean within two graph groups: power = names whose only chain
+                                  # tag is power_cooling, chip = everything else. None = one cross-sectional mean
+DEMEAN_GROUP_MIN = 5              # a group with fewer names than this uses the whole mean
+GRAPH_TRANSCRIPTS_ONLY = False    # round 39 candidate: the graph agents' point-in-time map skips SEC-filing rows (10-K/10-Q/8-K/20-F/6-K/40-F,
+                                  # third-party notes), as the Claude agents already do (2026-09-13)
 GROSS_TARGET = 1.50               # CEILING on gross exposure (150% of equity = 50% margin); not a target, cash is a position
 VOL_TARGET = 0.50                 # portfolio vol targeting: when the book's trailing realised vol (annualised) exceeds this, scale every
                                   # target down by VOL_TARGET / realised (never up). Sweep rounds 10-11 + re-validation (2026-09-11, 500 days,

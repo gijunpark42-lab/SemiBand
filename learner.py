@@ -435,6 +435,21 @@ def effective_weights(model) -> dict:
     return {a: round(x / norm, 4) for a, x in eff.items()}
 
 
+def demean(convictions, groups=None, min_group=1):
+    """Cross-sectional demeaning (DEMEAN_CONVICTION): subtract the mean conviction. With groups = {ticker: group} subtract each
+    group's own mean (DEMEAN_GROUP); a group with fewer than min_group names uses the whole mean. -> (demeaned, {group: mean})"""
+    if not convictions:
+        return {}, {}
+    whole = sum(convictions.values()) / len(convictions)
+    if not groups:
+        return {t: c - whole for t, c in convictions.items()}, {"all": whole}
+    by = {}
+    for t, c in convictions.items():
+        by.setdefault(groups.get(t, "chip"), []).append(c)
+    means = {g: (sum(v) / len(v) if len(v) >= min_group else whole) for g, v in by.items()}
+    return {t: c - means[groups.get(t, "chip")] for t, c in convictions.items()}, means
+
+
 def predict(signals, model=None):
     """signals: list of Signal -> ({ticker: conviction}, {ticker: {agent: breakdown}}).
 

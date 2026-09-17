@@ -12,7 +12,8 @@ import math
 import re
 from datetime import date, timedelta
 
-from agents.base import Signal, clip
+import config
+from agents.base import NOT_TRANSCRIPT, Signal, clip
 from agents.supply_chain import _POSITIVE, _load
 
 _DATE = re.compile(r"\((\d{2})-(\d{2})-(\d{4})\)")
@@ -27,12 +28,16 @@ def _label_date(label):
 class PointInTimeMap:
     """Dated earnings-call signals per company, so the map can be queried 'as of t'."""
 
-    def __init__(self):
+    def __init__(self, transcripts_only=None):
         graph, exposure, full_cap = _load()
+        skip = config.GRAPH_TRANSCRIPTS_ONLY if transcripts_only is None else bool(transcripts_only)
+        self.transcripts_only = skip   # round 39: SEC-filing rows (10-K/10-Q/8-K/20-F/6-K/40-F, notes) left out of the map
         self.signals = {}          # company -> [(date, text)]
         for n in graph["nodes"]:
             rows = []
             for q in n.get("quarterly_data") or []:
+                if skip and NOT_TRANSCRIPT.search(q.get("quarter") or ""):
+                    continue
                 d = _label_date(q.get("quarter"))
                 if d:
                     rows.append((d, (q.get("signal") or "").lower()))
@@ -44,6 +49,8 @@ class PointInTimeMap:
         for n in graph["nodes"]:
             rows = []
             for q in n.get("quarterly_data") or []:
+                if skip and NOT_TRANSCRIPT.search(q.get("quarter") or ""):
+                    continue
                 d = _label_date(q.get("quarter"))
                 if d:
                     rows.append((d, (q.get("signal") or "").lower(), q.get("chain")))
@@ -118,3 +125,17 @@ class PointInTimeMap:
 def pit_map() -> PointInTimeMap:
     """One map per process, built from the graph _load() reads (config.EARNINGS_AI_DIR, set before the first call)."""
     return PointInTimeMap()
+
+
+def group_of(chains):
+    """DEMEAN_GROUP = "chain" (round 39): "power" for a name whose only chain tag is power_cooling, "chip" for everything else."""
+    return "power" if set(chains or ()) == {"power_cooling"} else "chip"
+
+
+def groups_from(pit, universe):
+    """{ticker: group} from a map's chain tags; universe = {ticker: company}."""
+    return {t: group_of(pit.chains.get(company)) for t, company in universe.items()}
+
+
+def groups(universe):
+    return groups_from(pit_map(), universe)

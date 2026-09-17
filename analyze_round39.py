@@ -41,7 +41,7 @@ def paired(a, b, days):
 
 def book(t, days):
     c = curves[t]
-    names = np.mean([c[d].get("held", c[d].get("names", 0)) or 0 for d in days])
+    names = np.mean([(len(h) if isinstance(h, (list, tuple, dict)) else (h or 0)) for h in (c[d].get("held", c[d].get("names", 0)) for d in days)])
     gross = np.mean([c[d].get("gross", 0) or 0 for d in days])
     turn = np.mean([c[d]["turnover"] for d in days])
     return names, gross, turn

@@ -1702,3 +1702,14 @@ Learned 10-day IC: 0.0313 / 0.0287 / 0.0293 / 0.0267. The first three blocks are
 **Why.** The 50% vol target is one of three trend-like brakes (with the sleeve's 200-day rule and the macro agent; Hood & Raughtigan 2025: vol-target alpha is mostly trend exposure). The replay's book averaged 61% vol, so a fixed 0.50 brakes more than half the time; AQuA's expanding-median target brakes half the time by construction. The ablation says how much the brake is worth next to the other two.
 
 **Runs** (VM, same machine and day as their own baseline, margin interest 7%, snapshot 2026-09-17; both windows): baseline (0.50 fixed) = round 42's `_x0` / `_y0` if run the same day, else re-run; `_v1`/`_u1` `--vol-target 0` (brake off); `_v2`/`_u2` `--vol-target-mode median` (expanding median of the book's own 20-day realised vol, after 60 observations, 0.50 until then); `_v3`/`_u3` `--vol-target 0.40` (the risk-first alternative documented in rounds 12–15). Hypotheses: brake off raises return and drawdown (fails the DD limit); median ≈ baseline (inside noise); 0.40 lowers drawdown at a return cost (fails paired ≥ 0). Gate v4 per variant on 2024–26 with the 2019–23 confirmation. One value per knob, no tuning. Trials: 6 (+2 baselines if re-run).
+
+### Round 42 results (2026-09-17 16:00 PT, protocol v4, VM, 7% margin interest in every run): leverage and beta are risk dials, none passes
+
+| Run | 2024–26: return / Sharpe / max DD | vs `_x0` paired (t) | Blocks ≥ 0 | 2019–23: return / Sharpe / max DD | vs `_y0` paired (t) | Gate |
+|---|---|---|---|---|---|---|
+| baseline (`_x0` / `_y0`) | +1090% / 2.18 / 30.2% | — | — | +61% / 0.33 / 40.7% | — | base |
+| gross ceiling 2.0 (`_x1` / `_y1`) | +1343% / 2.11 / 32.0% | +5.9 bp/d (+2.10) | 4/6 | +70% / 0.36 / 40.7% | +0.5 (+1.22) | FAIL (Sharpe lower) |
+| beta floor 0.5, trend-gated (`_x2` / `_y2`) | +1112% / 2.19 / 31.6% | +0.4 bp/d (+0.49) | 3/6 | +57% / 0.31 / 40.7% | −0.2 (−0.28) | FAIL (consistency; 2019–23 paired < 0) |
+| both (`_x3` / `_y3`) | +1391% / 2.13 / 33.4% | +6.7 bp/d (+2.27) | 4/6 | +60% / 0.32 / 40.7% | +0.1 (+0.11) | FAIL (Sharpe lower, max DD +3.2 pts) |
+
+Average gross 1.09 / 1.20 / 1.11 / 1.22 in 2024–26 and 0.94–1.00 in 2019–23: the 1.5 ceiling and a 0.5 beta floor bind on few days, because a book as defensive as the 09-17 one (beta 0.12, vol 15%) is rare in the history. Raising the ceiling buys return at a lower Sharpe and a deeper drawdown even after interest; the floor does nothing measurable. No change to live sizing. The margin-interest charge stays in the replay from now on (baseline with interest +1090% against +993% without it on the same day: the difference is the filings-out switch, which the `_x0` baseline includes, net of the interest). Trials: 8.

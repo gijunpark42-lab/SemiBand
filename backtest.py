@@ -168,7 +168,7 @@ def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mod
         open_refresh=False, label_open=False, label_next_close=False, refresh_agents=None, learn_preopen=False,
         prior_only=False, long_short=None, sleeve_mix=None, rank_order_mode=False, target_clip_sigma=None,
         intercept=None, drop_dir=(), demean=None, demean_group=None, graph_transcripts_only=None, technical_residual=None,
-        margin_rate=0.0, gross_target=None, beta_floor=None):
+        margin_rate=0.0, gross_target=None, beta_floor=None, vol_target=None, vol_target_mode=None):
     """tag: suffix for the output files (state/backtest<tag>.sqlite / backtest_report<tag>.json)
     so a long build can run while sweeps read the default files.
     exec_mode: 'close' = trade at the close the signals were computed on (optimistic);
@@ -212,6 +212,7 @@ def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mod
                 "graph_transcripts_only": bool(config.GRAPH_TRANSCRIPTS_ONLY) if graph_transcripts_only is None else bool(graph_transcripts_only),
                 "technical_residual": bool(config.TECHNICAL_RESIDUAL) if technical_residual is None else bool(technical_residual),   # round 40
                 "margin_rate": float(margin_rate or 0.0), "gross_target": gross_target, "beta_floor": beta_floor,                  # round 42
+                "vol_target": vol_target, "vol_target_mode": vol_target_mode,                                                     # round 43
                 "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     publish_progress(dict(run_info, status="loading", pct=0.0, message="downloading prices and earnings"))
     try:
@@ -259,11 +260,14 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
     rank_model_file = config.STATE_DIR / f"backtest_model{run_info.get('tag') or ''}_rank.json"
     learner.TARGET_CLIP_SIGMA = run_info.get("target_clip_sigma")
     learner.INTERCEPT, learner.DROP_DIR = run_info.get("intercept"), tuple(run_info.get("drop_dir") or ())   # round 38
-    live_agents, live_residual, live_gross = config.AGENTS, config.TECHNICAL_RESIDUAL, config.GROSS_TARGET
+    live_agents, live_residual, live_gross, live_vol = config.AGENTS, config.TECHNICAL_RESIDUAL, config.GROSS_TARGET, config.VOL_TARGET
     config.AGENTS = PIT_AGENTS                       # the prior and the sizing see only the simulated agents
     config.TECHNICAL_RESIDUAL = bool(run_info.get("technical_residual"))   # round 40: the technical agent reads it per call
     if run_info.get("gross_target"):                                       # round 42: portfolio.targets reads the ceiling per call
         config.GROSS_TARGET = float(run_info["gross_target"])
+    if run_info.get("vol_target") is not None:                             # round 43: 0 switches the vol brake off
+        config.VOL_TARGET = float(run_info["vol_target"]) or None
+    vol_hist = []                                                          # round 43: the book's own realised-vol history
 
     # numpy views of the price frames: the day loop reads single cells thousands of times (same float64 values as .iloc)
     C = closes.to_numpy(dtype=float)
@@ -414,6 +418,10 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
                     quint[q].append(float(np.mean([y10[tk] for tk in part])))
         # portfolio: same sizing as live; next-day return from close t to close t+1 (close mode)
         # or from open t+1 to open t+2 (open mode, what the live cycle actually gets)
+        if run_info.get("vol_target_mode") == "median" and len(curve) >= config.VOL_LOOKBACK_DAYS:   # round 43: expanding-median target
+            vol_hist.append(float(np.std([c["ret"] for c in curve[-config.VOL_LOOKBACK_DAYS:]])) * math.sqrt(252))
+            if len(vol_hist) >= 60:
+                config.VOL_TARGET = float(np.median(vol_hist))
         realized = (float(np.std([c["ret"] for c in curve[-config.VOL_LOOKBACK_DAYS:]])) * math.sqrt(252)
                     if config.VOL_TARGET and len(curve) >= config.VOL_LOOKBACK_DAYS else None)
         long_short = run_info.get("long_short")
@@ -505,7 +513,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
     learner.MODEL_FILE = config.STATE_DIR / "model.json"
     learner.TARGET_CLIP_SIGMA = None
     learner.INTERCEPT, learner.DROP_DIR = None, ()
-    config.AGENTS, config.TECHNICAL_RESIDUAL, config.GROSS_TARGET = live_agents, live_residual, live_gross
+    config.AGENTS, config.TECHNICAL_RESIDUAL, config.GROSS_TARGET, config.VOL_TARGET = live_agents, live_residual, live_gross, live_vol
 
     rets = np.diff(np.log([1.0] + [c["portfolio"] for c in curve]))
     soxx = np.diff(np.log([1.0] + [c["soxx"] for c in curve]))
@@ -526,6 +534,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
         "demean_group": run_info.get("demean_group"), "graph_transcripts_only": bool(run_info.get("graph_transcripts_only")),
         "technical_residual": bool(run_info.get("technical_residual")),
         "margin_rate": run_info.get("margin_rate"), "gross_target": run_info.get("gross_target"), "beta_floor": run_info.get("beta_floor"),
+        "vol_target": run_info.get("vol_target"), "vol_target_mode": run_info.get("vol_target_mode"),
         "sizing": {"size": config.SIZE_PER_CONVICTION, "cap": config.MAX_POSITION_PCT, "gross": config.GROSS_TARGET,
                    "long_short": run_info.get("long_short"),
                    "min_book": config.MIN_STOCK_BOOK, "idle_sleeve": config.IDLE_SLEEVE,
@@ -615,6 +624,9 @@ if __name__ == "__main__":
     p.add_argument("--gross-target", type=float, default=None, help="round 42: override GROSS_TARGET for the run, e.g. 2.0")
     p.add_argument("--beta-floor", type=float, default=None,
                    help="round 42: while the sleeve ETF is above its trend average, raise the book's beta to this floor with the ETF")
+    p.add_argument("--vol-target", type=float, default=None, help="round 43: override VOL_TARGET for the run; 0 = brake off")
+    p.add_argument("--vol-target-mode", choices=("fixed", "median"), default=None,
+                   help="round 43: median = the target is the expanding median of the book's own 20-day realised vol (after 60 observations)")
     p.add_argument("--prior-only", action="store_true", help="trade on the equal-weight prior blend instead of the fitted weights (learner ablation); the learner is still fit daily and both ICs are recorded per day")
     p.add_argument("--long-short", type=int, default=None, help="market-neutral book (round 33): long the top N and short the bottom N convictions, gross GROSS_TARGET under the vol target split so the legs' betas cancel, 2 bps/day borrow, no sleeve")
     p.add_argument("--position-cap", type=float, default=None, help="override MAX_POSITION_PCT, e.g. 0.30")
@@ -653,5 +665,6 @@ if __name__ == "__main__":
             intercept=args.intercept, drop_dir=tuple(x for x in args.drop_dir.split(",") if x), demean=args.demean,
             demean_group=None if args.demean_group is None else ("" if args.demean_group == "none" else args.demean_group),
             graph_transcripts_only=args.graph_transcripts_only, technical_residual=args.technical_residual,
-            margin_rate=args.margin_rate, gross_target=args.gross_target, beta_floor=args.beta_floor)
+            margin_rate=args.margin_rate, gross_target=args.gross_target, beta_floor=args.beta_floor,
+            vol_target=args.vol_target, vol_target_mode=args.vol_target_mode)
     print(json.dumps({k: v for k, v in r.items() if k != "curve"}, indent=2)[:4000])

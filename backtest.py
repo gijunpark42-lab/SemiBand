@@ -168,7 +168,7 @@ def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mod
         open_refresh=False, label_open=False, label_next_close=False, refresh_agents=None, learn_preopen=False,
         prior_only=False, long_short=None, sleeve_mix=None, rank_order_mode=False, target_clip_sigma=None,
         intercept=None, drop_dir=(), demean=None, demean_group=None, graph_transcripts_only=None, technical_residual=None,
-        margin_rate=0.0, gross_target=None, beta_floor=None, vol_target=None, vol_target_mode=None):
+        margin_rate=0.0, gross_target=None, beta_floor=None, vol_target=None, vol_target_mode=None, shadow=()):
     """tag: suffix for the output files (state/backtest<tag>.sqlite / backtest_report<tag>.json)
     so a long build can run while sweeps read the default files.
     exec_mode: 'close' = trade at the close the signals were computed on (optimistic);
@@ -193,6 +193,7 @@ def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mod
         raise ValueError("--long-short needs at least one name per leg")
     extra_mods = [{"momentum": momentum, "sue": sue, "ml_ranker": ml_ranker}.get(e) or importlib.import_module(f"agents.{e}")
                   for e in extra]                              # factor_* agents load by name
+    shadow_mods = [importlib.import_module(f"agents.{e}") for e in shadow]   # recorded and scored, never in the features
     if agents:
         PIT_AGENTS = [a for a in SIM_AGENTS if a in agents]
     PIT_AGENTS = PIT_AGENTS + list(extra)
@@ -213,16 +214,17 @@ def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mod
                 "technical_residual": bool(config.TECHNICAL_RESIDUAL) if technical_residual is None else bool(technical_residual),   # round 40
                 "margin_rate": float(margin_rate or 0.0), "gross_target": gross_target, "beta_floor": beta_floor,                  # round 42
                 "vol_target": vol_target, "vol_target_mode": vol_target_mode,                                                     # round 43
+                "shadow": list(shadow),
                 "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     publish_progress(dict(run_info, status="loading", pct=0.0, message="downloading prices and earnings"))
     try:
-        return _run(days, refit_every, warmup, extra_mods, exec_mode, run_info)
+        return _run(days, refit_every, warmup, extra_mods, exec_mode, run_info, shadow_mods)
     except Exception as exc:
         publish_progress(dict(run_info, status="failed", message=f"{type(exc).__name__}: {exc}"))
         raise
 
 
-def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
+def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info, shadow_mods=()):
     if run_info["cap"]:
         config.MAX_MARKET_CAP = run_info["cap"]
         universe_mod.CACHE = config.STATE_DIR / f"universe_cap{int(run_info['cap'] / 1e9)}B.json"
@@ -338,6 +340,11 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
                     signals += out
                 if not (use_open and learn_preopen):
                     learned += out
+        for a in shadow_mods:                              # shadow agents: pre-open context, ledger and scores only
+            try:
+                learned += a.run(universe, ctx)
+            except Exception as exc:
+                log.warning("shadow %s @ %s: %s", a.NAME, t, exc)
         for tk, company in universe.items():
             for s in ((pit.supply_chain(tk, company, t) if "supply_chain" in PIT_AGENTS else None),
                       (pit.neighbors(tk, company, t) if "neighbors" in PIT_AGENTS else None)):
@@ -535,6 +542,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
         "technical_residual": bool(run_info.get("technical_residual")),
         "margin_rate": run_info.get("margin_rate"), "gross_target": run_info.get("gross_target"), "beta_floor": run_info.get("beta_floor"),
         "vol_target": run_info.get("vol_target"), "vol_target_mode": run_info.get("vol_target_mode"),
+        "shadow": run_info.get("shadow"),
         "sizing": {"size": config.SIZE_PER_CONVICTION, "cap": config.MAX_POSITION_PCT, "gross": config.GROSS_TARGET,
                    "long_short": run_info.get("long_short"),
                    "min_book": config.MIN_STOCK_BOOK, "idle_sleeve": config.IDLE_SLEEVE,
@@ -627,6 +635,7 @@ if __name__ == "__main__":
     p.add_argument("--vol-target", type=float, default=None, help="round 43: override VOL_TARGET for the run; 0 = brake off")
     p.add_argument("--vol-target-mode", choices=("fixed", "median"), default=None,
                    help="round 43: median = the target is the expanding median of the book's own 20-day realised vol (after 60 observations)")
+    p.add_argument("--shadow", default="", help="comma list of agents to run and record without a vote (shadow agents), e.g. insider")
     p.add_argument("--prior-only", action="store_true", help="trade on the equal-weight prior blend instead of the fitted weights (learner ablation); the learner is still fit daily and both ICs are recorded per day")
     p.add_argument("--long-short", type=int, default=None, help="market-neutral book (round 33): long the top N and short the bottom N convictions, gross GROSS_TARGET under the vol target split so the legs' betas cancel, 2 bps/day borrow, no sleeve")
     p.add_argument("--position-cap", type=float, default=None, help="override MAX_POSITION_PCT, e.g. 0.30")
@@ -666,5 +675,6 @@ if __name__ == "__main__":
             demean_group=None if args.demean_group is None else ("" if args.demean_group == "none" else args.demean_group),
             graph_transcripts_only=args.graph_transcripts_only, technical_residual=args.technical_residual,
             margin_rate=args.margin_rate, gross_target=args.gross_target, beta_floor=args.beta_floor,
-            vol_target=args.vol_target, vol_target_mode=args.vol_target_mode)
+            vol_target=args.vol_target, vol_target_mode=args.vol_target_mode,
+            shadow=tuple(x for x in args.shadow.split(",") if x))
     print(json.dumps({k: v for k, v in r.items() if k != "curve"}, indent=2)[:4000])

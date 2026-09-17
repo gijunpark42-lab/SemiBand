@@ -73,6 +73,9 @@ AGENTS = [
     "llm_guidance",    # reads the company's own latest call signals: guidance momentum
     "llm_news",        # reads three weeks of headlines: catalysts
 ]
+SHADOW_AGENTS = ()                # agents run and recorded every cycle and scored like the others, but never voting: no feature, no
+                                  # prior share, no weight, no place in the per-name breakdown. A candidate builds its live record
+                                  # here; promotion needs its own pre-registered test (RESEARCH.md 2026-09-16, shadow agents)
 HORIZONS = (10, 20)               # trading days after which a prediction is scored. v2.3 (2026-09-11 search, daily refits): dropping the 5-day
                                   # horizon was the biggest single gain (5-day abnormal returns are mostly noise): OOS Sharpe 0.92 -> 1.4-1.7
 

@@ -83,9 +83,10 @@ def features(per_agent: dict, names: list) -> np.ndarray:
     return x
 
 
-def _rows(db_path, horizon, asof, since_scored=None, dates=None, target_mode="raw"):
+def _rows(db_path, horizon, asof, since_scored=None, dates=None, target_mode="raw", agents=None):
     """Scored rows from one ledger file. since_scored: only rows scored on/after that date (what changed since
-    the last load); dates: only these prediction dates. With asof, only predictions whose outcome was known by then."""
+    the last load); dates: only these prediction dates. With asof, only predictions whose outcome was known by then.
+    agents: only these agents' rows (the voting roster), so a shadow or retired agent never makes a feature row."""
     import sqlite3
     if target_mode not in ("raw", "beta", "rank"):
         raise ValueError(f"unknown learner target mode: {target_mode}")
@@ -95,18 +96,20 @@ def _rows(db_path, horizon, asof, since_scored=None, dates=None, target_mode="ra
     con.row_factory = sqlite3.Row
     target = "s.abnormal" if target_mode == "raw" else "s.beta_abnormal"   # rank (round 37) ranks the beta-adjusted return per date
     base = (f"SELECT p.date, p.ticker, p.agent, p.direction, p.confidence, {target} AS target, s.scored_date "
-            "FROM predictions p JOIN scores s ON s.prediction_id = p.id AND s.horizon = ?")
+            "FROM predictions p JOIN scores s ON s.prediction_id = p.id AND s.horizon = ?"
+            + ((" AND p.agent IN (%s)" % ",".join("?" * len(agents))) if agents else ""))
+    params = (horizon, *agents) if agents else (horizon,)
     try:
         if dates is not None:
             rows = []
             dates = sorted(dates)
             for k in range(0, len(dates), 400):                       # SQLite parameter limit
                 chunk = dates[k:k + 400]
-                rows += con.execute(base + " WHERE p.date IN (%s)" % ",".join("?" * len(chunk)), (horizon, *chunk)).fetchall()
+                rows += con.execute(base + " WHERE p.date IN (%s)" % ",".join("?" * len(chunk)), (*params, *chunk)).fetchall()
         elif since_scored is not None:
-            rows = con.execute(base + " WHERE s.scored_date >= ?", (horizon, since_scored)).fetchall()
+            rows = con.execute(base + " WHERE s.scored_date >= ?", (*params, since_scored)).fetchall()
         else:
-            rows = con.execute(base, (horizon,)).fetchall()
+            rows = con.execute(base, params).fetchall()
     finally:
         con.close()
     if asof is not None:
@@ -150,10 +153,10 @@ def _load_source(db_path, sw, horizon, names, target_mode="raw"):
         ent = _CACHE[key] = {"stamp": None, "by_date": {}, "last_scored": None, "arrays": None}
     if ent["stamp"] != stamp:
         if ent["last_scored"] is None:
-            rows = _rows(db_path, horizon, None, target_mode=target_mode)
+            rows = _rows(db_path, horizon, None, target_mode=target_mode, agents=tuple(names))
         else:
             touched = _touched_dates(db_path, horizon, ent["last_scored"])
-            rows = _rows(db_path, horizon, None, dates=touched, target_mode=target_mode) if touched else []
+            rows = _rows(db_path, horizon, None, dates=touched, target_mode=target_mode, agents=tuple(names)) if touched else []
         per = {}
         for r in rows:
             g = per.setdefault(r["date"], {}).setdefault(
@@ -478,5 +481,5 @@ def predict(signals, model=None):
         convictions[ticker] = float(np.clip(pred, -1.0, 1.0))
         breakdown[ticker] = {a: {"direction": round(s.direction, 3), "confidence": round(s.confidence, 3),
                                  "horizon": s.horizon, "reason": s.reason,
-                                 "contribution": round(float(contrib[a]), 3)} for a, s in per_agent.items()}
+                                 "contribution": round(float(contrib[a]), 3)} for a, s in per_agent.items() if a in names}
     return convictions, breakdown

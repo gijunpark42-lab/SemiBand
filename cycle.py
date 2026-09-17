@@ -76,8 +76,9 @@ def run_agents(universe, ctx, model, held, use_llm):
     """Free agents see the whole universe; LLM agents (one claude -p call per
     ticker each) only the names the free agents rank highest plus what we hold,
     capped by config.LLM_MAX_TICKERS (None = every name)."""
-    free = [a for a in config.AGENTS if not a.startswith("llm_")]
-    llm_agents = [a for a in config.AGENTS if a.startswith("llm_")]
+    roster = [*config.AGENTS, *config.SHADOW_AGENTS]   # shadow agents run and are recorded like the others; the learner never sees them
+    free = [a for a in roster if not a.startswith("llm_")]
+    llm_agents = [a for a in roster if a.startswith("llm_")]
     signals = []
     for name in free:
         signals += _run_agent(name, universe, ctx)
@@ -129,7 +130,7 @@ def open_refresh(universe, signals, today, betas, notes):
     overnight gap reaches the price-based signals the way it reaches the fills. Every other signal (Claude included)
     stays as computed before the open. An agent that returns nothing keeps its pre-open signals. The refreshed agents'
     predictions for today replace the pre-open ones in the ledger. -> (signals, {symbol: live price}); {} = unchanged."""
-    names = [a for a in config.OPEN_REFRESH_AGENTS if a in config.AGENTS]
+    names = [a for a in config.OPEN_REFRESH_AGENTS if a in config.AGENTS or a in config.SHADOW_AGENTS]
     open_utc = pd.Timestamp(f"{today} 09:30", tz="America/New_York").tz_convert("UTC")
     wait = (open_utc + pd.Timedelta(seconds=30) - pd.Timestamp.now(tz="UTC")).total_seconds()
     if names and 0 < wait <= 60:
@@ -477,6 +478,9 @@ def main():
         "equity": equity,
         "cash": cash,
         "universe_size": len(universe),
+        "shadow_signals": {t: {s.agent: {"direction": round(s.direction, 3), "confidence": round(s.confidence, 3), "reason": s.reason[:200]}
+                               for s in signals if s.ticker == t and s.agent in config.SHADOW_AGENTS}
+                           for t in sorted({s.ticker for s in signals if s.agent in config.SHADOW_AGENTS})},
         "target_mode": config.LEARNER_TARGET_MODE,
         "shadow_target_mode": shadow_mode,
         "weights": weights,

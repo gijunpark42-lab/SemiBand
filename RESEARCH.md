@@ -1738,3 +1738,18 @@ Average gross 1.09 / 1.20 / 1.11 / 1.22 in 2024–26 and 0.94–1.00 in 2019–2
 **Measured, not fixable by code (structural):** the universe is today's hindsight-selected list: equal-weight buy-and-hold of the 151 names made +245% over the 2024-10..2026-08 window (median name +126%, 93% up) against SOXX +152% and the book +1,090%, so the fair comparison line is +245%, not SOXX. The out-of-sample first 250 days were re-optimised across ~30 rounds since round 10 (their return went from +94% to ~+350%): the nominal OOS window is spent and the honest expectation is the Sharpe of round 10 (~0.9–1.0), not 2.18. Graph edges are today's structure and statement text was LLM-written in 2026 (hindsight wording); the graph agents are silent for the first ~250 days anyway. Costs: 5 bps is optimistic for the small names; the report's own table gives +893% at 15 bps and +656% at 30 bps. The label convention (signal-close label with the open refresh) was chosen because it produced the larger number (+895% vs +712%): recorded as a researcher degree of freedom.
 
 **Pending checks (VM, same day, same machine):** `_a0` fixed replay (drift on, no FRED, margin 7%) = the new baseline for every later round; `_a1` `--no-drift` (the size of the rebalancing bonus); `_a2` `--earnings-shift 5` (perfect earnings-date knowledge); the 2019–23 pair `_b0` / `_b1`. Their numbers replace the +1,090% headline in the next report. A point-in-time constituent list (a 2024-10 universe) cannot be rebuilt from the data at hand; the equal-weight baseline is the proxy.
+
+### Round 43 results (2026-09-17 16:30 PT, VM, margin 7%): the vol brake is a risk dial too; 0.50 stays
+
+| Run | 2024–26: return / Sharpe / max DD | vs `_x0` (t) | Blocks ≥ 0 | 2019–23: return / Sharpe / max DD | vs `_y0` (t) | Gate |
+|---|---|---|---|---|---|---|
+| baseline 0.50 (`_x0` / `_y0`) | +1090% / 2.18 / 30.2% | — | — | +61% / 0.33 / 40.7% | — | base |
+| brake off (`_v1` / `_u1`) | +1675% / 1.96 / 34.5% | +13.6 bp/d (+2.08) | 6/6 | +67% / 0.35 / 41.3% | +0.5 (+0.87) | FAIL (Sharpe, max DD +4.3) |
+| expanding median (`_v2` / `_u2`) | +1298% / 2.14 / 32.2% | +4.8 bp/d (+1.98) | 5/6 | +64% / 0.40 / 36.5% | −0.4 (−0.29) | FAIL (Sharpe) |
+| 0.40 (`_v3` / `_u3`) | +903% / 2.23 / 28.2% | −4.9 bp/d (−2.49) | 1/6 | +66% / 0.37 / 38.9% | +0.2 (+0.34) | FAIL (paired < 0) |
+
+Off raises return with more drawdown and a lower Sharpe, stricter does the opposite, the median sits between: no setting improves return per unit of risk. Not adopted. With rounds 42–43 the three sizing dials (ceiling, beta floor, brake) are closed; further return has to come from information (agents), not from sizing. Trials: 6.
+
+### Shadow agent `insider` — replay result (2026-09-17 16:35 PT, `_s0`, VM): recorded, no measurable edge; runs live as a shadow only
+
+4,384 rows recorded (8.7 names a day, 59 distinct names), 4,342 scored at 20 days; the book equals the baseline's (non-voting). Event-study spread of signalled names over all other names: +0.23% per 20 days over 500 dates, overlap-adjusted t +0.23; by half-year +1.5%, +1.1%, −2.0%, −0.2%, +3.7% (2026H2, 33 dates); share of dates positive 47%; pooled rank IC among signalled rows −0.08 (more buyers or dollars did not mean more return). Signalled rows averaged +2.12% against +1.47% for all rows, but that raw gap is not date-matched. Reading: no edge is visible in this window; the published +0.8%/month is not there at half strength either. Under the pre-registered rule the agent goes live as a shadow (the spread is not negative), recorded and scored, never voting, and the voting question is revisited only with t ≥ 2 in a later replay or after 60 live sessions. Trials: 1.

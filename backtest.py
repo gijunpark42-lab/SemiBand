@@ -167,7 +167,7 @@ def rank_order(conv, conv_rank):
 def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mode="close", agents=None, end=None,
         open_refresh=False, label_open=False, label_next_close=False, refresh_agents=None, learn_preopen=False,
         prior_only=False, long_short=None, sleeve_mix=None, rank_order_mode=False, target_clip_sigma=None,
-        intercept=None, drop_dir=(), demean=None, demean_group=None, graph_transcripts_only=None):
+        intercept=None, drop_dir=(), demean=None, demean_group=None, graph_transcripts_only=None, technical_residual=None):
     """tag: suffix for the output files (state/backtest<tag>.sqlite / backtest_report<tag>.json)
     so a long build can run while sweeps read the default files.
     exec_mode: 'close' = trade at the close the signals were computed on (optimistic);
@@ -209,6 +209,7 @@ def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mod
                 "demean": bool(config.DEMEAN_CONVICTION) if demean is None else bool(demean),   # None = as the live cycle
                 "demean_group": (config.DEMEAN_GROUP if demean_group is None else demean_group) or None,           # round 39
                 "graph_transcripts_only": bool(config.GRAPH_TRANSCRIPTS_ONLY) if graph_transcripts_only is None else bool(graph_transcripts_only),
+                "technical_residual": bool(config.TECHNICAL_RESIDUAL) if technical_residual is None else bool(technical_residual),   # round 40
                 "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     publish_progress(dict(run_info, status="loading", pct=0.0, message="downloading prices and earnings"))
     try:
@@ -258,6 +259,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
     learner.INTERCEPT, learner.DROP_DIR = run_info.get("intercept"), tuple(run_info.get("drop_dir") or ())   # round 38
     live_agents = config.AGENTS
     config.AGENTS = PIT_AGENTS                       # the prior and the sizing see only the simulated agents
+    config.TECHNICAL_RESIDUAL = bool(run_info.get("technical_residual"))   # round 40: the technical agent reads it per call
 
     # numpy views of the price frames: the day loop reads single cells thousands of times (same float64 values as .iloc)
     C = closes.to_numpy(dtype=float)
@@ -511,6 +513,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
         "rank_order": bool(run_info.get("rank_order")), "target_clip_sigma": run_info.get("target_clip_sigma"),
         "intercept": run_info.get("intercept"), "drop_dir": run_info.get("drop_dir"), "demean": bool(run_info.get("demean")),
         "demean_group": run_info.get("demean_group"), "graph_transcripts_only": bool(run_info.get("graph_transcripts_only")),
+        "technical_residual": bool(run_info.get("technical_residual")),
         "sizing": {"size": config.SIZE_PER_CONVICTION, "cap": config.MAX_POSITION_PCT, "gross": config.GROSS_TARGET,
                    "long_short": run_info.get("long_short"),
                    "min_book": config.MIN_STOCK_BOOK, "idle_sleeve": config.IDLE_SLEEVE,
@@ -594,6 +597,8 @@ if __name__ == "__main__":
                    help="round 39: demean within graph groups (chain = power-only names vs the rest); none = off; default follows config.DEMEAN_GROUP")
     p.add_argument("--graph-transcripts-only", action=argparse.BooleanOptionalAction, default=None,
                    help="round 39: the graph agents skip SEC-filing rows; default follows config.GRAPH_TRANSCRIPTS_ONLY")
+    p.add_argument("--technical-residual", action=argparse.BooleanOptionalAction, default=None,
+                   help="round 40: technical's relative returns are beta-adjusted residuals; default follows config.TECHNICAL_RESIDUAL")
     p.add_argument("--prior-only", action="store_true", help="trade on the equal-weight prior blend instead of the fitted weights (learner ablation); the learner is still fit daily and both ICs are recorded per day")
     p.add_argument("--long-short", type=int, default=None, help="market-neutral book (round 33): long the top N and short the bottom N convictions, gross GROSS_TARGET under the vol target split so the legs' betas cancel, 2 bps/day borrow, no sleeve")
     p.add_argument("--position-cap", type=float, default=None, help="override MAX_POSITION_PCT, e.g. 0.30")
@@ -631,5 +636,5 @@ if __name__ == "__main__":
             rank_order_mode=args.rank_order, target_clip_sigma=args.target_clip_sigma,
             intercept=args.intercept, drop_dir=tuple(x for x in args.drop_dir.split(",") if x), demean=args.demean,
             demean_group=None if args.demean_group is None else ("" if args.demean_group == "none" else args.demean_group),
-            graph_transcripts_only=args.graph_transcripts_only)
+            graph_transcripts_only=args.graph_transcripts_only, technical_residual=args.technical_residual)
     print(json.dumps({k: v for k, v in r.items() if k != "curve"}, indent=2)[:4000])

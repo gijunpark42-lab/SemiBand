@@ -111,6 +111,8 @@ DEMEAN_GROUP = None               # round 39 candidate (2026-09-16): "chain" = d
 DEMEAN_GROUP_MIN = 5              # a group with fewer names than this uses the whole mean
 GRAPH_TRANSCRIPTS_ONLY = False    # round 39 candidate: the graph agents' point-in-time map skips SEC-filing rows (10-K/10-Q/8-K/20-F/6-K/40-F,
                                   # third-party notes), as the Claude agents already do (2026-09-13)
+TECHNICAL_RESIDUAL = False        # round 40 candidate (2026-09-17, Blitz-Huij-Martens residual momentum): technical's rel20/rel60 subtract
+                                  # beta x SOXX instead of SOXX (trailing 60-day pair beta, clipped to 0..3); False = plain relative return
 GROSS_TARGET = 1.50               # CEILING on gross exposure (150% of equity = 50% margin); not a target, cash is a position
 VOL_TARGET = 0.50                 # portfolio vol targeting: when the book's trailing realised vol (annualised) exceeds this, scale every
                                   # target down by VOL_TARGET / realised (never up). Sweep rounds 10-11 + re-validation (2026-09-11, 500 days,

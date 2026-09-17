@@ -52,12 +52,17 @@ class ResidualMomentum(unittest.TestCase):
         self.assertGreater(resid["HIGH"].direction, plain["HIGH"].direction)  # HIGH's loss was mostly beta
         self.assertLess(abs(resid["LOW"].direction - resid["HIGH"].direction), abs(plain["LOW"].direction - plain["HIGH"].direction))
 
-    def test_beta_is_clipped_and_defaults_to_one_without_history(self):
+    def test_a_flat_name_has_beta_zero_and_a_bad_price_never_makes_a_nan_beta(self):
+        import math
         c = self.ctx["closes"].copy()
-        c["FLAT"] = 100.0                                                    # zero variance name: beta from cov 0 -> 0.0 (clipped range)
+        c["FLAT"] = 100.0                                                    # zero covariance with SOXX: OLS beta 0.0
+        c.iloc[-30, c.columns.get_loc("HIGH")] = 0.0                       # a non-positive print inside the beta window (inf return)
         with patch.object(config, "TECHNICAL_RESIDUAL", True):
-            sig = {s.ticker: s for s in technical.run({"FLAT": "Flat Co", "LOW": "Low"}, {"closes": c})}
+            sig = {s.ticker: s for s in technical.run({"FLAT": "Flat Co", "LOW": "Low", "HIGH": "High"}, {"closes": c})}
         self.assertIn("beta 0.00", sig["FLAT"].reason)
+        self.assertTrue(math.isfinite(sig["HIGH"].direction))
+        self.assertNotIn("nan", sig["HIGH"].reason)
+        self.assertLess(sig["HIGH"].confidence, 0.9)                       # not the corrupt-name max-conviction buy the review found
 
 
 if __name__ == "__main__":

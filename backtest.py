@@ -257,7 +257,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
     rank_model_file = config.STATE_DIR / f"backtest_model{run_info.get('tag') or ''}_rank.json"
     learner.TARGET_CLIP_SIGMA = run_info.get("target_clip_sigma")
     learner.INTERCEPT, learner.DROP_DIR = run_info.get("intercept"), tuple(run_info.get("drop_dir") or ())   # round 38
-    live_agents = config.AGENTS
+    live_agents, live_residual = config.AGENTS, config.TECHNICAL_RESIDUAL
     config.AGENTS = PIT_AGENTS                       # the prior and the sizing see only the simulated agents
     config.TECHNICAL_RESIDUAL = bool(run_info.get("technical_residual"))   # round 40: the technical agent reads it per call
 
@@ -494,7 +494,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info):
     learner.MODEL_FILE = config.STATE_DIR / "model.json"
     learner.TARGET_CLIP_SIGMA = None
     learner.INTERCEPT, learner.DROP_DIR = None, ()
-    config.AGENTS = live_agents
+    config.AGENTS, config.TECHNICAL_RESIDUAL = live_agents, live_residual
 
     rets = np.diff(np.log([1.0] + [c["portfolio"] for c in curve]))
     soxx = np.diff(np.log([1.0] + [c["soxx"] for c in curve]))

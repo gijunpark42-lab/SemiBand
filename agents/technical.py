@@ -4,6 +4,7 @@ Free and deterministic. Uses the closes DataFrame the cycle already fetched.
 """
 import math
 
+import numpy as np
 import pandas as pd
 
 import config
@@ -33,8 +34,10 @@ def run(universe: dict, ctx: dict) -> list[Signal]:
         beta = 1.0
         if residual:
             pair = pd.concat([c.pct_change(), bench_ret], axis=1).dropna().iloc[-60:]
+            pair = pair[np.isfinite(pair.to_numpy()).all(axis=1)]   # a non-positive price makes an inf return: drop the pair, never a NaN beta
             var = float(pair.iloc[:, 1].var()) if len(pair) >= 40 else 0.0
-            beta = min(max(float(pair.cov().iloc[0, 1] / var), 0.0), 3.0) if var else 1.0
+            beta = float(pair.cov().iloc[0, 1] / var) if var and math.isfinite(var) else 1.0
+            beta = min(max(beta, 0.0), 3.0) if math.isfinite(beta) else 1.0
         rel20 = float(c.iloc[-1] / c.iloc[-21] - 1) - beta * b20
         rel60 = float(c.iloc[-1] / c.iloc[-61] - 1) - beta * b60
         sma50 = float(c.iloc[-50:].mean())

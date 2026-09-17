@@ -42,9 +42,11 @@ class InsiderAgent(unittest.TestCase):
     def test_a_purchase_counts_from_its_filing_date_for_sixty_days(self):
         self._write("AAA", [_row("Jane Doe", "2026-06-10", "2026-06-08", 1000, 50.0)])
         before = insider.run(self.universe, {"asof": date(2026, 6, 9)})        # traded but not yet filed: unknown to the market
-        on = insider.run(self.universe, {"asof": date(2026, 6, 10)})
+        filing_day = insider.run(self.universe, {"asof": date(2026, 6, 10)})  # filed during that day: not in a pre-open signal
+        on = insider.run(self.universe, {"asof": date(2026, 6, 11)})
         late = insider.run(self.universe, {"asof": date(2026, 8, 20)})         # 71 days after the filing
         self.assertEqual(before, [])
+        self.assertEqual(filing_day, [])
         self.assertEqual([s.ticker for s in on], ["AAA"])
         self.assertGreater(on[0].direction, 0)
         self.assertEqual(on[0].horizon, 20)
@@ -60,11 +62,11 @@ class InsiderAgent(unittest.TestCase):
         self._write("CCC", [_row("Routine Rob", "2025-06-05", "2025-06-03", 500, 40.0),
                             _row("Routine Rob", "2026-06-04", "2026-06-02", 500, 40.0),      # same month, a year later: on a schedule
                             _row("New Nora", "2026-06-06", "2026-06-05", 5000, 40.0)])
-        sig = insider.run(self.universe, {"asof": date(2026, 6, 10)})
+        sig = insider.run(self.universe, {"asof": date(2026, 6, 12)})
         self.assertEqual(len(sig), 1)
         self.assertIn("1 insider(s)", sig[0].reason)
         self.assertIn("$200,000", sig[0].reason)
-        first_year = insider.run(self.universe, {"asof": date(2025, 6, 10)})          # in 2025 Rob had no history: he counted then
+        first_year = insider.run(self.universe, {"asof": date(2025, 6, 12)})          # in 2025 Rob had no history: he counted then
         self.assertEqual(len(first_year), 1)
 
     def test_more_buyers_and_more_dollars_mean_a_stronger_signal(self):

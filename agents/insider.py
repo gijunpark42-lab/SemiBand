@@ -22,6 +22,8 @@ from agents.base import Signal, clip
 
 NAME = "insider"
 WINDOW_DAYS = 60                  # a filing counts for this many calendar days
+FETCH_BUDGET_S = 300              # the daily refresh never holds the rule-agent stage longer than this
+MAX_429 = 3                       # consecutive throttles that end the refresh (the rest keep yesterday's files)
 MIN_USD = 10_000                  # smaller purchases are ignored
 HISTORY_FROM = "2024-01-01"
 log = logging.getLogger("insider")
@@ -76,14 +78,19 @@ def refresh(universe, today=None):
     if not key or marker.exists():
         return 0
     folder.mkdir(parents=True, exist_ok=True)
-    done = 0
+    done, throttled, t0 = 0, 0, time.time()
     for sym in universe:
+        if time.time() - t0 > FETCH_BUDGET_S or throttled >= MAX_429:
+            log.warning("insider refresh stopped after %d names (%.0fs, %d throttles): the rest keep their last file", done, time.time() - t0, throttled)
+            break
         try:
             r = requests.get("https://finnhub.io/api/v1/stock/insider-transactions", timeout=20,
                              params={"symbol": sym, "from": HISTORY_FROM, "to": today.isoformat(), "token": key})
             if r.status_code == 429:
+                throttled += 1
                 time.sleep(20)
                 continue
+            throttled = 0
             r.raise_for_status()
             (folder / f"{sym}.json").write_text(json.dumps({"fetched": today.isoformat(), "data": r.json()}), encoding="utf-8")
             done += 1
@@ -99,8 +106,8 @@ def refresh(universe, today=None):
 
 def run(universe: dict, ctx: dict) -> list[Signal]:
     today = ctx.get("asof")
-    if today is None:                                          # live: today's data, refreshed once a day
-        today = date.today()
+    if today is None:                                          # live: the cycle's date, refreshed once a day
+        today = date.fromisoformat(ctx["today"]) if ctx.get("today") else date.today()
         refresh(universe, today)
     elif isinstance(today, str):
         today = date.fromisoformat(today)
@@ -110,7 +117,7 @@ def run(universe: dict, ctx: dict) -> list[Signal]:
         rows = data.get(ticker)
         if not rows:
             continue
-        known = [r for r in rows if r[0] <= today]             # point-in-time: what had been filed by today
+        known = [r for r in rows if r[0] < today]              # point-in-time: filed before today (a filing lands after the pre-open signal)
         recent = [r for r in known if r[0] >= today - timedelta(days=WINDOW_DAYS)]
         buys = [r for r in recent if not _routine(r[1], r[3], [h for h in known if h[0] < r[0]])]
         if not buys:

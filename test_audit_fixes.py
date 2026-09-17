@@ -28,6 +28,9 @@ class DriftedHoldings(unittest.TestCase):
         self.assertAlmostEqual(out["A"], 0.5 / 1.10)
         self.assertAlmostEqual(out["__SLEEVE__"], 0.6 / 1.10)
         self.assertEqual(backtest.drifted({}, {}), {})
+        out = backtest.drifted({"A": 0.5, "B": 0.5}, {"A": 0.10, "B": -0.10}, net_ret=-0.01)   # costs shrink the equity the weights are shares of
+        self.assertAlmostEqual(out["A"], 0.55 / 0.99)
+        self.assertEqual(backtest.drifted({"A": 1.0}, {"A": -1.0}), {})                  # a wiped-out book has no holdings
 
 
 class FredLiveOnly(unittest.TestCase):

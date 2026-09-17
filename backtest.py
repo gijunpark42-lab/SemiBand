@@ -138,11 +138,15 @@ def publish_progress(payload):
         log.warning("progress publish failed: %s", exc)
 
 
-def drifted(w, day_rets):
+def drifted(w, day_rets, net_ret=None):
     """Holdings after one day: each weight grows with its own return and is re-expressed as a share of the grown equity
-    (audit 2026-09-17: the replay used to reset the book to yesterday's TARGET weights for free). A missing return = 0."""
+    (audit 2026-09-17: the replay used to reset the book to yesterday's TARGET weights for free). A missing return = 0;
+    net_ret = the day's return after costs (the equity the weights are shares of), else the gross return is used."""
     gross = sum(x * (day_rets.get(tk) or 0.0) for tk, x in w.items())
-    return {tk: x * (1 + (day_rets.get(tk) or 0.0)) / (1 + gross) for tk, x in w.items()}
+    denom = 1 + (gross if net_ret is None else net_ret)
+    if denom <= 0:
+        return {}
+    return {tk: x * (1 + (day_rets.get(tk) or 0.0)) / denom for tk, x in w.items()}
 
 
 def long_short_weights(convictions, betas, n, gross):
@@ -223,11 +227,15 @@ def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mod
                 "shadow": list(shadow), "drift": bool(drift), "earnings_shift": int(earnings_shift or 0),                       # audit 2026-09-17
                 "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     publish_progress(dict(run_info, status="loading", pct=0.0, message="downloading prices and earnings"))
+    saved = (config.AGENTS, config.TECHNICAL_RESIDUAL, config.GROSS_TARGET, config.VOL_TARGET)
     try:
         return _run(days, refit_every, warmup, extra_mods, exec_mode, run_info, shadow_mods)
     except Exception as exc:
         publish_progress(dict(run_info, status="failed", message=f"{type(exc).__name__}: {exc}"))
         raise
+    finally:                                                          # a run that dies mid-way leaves no mutated globals behind
+        config.AGENTS, config.TECHNICAL_RESIDUAL, config.GROSS_TARGET, config.VOL_TARGET = saved
+        indicators.PRECOMPUTED = {}
 
 
 def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info, shadow_mods=()):
@@ -280,7 +288,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info, shadow_mods
     if run_info.get("vol_target") is not None:                             # round 43: 0 switches the vol brake off
         config.VOL_TARGET = float(run_info["vol_target"]) or None
     vol_hist = []                                                          # round 43: the book's own realised-vol history
-    missing_ret, prev_top = 0, set()                                       # audit: held names without a price; the rank book's last members
+    missing_ret, rank_prev = 0, {}                                         # audit: held names without a price; the rank book's drifted holdings
 
     # numpy views of the price frames: the day loop reads single cells thousands of times (same float64 values as .iloc)
     C = closes.to_numpy(dtype=float)
@@ -436,7 +444,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info, shadow_mods
                     quint[q].append(float(np.mean([y10[tk] for tk in part])))
         # portfolio: same sizing as live; next-day return from close t to close t+1 (close mode)
         # or from open t+1 to open t+2 (open mode, what the live cycle actually gets)
-        if run_info.get("vol_target_mode") == "median" and len(curve) >= config.VOL_LOOKBACK_DAYS:   # round 43: expanding-median target
+        if run_info.get("vol_target_mode") == "median" and config.VOL_TARGET and len(curve) >= config.VOL_LOOKBACK_DAYS:   # round 43: expanding median
             vol_hist.append(float(np.std([c["ret"] for c in curve[-config.VOL_LOOKBACK_DAYS:]])) * math.sqrt(252))
             if len(vol_hist) >= 60:
                 config.VOL_TARGET = float(np.median(vol_hist))
@@ -484,9 +492,9 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info, shadow_mods
                      else tk[9:-2] if tk.startswith("__SLEEVE_") else tk]
             c0, c1 = P[i + shift, j], P[i + 1 + shift, j]
             return None if (np.isnan(c0) or np.isnan(c1) or c0 <= 0) else float(c1 / c0) - 1
-        ret = sum(w_i * r for tk, w_i in w.items() if (r := day_ret(tk)) is not None)
-        missing_ret += sum(1 for tk in w if day_ret(tk) is None)
         day_rets = {tk: day_ret(tk) for tk in w}
+        ret = sum(w_i * r for tk, w_i in w.items() if (r := day_rets[tk]) is not None)
+        missing_ret += sum(1 for r in day_rets.values() if r is None)
         leg_ret = {side: sum(w_i * r for tk, w_i in w.items() if (w_i > 0) == (side == "long") and w_i != 0
                              and not tk.startswith("__") and (r := day_ret(tk)) is not None) for side in ("long", "short")}
         ret -= abs(w.get("__HEDGE__", 0.0)) * 0.0002          # ~5%/yr borrow drag on the short side (as in sweep.py)
@@ -495,13 +503,15 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info, shadow_mods
         ret -= max(0.0, sum(x for x in w.values() if x > 0) - 1.0) * run_info.get("margin_rate", 0.0) / 252   # round 42: margin interest
         equity *= 1 + ret
         turnover_total += turnover
-        prev_w = drifted(w, day_rets) if run_info.get("drift", True) else w   # audit: tomorrow's band and turnover see the drifted holdings
+        prev_w = drifted(w, day_rets, ret) if run_info.get("drift", True) else w   # audit: tomorrow's band and turnover see the drifted holdings
         top = sorted(traded, key=lambda tk: -traded[tk])[:config.TOP_N]
+        target_rank = {tk: 1.0 / len(top) for tk in top}                  # equal weight, rebalanced daily, paying for it (review 2026-09-17)
+        rank_turnover = sum(abs(target_rank.get(tk, 0.0) - rank_prev.get(tk, 0.0)) for tk in set(target_rank) | set(rank_prev))
         rank_rets = [r for tk in top if (r := day_ret(tk)) is not None]
         rank_ret = float(np.mean(rank_rets)) if rank_rets else 0.0
-        rank_turnover = (2 * len(set(top) - prev_top) / len(top)) if (top and prev_top) else (1.0 if top else 0.0)   # equal weights
-        prev_top = set(top)
-        equity_rank *= 1 + rank_ret - rank_turnover * config.COST_BPS / 10_000    # its real turnover (audit: was a flat 10%)
+        rank_net = rank_ret - rank_turnover * config.COST_BPS / 10_000
+        equity_rank *= 1 + rank_net
+        rank_prev = drifted(target_rank, {tk: day_ret(tk) for tk in target_rank}, rank_net)
         curve.append({"date": t.isoformat(), "portfolio": equity, "rank": equity_rank, "gross": sum(abs(x) for x in w.values()),
                       "n": len([tk for tk in w if not tk.startswith("__")]), "hedge": round(-w.get("__HEDGE__", 0.0), 2),
                       "held": sorted(tk for tk in w if not tk.startswith("__")),
@@ -543,8 +553,9 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info, shadow_mods
     dd = 1 - np.array([c["portfolio"] for c in curve]) / np.maximum.accumulate([c["portfolio"] for c in curve])
     n = len(curve)
     i0, i1 = idx.get_loc(pd.Timestamp(curve[0]["date"])), idx.get_loc(pd.Timestamp(curve[-1]["date"]))
-    ew = [float(C[i1, col[tk]] / C[i0, col[tk]] - 1) for tk in tickers
-          if tk in col and np.isfinite(C[i0, col[tk]]) and np.isfinite(C[i1, col[tk]]) and C[i0, col[tk]] > 0]   # audit: the universe itself
+    p0, p1 = i0 + shift, min(i1 + 1 + shift, len(idx) - 1)               # the book's own marks: open t+1 -> open t+2 in open mode
+    ew = [float(P[p1, pcol[tk]] / P[p0, pcol[tk]] - 1) for tk in tickers
+          if tk in pcol and np.isfinite(P[p0, pcol[tk]]) and np.isfinite(P[p1, pcol[tk]]) and P[p0, pcol[tk]] > 0]   # audit: the universe itself
     report = {
         "generated": date.today().isoformat(),
         "period": {"start": curve[0]["date"], "end": curve[-1]["date"], "trading_days": n},

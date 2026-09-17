@@ -466,7 +466,8 @@ def predict(signals, model=None):
     mix = _blend(model)
     by_ticker = {}
     for s in signals:
-        by_ticker.setdefault(s.ticker, {})[s.agent] = s
+        if s.agent in names:                                  # a shadow-only ticker never becomes a (zero) conviction
+            by_ticker.setdefault(s.ticker, {})[s.agent] = s
     convictions, breakdown = {}, {}
     for ticker, per_agent in by_ticker.items():
         x = features(per_agent, names)

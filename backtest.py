@@ -138,6 +138,13 @@ def publish_progress(payload):
         log.warning("progress publish failed: %s", exc)
 
 
+def drifted(w, day_rets):
+    """Holdings after one day: each weight grows with its own return and is re-expressed as a share of the grown equity
+    (audit 2026-09-17: the replay used to reset the book to yesterday's TARGET weights for free). A missing return = 0."""
+    gross = sum(x * (day_rets.get(tk) or 0.0) for tk, x in w.items())
+    return {tk: x * (1 + (day_rets.get(tk) or 0.0)) / (1 + gross) for tk, x in w.items()}
+
+
 def long_short_weights(convictions, betas, n, gross):
     """Market-neutral weights (round 33): the top n convictions long and the bottom n short, equal weight within each
     leg. The book's gross is `gross`, split so the legs' betas cancel: long gross/(1+r), short gross*r/(1+r), with
@@ -168,7 +175,8 @@ def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mod
         open_refresh=False, label_open=False, label_next_close=False, refresh_agents=None, learn_preopen=False,
         prior_only=False, long_short=None, sleeve_mix=None, rank_order_mode=False, target_clip_sigma=None,
         intercept=None, drop_dir=(), demean=None, demean_group=None, graph_transcripts_only=None, technical_residual=None,
-        margin_rate=0.0, gross_target=None, beta_floor=None, vol_target=None, vol_target_mode=None, shadow=()):
+        margin_rate=0.0, gross_target=None, beta_floor=None, vol_target=None, vol_target_mode=None, shadow=(),
+        drift=True, earnings_shift=0):
     """tag: suffix for the output files (state/backtest<tag>.sqlite / backtest_report<tag>.json)
     so a long build can run while sweeps read the default files.
     exec_mode: 'close' = trade at the close the signals were computed on (optimistic);
@@ -194,9 +202,7 @@ def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mod
     extra_mods = [{"momentum": momentum, "sue": sue, "ml_ranker": ml_ranker}.get(e) or importlib.import_module(f"agents.{e}")
                   for e in extra]                              # factor_* agents load by name
     shadow_mods = [importlib.import_module(f"agents.{e}") for e in shadow]   # recorded and scored, never in the features
-    if agents:
-        PIT_AGENTS = [a for a in SIM_AGENTS if a in agents]
-    PIT_AGENTS = PIT_AGENTS + list(extra)
+    PIT_AGENTS = [a for a in SIM_AGENTS if a in (agents if agents else config.AGENTS)] + list(extra)   # rebuilt every run: idempotent in-process
     if tag:
         DB = config.STATE_DIR / f"backtest{tag}.sqlite"
         REPORT = config.STATE_DIR / f"backtest_report{tag}.json"
@@ -214,7 +220,7 @@ def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mod
                 "technical_residual": bool(config.TECHNICAL_RESIDUAL) if technical_residual is None else bool(technical_residual),   # round 40
                 "margin_rate": float(margin_rate or 0.0), "gross_target": gross_target, "beta_floor": beta_floor,                  # round 42
                 "vol_target": vol_target, "vol_target_mode": vol_target_mode,                                                     # round 43
-                "shadow": list(shadow),
+                "shadow": list(shadow), "drift": bool(drift), "earnings_shift": int(earnings_shift or 0),                       # audit 2026-09-17
                 "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     publish_progress(dict(run_info, status="loading", pct=0.0, message="downloading prices and earnings"))
     try:
@@ -251,6 +257,10 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info, shadow_mods
     else:
         px, shift = closes, 0
     earnings = market.earnings(tickers, limit=40)
+    if run_info.get("earnings_shift"):                     # audit sensitivity: every earnings date N business days later than reality
+        from pandas.tseries.offsets import BDay
+        earnings = {tk: [dict(r, date=(pd.Timestamp(r["date"]) + BDay(run_info["earnings_shift"])).date().isoformat()) for r in rows]
+                    for tk, rows in earnings.items()}
     pit = PointInTimeMap(transcripts_only=run_info.get("graph_transcripts_only"))
     groups = graph_pit.groups_from(pit, universe) if run_info.get("demean_group") == "chain" else None   # round 39
 
@@ -270,6 +280,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info, shadow_mods
     if run_info.get("vol_target") is not None:                             # round 43: 0 switches the vol brake off
         config.VOL_TARGET = float(run_info["vol_target"]) or None
     vol_hist = []                                                          # round 43: the book's own realised-vol history
+    missing_ret, prev_top = 0, set()                                       # audit: held names without a price; the rank book's last members
 
     # numpy views of the price frames: the day loop reads single cells thousands of times (same float64 values as .iloc)
     C = closes.to_numpy(dtype=float)
@@ -474,6 +485,8 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info, shadow_mods
             c0, c1 = P[i + shift, j], P[i + 1 + shift, j]
             return None if (np.isnan(c0) or np.isnan(c1) or c0 <= 0) else float(c1 / c0) - 1
         ret = sum(w_i * r for tk, w_i in w.items() if (r := day_ret(tk)) is not None)
+        missing_ret += sum(1 for tk in w if day_ret(tk) is None)
+        day_rets = {tk: day_ret(tk) for tk in w}
         leg_ret = {side: sum(w_i * r for tk, w_i in w.items() if (w_i > 0) == (side == "long") and w_i != 0
                              and not tk.startswith("__") and (r := day_ret(tk)) is not None) for side in ("long", "short")}
         ret -= abs(w.get("__HEDGE__", 0.0)) * 0.0002          # ~5%/yr borrow drag on the short side (as in sweep.py)
@@ -482,11 +495,13 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info, shadow_mods
         ret -= max(0.0, sum(x for x in w.values() if x > 0) - 1.0) * run_info.get("margin_rate", 0.0) / 252   # round 42: margin interest
         equity *= 1 + ret
         turnover_total += turnover
-        prev_w = w
+        prev_w = drifted(w, day_rets) if run_info.get("drift", True) else w   # audit: tomorrow's band and turnover see the drifted holdings
         top = sorted(traded, key=lambda tk: -traded[tk])[:config.TOP_N]
         rank_rets = [r for tk in top if (r := day_ret(tk)) is not None]
         rank_ret = float(np.mean(rank_rets)) if rank_rets else 0.0
-        equity_rank *= 1 + rank_ret - 0.1 * config.COST_BPS / 10_000    # ~10% daily turnover assumed
+        rank_turnover = (2 * len(set(top) - prev_top) / len(top)) if (top and prev_top) else (1.0 if top else 0.0)   # equal weights
+        prev_top = set(top)
+        equity_rank *= 1 + rank_ret - rank_turnover * config.COST_BPS / 10_000    # its real turnover (audit: was a flat 10%)
         curve.append({"date": t.isoformat(), "portfolio": equity, "rank": equity_rank, "gross": sum(abs(x) for x in w.values()),
                       "n": len([tk for tk in w if not tk.startswith("__")]), "hedge": round(-w.get("__HEDGE__", 0.0), 2),
                       "held": sorted(tk for tk in w if not tk.startswith("__")),
@@ -521,11 +536,15 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info, shadow_mods
     learner.TARGET_CLIP_SIGMA = None
     learner.INTERCEPT, learner.DROP_DIR = None, ()
     config.AGENTS, config.TECHNICAL_RESIDUAL, config.GROSS_TARGET, config.VOL_TARGET = live_agents, live_residual, live_gross, live_vol
+    indicators.PRECOMPUTED = {}                        # never leave a run's RSI cache to a later consumer in the same process
 
     rets = np.diff(np.log([1.0] + [c["portfolio"] for c in curve]))
     soxx = np.diff(np.log([1.0] + [c["soxx"] for c in curve]))
     dd = 1 - np.array([c["portfolio"] for c in curve]) / np.maximum.accumulate([c["portfolio"] for c in curve])
     n = len(curve)
+    i0, i1 = idx.get_loc(pd.Timestamp(curve[0]["date"])), idx.get_loc(pd.Timestamp(curve[-1]["date"]))
+    ew = [float(C[i1, col[tk]] / C[i0, col[tk]] - 1) for tk in tickers
+          if tk in col and np.isfinite(C[i0, col[tk]]) and np.isfinite(C[i1, col[tk]]) and C[i0, col[tk]] > 0]   # audit: the universe itself
     report = {
         "generated": date.today().isoformat(),
         "period": {"start": curve[0]["date"], "end": curve[-1]["date"], "trading_days": n},
@@ -553,6 +572,8 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info, shadow_mods
             "total_return": round(curve[-1]["portfolio"] - 1, 4),
             "soxx_return": round(curve[-1]["soxx"] - 1, 4),
             "spy_return": round(curve[-1]["spy"] - 1, 4),
+            "universe_ew_buy_hold": round(float(np.mean(ew)), 4) if ew else None,   # today's hindsight-selected list, bought and held
+            "universe_names_priced": len(ew), "missing_return_name_days": missing_ret,
             "ann_vol": round(float(np.std(rets) * math.sqrt(252)), 4),
             "sharpe": round(float(np.mean(rets) / (np.std(rets) or 1e-9) * math.sqrt(252)), 2),
             "max_drawdown": round(float(dd.max()), 4),
@@ -636,6 +657,8 @@ if __name__ == "__main__":
     p.add_argument("--vol-target-mode", choices=("fixed", "median"), default=None,
                    help="round 43: median = the target is the expanding median of the book's own 20-day realised vol (after 60 observations)")
     p.add_argument("--shadow", default="", help="comma list of agents to run and record without a vote (shadow agents), e.g. insider")
+    p.add_argument("--no-drift", action="store_true", help="audit: reproduce the old constant-weight daily rebalancing (no drifted holdings)")
+    p.add_argument("--earnings-shift", type=int, default=0, help="audit sensitivity: shift every earnings date N business days later")
     p.add_argument("--prior-only", action="store_true", help="trade on the equal-weight prior blend instead of the fitted weights (learner ablation); the learner is still fit daily and both ICs are recorded per day")
     p.add_argument("--long-short", type=int, default=None, help="market-neutral book (round 33): long the top N and short the bottom N convictions, gross GROSS_TARGET under the vol target split so the legs' betas cancel, 2 bps/day borrow, no sleeve")
     p.add_argument("--position-cap", type=float, default=None, help="override MAX_POSITION_PCT, e.g. 0.30")
@@ -676,5 +699,5 @@ if __name__ == "__main__":
             graph_transcripts_only=args.graph_transcripts_only, technical_residual=args.technical_residual,
             margin_rate=args.margin_rate, gross_target=args.gross_target, beta_floor=args.beta_floor,
             vol_target=args.vol_target, vol_target_mode=args.vol_target_mode,
-            shadow=tuple(x for x in args.shadow.split(",") if x))
+            shadow=tuple(x for x in args.shadow.split(",") if x), drift=not args.no_drift, earnings_shift=args.earnings_shift)
     print(json.dumps({k: v for k, v in r.items() if k != "curve"}, indent=2)[:4000])

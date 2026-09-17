@@ -26,7 +26,7 @@ def _trend(series: pd.Series, n: int) -> float:
     return 1.0 if s.iloc[-1] > s.iloc[-n:].mean() else -1.0
 
 
-def regime(closes: pd.DataFrame) -> tuple[float, str]:
+def regime(closes: pd.DataFrame, live: bool = True) -> tuple[float, str]:
     soxx = closes[config.BENCHMARK]
     score = 0.4 * _trend(soxx, 50) + 0.3 * _trend(closes["SPY"], 200)
     why = [f"SOXX {'above' if _trend(soxx, 50) > 0 else 'below'} 50d",
@@ -46,21 +46,23 @@ def regime(closes: pd.DataFrame) -> tuple[float, str]:
         elif d < -0.30:
             score += 0.1
             why.append(f"10y {d:.2f}pt/20d")
-    # Optional FRED inputs (free key): yield-curve slope and financial conditions.
-    t10, t2 = market.fred_latest("DGS10"), market.fred_latest("DGS2")
-    if t10 and t2:
-        slope = t10["latest"] - t2["latest"]
-        if slope < 0:
-            score -= 0.1
-            why.append(f"curve inverted {slope:+.2f}")
-    nfci = market.fred_latest("NFCI")
-    if nfci:
-        if nfci["latest"] > 0:
-            score -= 0.2
-            why.append(f"NFCI tight {nfci['latest']:+.2f}")
-        elif nfci["latest"] < -0.4:
-            score += 0.1
-            why.append(f"NFCI loose {nfci['latest']:+.2f}")
+    # Optional FRED inputs (free key): yield-curve slope and financial conditions. Live only: fred_latest is TODAY's value, so
+    # a replay that read it put today's reading on every simulated day (audit 2026-09-17).
+    if live:
+        t10, t2 = market.fred_latest("DGS10"), market.fred_latest("DGS2")
+        if t10 and t2:
+            slope = t10["latest"] - t2["latest"]
+            if slope < 0:
+                score -= 0.1
+                why.append(f"curve inverted {slope:+.2f}")
+        nfci = market.fred_latest("NFCI")
+        if nfci:
+            if nfci["latest"] > 0:
+                score -= 0.2
+                why.append(f"NFCI tight {nfci['latest']:+.2f}")
+            elif nfci["latest"] < -0.4:
+                score += 0.1
+                why.append(f"NFCI loose {nfci['latest']:+.2f}")
     return clip(score, -1, 1), ", ".join(why)
 
 
@@ -68,7 +70,7 @@ def run(universe: dict, ctx: dict) -> list[Signal]:
     closes: pd.DataFrame = ctx["closes"]
     if any(c not in closes.columns for c in EXTRA):
         closes = market.closes(list(universe) + [config.BENCHMARK] + EXTRA)
-    r, why = regime(closes)
+    r, why = regime(closes, live=ctx.get("asof") is None)   # a replay passes asof: no today-dated inputs there
     hist, asof = ctx.get("hist"), ctx.get("asof_ts")   # backtest fast path: precomputed (name, SOXX) return pairs
     bench_ret = closes[config.BENCHMARK].pct_change() if hist is None else None
     out = []

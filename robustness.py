@@ -153,8 +153,8 @@ def cost_sensitivity(curve, bps_list=(0, 5, 15, 30)):
 def best_quarter_share(curve):
     """How much of the total log return came from the single best quarter (1.0 = all of it)."""
     logs = [math.log1p(r["portfolio"]) for r in calendar(curve)["quarterly"]]
-    tot = sum(logs)
-    return round(max(logs) / tot, 3) if tot > 0 and logs else None
+    gains = sum(x for x in logs if x > 0)            # against the sum of the winning quarters, so a losing quarter cannot push it past 1
+    return round(max(logs) / gains, 3) if logs and gains > 0 else None
 
 
 def summary(curve, n_trials=None, trial_sharpes=None):
@@ -164,6 +164,7 @@ def summary(curve, n_trials=None, trial_sharpes=None):
     rets = np.diff(np.log(np.r_[1.0, eq]))
     if n_trials is None:
         n_trials, trial_sharpes = sweep_trials()
+        n_trials = max(n_trials, int(getattr(config, "RESEARCH_TRIALS", 0) or 0))   # hand-run rounds count too (audit 2026-09-17)
     return {
         "sharpe": round(sharpe(rets), 2),
         "sharpe_ci95": block_bootstrap_ci(rets),

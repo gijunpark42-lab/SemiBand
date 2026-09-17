@@ -31,6 +31,17 @@ def stats(t, days):
     return float(eq[-1] - 1), logs.mean() / (logs.std() or 1e-9) * math.sqrt(252), float((1 - eq / np.maximum.accumulate(eq)).max())
 
 
+def nw_t(x, lags=10):
+    """Newey-West t of the mean (Bartlett weights): two variants of one book hold the same names for days, so the daily
+    differences are autocorrelated and the iid t is too large (audit 2026-09-17)."""
+    x = np.asarray(x, float)
+    n, e = len(x), np.asarray(x, float) - np.mean(x)
+    var = float(e @ e) / n
+    for k in range(1, min(lags, n - 1) + 1):
+        var += 2 * (1 - k / (lags + 1)) * float(e[k:] @ e[:-k]) / n
+    return float(np.mean(x) / math.sqrt(var / n)) if var > 0 else float("nan")
+
+
 def paired(a, b, days):
     x = np.array([curves[b][d]["ret"] - curves[a][d]["ret"] for d in days])
     sd = x.std(ddof=1)
@@ -56,5 +67,6 @@ for t in tags[1:]:
     blk = [paired(base, t, b)[0] for b in blocks]
     ok_blocks = sum(1 for x in blk if x >= 0)
     gate = m >= 0 and s >= s0 - 1e-9 and dd <= dd0 + 0.02 and ok_blocks >= MIN_BLOCKS
-    print(f"{t:5} vs {base}: paired {m:+.2f} bp/d (t {tt:+.2f}) | Sharpe {s:.2f} vs {s0:.2f} | maxDD {dd:.1%} vs {dd0:.1%} | blocks >= 0: "
+    nw = nw_t([curves[t][d]["ret"] - curves[base][d]["ret"] for d in dates])
+    print(f"{t:5} vs {base}: paired {m:+.2f} bp/d (t {tt:+.2f}, Newey-West {nw:+.2f}) | Sharpe {s:.2f} vs {s0:.2f} | maxDD {dd:.1%} vs {dd0:.1%} | blocks >= 0: "
           f"{ok_blocks}/6 [{', '.join(f'{x:+.1f}' for x in blk)}] -> {'PASS' if gate else 'FAIL'}")

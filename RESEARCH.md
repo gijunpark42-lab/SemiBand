@@ -1921,6 +1921,21 @@ Average intraday path of the equal-weight universe (bps per session): 09:30→10
 
 **Runs (VM, same day and machine, fixed replay, `--exec close --beta-floor 0.5`, margin 7%, snapshot 2026-09-17):** `_m0` daily, `_m1 --rebalance-every 2`, `_m2 --rebalance-every 3`, `_m3 --rebalance-every 5`, at the replay's 5 bps; `_q0`..`_q3` the same four at `--cost-bps 20` (the open-execution cost, for information). Gate v4.1 for `_m1`..`_m3` against `_m0`; 2019–23 confirmation for passes. **Decision rule:** adopt the least frequent schedule that passes v4.1 at 5 bps; if none passes at 5 bps, keep daily rebalancing and re-measure the live MOC slippage after 30 sessions — if the measured cost per dollar traded is then ≥ 15 bps, this round is re-run at that cost and its pass decides. Expected: daily wins at 5 bps (signals decay over 10–20 days and the ranking is fresh each day; turnover costs only ~2 bp/d), every-2 close to it, weekly clearly worse; at 20 bps every-2 or every-3 may win, which would say "fix the cost first", not "trade less". Trials: 6 (+ 2 confirmations); `RESEARCH_TRIALS` → 378 at the close.
 
+### Round 49 results (2026-09-18 15:20 PT, VM, code 2d98770, gate v4.1, close execution with the beta floor): daily rebalancing stays
+
+| Cost | Run | Return / Sharpe / max DD | Turnover | vs daily paired (t, NW) | Blocks ≥ 0 | Gate |
+|---|---|---|---|---|---|---|
+| 5 bps | `_m0` daily | +1709% / 2.42 / 27.3% | 0.46 | — | — | base |
+| 5 bps | `_m1` every 2 sessions | +1599% / 2.32 / 29.6% | 0.31 | −1.1 bp/d (−0.26, −0.29) | 2/6 | FAIL |
+| 5 bps | `_m2` every 3 sessions (≈ twice a week) | +1535% / 2.35 / 27.6% | 0.26 | −2.3 bp/d (−0.46, −0.54) | 4/6 | FAIL (paired < 0) |
+| 5 bps | `_m3` weekly | +957% / 1.95 / 37.2% | 0.20 | −11.3 bp/d (−1.79, −1.85) | 2/6 | FAIL |
+| 20 bps | `_q0` daily | +1217% / 2.15 / 28.9% | 0.46 | — | — | base |
+| 20 bps | `_q1` every 2 | +1288% / 2.15 / 30.6% | 0.31 | +1.4 bp/d (+0.33, +0.37) | 5/6 | PASS (information only) |
+| 20 bps | `_q2` every 3 | +1267% / 2.19 / 28.3% | 0.26 | +0.7 bp/d (+0.14, +0.16) | 4/6 | PASS (information only) |
+| 20 bps | `_q3` weekly | +818% / 1.83 / 38.2% | 0.20 | −7.6 bp/d (−1.19, −1.24) | 2/6 | FAIL |
+
+**Reading and decision (the pre-registered rule).** At the closing auction's cost nothing beats daily rebalancing: the signals are worth more than the turnover they cost (every-2 gives up 110 points of return and 0.1 of Sharpe; weekly loses 11 bp/d with ten more points of drawdown — a 10/20-day signal cannot wait a week). Only at 20 bps — the cost the open execution has actually been paying — do every-2 and every-3 pull ahead (+1.4 / +0.7 bp/d, inside noise), which is the same finding as round 45's conviction EMA and says "remove the cost", not "trade less"; close execution removes it from 09-22. **Daily rebalancing stays.** Live MOC slippage against the official close is measured from 09-22 (`slippage.py` needs a close reference); if after 30 sessions the cost per dollar traded is ≥ 15 bps, this round is re-run at that cost and its pass decides. The user's "twice a week" would have cost about 10% of the multiple at 5 bps. Trials: 6; `RESEARCH_TRIALS` 378.
+
 ## 2026-09-18 07:55 PT — round 48, pre-registered before any result (user "ㅇㅇ" to the midday schedule): close execution — signals from near-close prices, orders in the closing auction
 
 **Why.** The entry-time study of this morning puts the tradable open execution at +1,753% / 2.19 against +2,869% / 2.64 for trading at the signal day's close: the universe's return accrues overnight (+20 bps a session close→open) and the 03:30 cycle trades 17 hours after its signals' close, so every new name misses the overnight move and every exit carries it. A close-execution cycle computes the price agents on 15:45 ET prices (the LLM and graph agents do not use prices), submits market-on-close orders (Alpaca `TimeInForce.CLS`, cutoff 15:50 ET) and marks close to close — the replay's `--exec close` convention less a 15-minute staleness, plus the closing auction's near-zero slippage against the close (the open fills cost 17–23 bps per dollar).

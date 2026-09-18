@@ -5,9 +5,11 @@ construction: only the closes in the context are read. Silent for names without 
 """
 import math
 
+import numpy as np
 import pandas as pd
 
 import config
+import market
 from agents.base import Signal, clip
 from agents.graph_pit import pit_map
 
@@ -16,6 +18,7 @@ DAYS = 21
 GAIN = 8.0
 GATE_DAYS = 50                    # round 45: trend gate window on the benchmark
 VOL_DAYS, VOL_TARGET_21D = 60, 0.10   # round 45: realised-vol scaling of the basket signal
+MIN_PAIRS = 15                    # round 46: valid open/close pairs a name needs for the intraday measure, else close-to-close
 
 
 def _links(universe, side):
@@ -47,6 +50,37 @@ def rel_returns(closes: pd.DataFrame, days=DAYS):
     return out
 
 
+def rel_returns_intraday(closes, opens, days=DAYS, fallback=None, min_pairs=MIN_PAIRS):
+    """{ticker: compounded open->close return over the last `days` sessions of the closes frame minus the benchmark's}
+    (round 46, Wang 2025: the overnight leg of connected-firm spillover reverses). Only rows of the closes index count, so a
+    later open (the fill price) can never enter; a ticker with fewer than `min_pairs` valid pairs keeps its close-to-close
+    value from `fallback`."""
+    fallback = fallback or {}
+    if opens is None or config.BENCHMARK not in closes.columns or config.BENCHMARK not in opens.columns or len(closes) <= days:
+        return fallback
+    idx = closes.index[-days:]
+    o = opens.reindex(idx)
+
+    def leg(t):
+        if t not in o.columns:
+            return None
+        ratio = (closes.loc[idx, t] / o[t]).replace([np.inf, -np.inf], np.nan).dropna()
+        ratio = ratio[ratio > 0]
+        return float(ratio.prod() - 1) if len(ratio) >= min_pairs else None
+
+    b = leg(config.BENCHMARK)
+    if b is None:
+        return fallback
+    out = {}
+    for t in closes.columns:
+        r = leg(t)
+        if r is not None:
+            out[t] = r - b
+        elif t in fallback:
+            out[t] = fallback[t]
+    return out
+
+
 def trend_ok(closes):
     """False while the benchmark's last close is at or below its GATE_DAYS-session average (round 45 gate)."""
     if config.BENCHMARK not in closes.columns:
@@ -73,6 +107,12 @@ def signals(universe, ctx, side, name):
     if config.MOMENTUM_TREND_GATE and not trend_ok(closes):
         return []
     rel = rel_returns(closes)
+    intraday = False
+    if config.MOMENTUM_INTRADAY:                      # round 46: the replay hands the opens in; live fetches them (no cache)
+        opens = ctx.get("opens")
+        if opens is None:
+            opens = market.opens(list(closes.columns), 120)
+        rel, intraday = rel_returns_intraday(closes, opens, fallback=rel), True
     links = _links(universe, side)
     out = []
     for ticker, linked in links.items():
@@ -89,7 +129,7 @@ def signals(universe, ctx, side, name):
         confidence = clip(0.3 + 0.05 * len(vals), 0.3, 0.7)
         label = "customers" if side == "customers" else "suppliers"
         out.append(Signal(name, ticker, direction, confidence, 20,
-                          f"{len(vals)} {label}, {DAYS}d return {avg * 100:+.1f}% vs {config.BENCHMARK}" + (f" (vol scale {scale:.2f})" if scale != 1.0 else "")).clipped())
+                          f"{len(vals)} {label}, {DAYS}d return {avg * 100:+.1f}% vs {config.BENCHMARK}" + (f" (vol scale {scale:.2f})" if scale != 1.0 else "") + (" (intraday)" if intraday else "")).clipped())
     return out
 
 

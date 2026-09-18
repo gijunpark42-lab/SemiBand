@@ -1,8 +1,12 @@
 """Protocol v4 gate (2026-09-17, from round 41 on): full-window gate against the same-day, same-machine baseline (paired daily
 difference >= 0, Sharpe not lower, max DD <= base + 2 pts) plus block consistency (paired difference >= 0 in at least 4 of 6
 purged blocks). The independent 2019-23 window is judged with the same script on its own pair. Read-only.
+v4.1 (2026-09-18, from round 46 on): a tie — a block in which the two books' daily returns are identical on every day — is never
+a pass: tied blocks leave the count and the requirement is two thirds of the informative blocks (rounded up) with at least three
+of them; with --affected-from YYYY-MM-DD a partial-coverage candidate is also scored on the affected days alone (four contiguous
+blocks, the first 10 days of each purged, each at least 20 days, 3 of 4).
 
-    python analyze_v4.py _base _cand [...]      (reports read from config.STATE_DIR)
+    python analyze_v4.py _base _cand [...] [--affected-from 2025-10-01]      (reports read from config.STATE_DIR)
 """
 import json
 import math
@@ -15,7 +19,13 @@ import config
 
 S = config.STATE_DIR
 BLOCKS, PURGE, MIN_BLOCKS = 6, 20, 4
-tags = sys.argv[1:]
+args = sys.argv[1:]
+AFFECTED_FROM = None                               # v4.1 (b): the first day a partial-coverage candidate can act, e.g. 2025-10-01
+if "--affected-from" in args:
+    k = args.index("--affected-from")
+    AFFECTED_FROM = args[k + 1]
+    args = args[:k] + args[k + 2:]
+tags = args
 reps = {t: json.loads((S / f"backtest_report{t}.json").read_text(encoding="utf-8")) for t in tags}
 curves = {t: {c["date"]: c for c in r["curve"]} for t, r in reps.items()}
 cost = float(re.search(r"; ([\d.]+) bps cost per unit turnover", " ".join(reps[tags[0]]["caveats"])).group(1))
@@ -65,8 +75,24 @@ for t in tags[1:]:
     s, dd = stats(t, dates)[1], stats(t, dates)[2]
     m, tt = paired(base, t, dates)
     blk = [paired(base, t, b)[0] for b in blocks]
-    ok_blocks = sum(1 for x in blk if x >= 0)
-    gate = m >= 0 and s >= s0 - 1e-9 and dd <= dd0 + 0.02 and ok_blocks >= MIN_BLOCKS
+    tie = [all(curves[t][d]["ret"] == curves[base][d]["ret"] for d in b) for b in blocks]     # v4.1 (a): identical books
+    inf = [x for x, is_tie in zip(blk, tie) if not is_tie]
+    ok_blocks, need = sum(1 for x in inf if x >= 0), math.ceil(2 * len(inf) / 3)
+    blocks_ok = len(inf) >= 3 and ok_blocks >= need
+    note = f"{ok_blocks}/{len(inf)} informative (need {need}, {sum(tie)} ties excluded)" if any(tie) else f"{ok_blocks}/{len(inf)}"
+    cov = ""
+    if AFFECTED_FROM:                                                                            # v4.1 (b): the affected days alone
+        aff = [d for d in dates if d >= AFFECTED_FROM]
+        n4 = len(aff) // 4
+        cblocks = [aff[j * n4:(j + 1) * n4 if j < 3 else len(aff)][10:] for j in range(4)]
+        if n4 and min(len(b) for b in cblocks) >= 20:
+            cblk = [paired(base, t, b)[0] for b in cblocks]
+            cok = sum(1 for x in cblk if x >= 0)
+            blocks_ok = blocks_ok and cok >= 3
+            cov = f" | affected {len(aff)} d from {AFFECTED_FROM}: {cok}/4 [{', '.join(f'{x:+.1f}' for x in cblk)}]"
+        else:
+            blocks_ok, cov = False, f" | affected days from {AFFECTED_FROM}: too few for four 20-day blocks -> not gateable"
+    gate = m >= 0 and s >= s0 - 1e-9 and dd <= dd0 + 0.02 and blocks_ok
     nw = nw_t([curves[t][d]["ret"] - curves[base][d]["ret"] for d in dates])
     print(f"{t:5} vs {base}: paired {m:+.2f} bp/d (t {tt:+.2f}, Newey-West {nw:+.2f}) | Sharpe {s:.2f} vs {s0:.2f} | maxDD {dd:.1%} vs {dd0:.1%} | blocks >= 0: "
-          f"{ok_blocks}/6 [{', '.join(f'{x:+.1f}' for x in blk)}] -> {'PASS' if gate else 'FAIL'}")
+          f"{note} [{', '.join(f'{x:+.1f}' for x in blk)}]{cov} -> {'PASS' if gate else 'FAIL'}")

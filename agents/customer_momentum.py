@@ -14,6 +14,8 @@ from agents.graph_pit import pit_map
 NAME = "customer_momentum"
 DAYS = 21
 GAIN = 8.0
+GATE_DAYS = 50                    # round 45: trend gate window on the benchmark
+VOL_DAYS, VOL_TARGET_21D = 60, 0.10   # round 45: realised-vol scaling of the basket signal
 
 
 def _links(universe, side):
@@ -45,8 +47,31 @@ def rel_returns(closes: pd.DataFrame, days=DAYS):
     return out
 
 
+def trend_ok(closes):
+    """False while the benchmark's last close is at or below its GATE_DAYS-session average (round 45 gate)."""
+    if config.BENCHMARK not in closes.columns:
+        return True
+    b = closes[config.BENCHMARK].dropna()
+    return len(b) < GATE_DAYS or float(b.iloc[-1]) > float(b.iloc[-GATE_DAYS:].mean())
+
+
+def basket_vol(closes, linked, days=VOL_DAYS):
+    """Realised vol of the linked basket's mean daily return relative to the benchmark, over `days` sessions, expressed per
+    21 sessions; None when the history is too short."""
+    cols = [t for t in linked if t in closes.columns]
+    if not cols or config.BENCHMARK not in closes.columns:
+        return None
+    daily = closes[cols].pct_change().mean(axis=1) - closes[config.BENCHMARK].pct_change()
+    daily = daily.dropna().iloc[-days:]
+    if len(daily) < 40:
+        return None
+    return float(daily.std() * math.sqrt(21))
+
+
 def signals(universe, ctx, side, name):
     closes = ctx["closes"]
+    if config.MOMENTUM_TREND_GATE and not trend_ok(closes):
+        return []
     rel = rel_returns(closes)
     links = _links(universe, side)
     out = []
@@ -55,11 +80,16 @@ def signals(universe, ctx, side, name):
         if not vals:
             continue
         avg = sum(vals) / len(vals)
-        direction = math.tanh(GAIN * avg)
+        scale = 1.0
+        if config.MOMENTUM_VOL_SCALE:
+            vol = basket_vol(closes, [t for t in linked if t in rel])
+            if vol:
+                scale = min(max(VOL_TARGET_21D / vol, 0.25), 2.0)
+        direction = math.tanh(GAIN * avg * scale)
         confidence = clip(0.3 + 0.05 * len(vals), 0.3, 0.7)
         label = "customers" if side == "customers" else "suppliers"
         out.append(Signal(name, ticker, direction, confidence, 20,
-                          f"{len(vals)} {label}, {DAYS}d return {avg * 100:+.1f}% vs {config.BENCHMARK}").clipped())
+                          f"{len(vals)} {label}, {DAYS}d return {avg * 100:+.1f}% vs {config.BENCHMARK}" + (f" (vol scale {scale:.2f})" if scale != 1.0 else "")).clipped())
     return out
 
 

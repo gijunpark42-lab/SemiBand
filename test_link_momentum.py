@@ -71,5 +71,34 @@ class LinkMomentum(unittest.TestCase):
         self.assertEqual(customer_momentum.run(self.universe, {"closes": self.closes.iloc[:10]}), [])   # too short
 
 
+class Round45Guards(LinkMomentum):
+    def test_the_trend_gate_silences_the_agent_below_the_benchmarks_average(self):
+        falling = self.closes.copy()
+        falling[config.BENCHMARK] = np.linspace(120.0, 100.0, len(falling))       # last close below its 50-day mean
+        rising = self.closes.copy()
+        rising[config.BENCHMARK] = np.linspace(100.0, 120.0, len(rising))
+        with patch.object(config, "MOMENTUM_TREND_GATE", True):
+            self.assertEqual(customer_momentum.run(self.universe, {"closes": falling}), [])
+            self.assertTrue(customer_momentum.run(self.universe, {"closes": rising}))
+        with patch.object(config, "MOMENTUM_TREND_GATE", False):
+            self.assertTrue(customer_momentum.run(self.universe, {"closes": falling}))
+
+    def test_vol_scaling_shrinks_a_volatile_basket_and_is_bounded(self):
+        wild = self.closes.copy()
+        rng = np.random.default_rng(5)
+        wild["CLD"] = 100.0 * np.cumprod(1 + rng.normal(0.004, 0.06, len(wild)))    # a 6%-a-day customer
+        with patch.object(config, "MOMENTUM_VOL_SCALE", True):
+            scaled = {s.ticker: s for s in customer_momentum.run(self.universe, {"closes": wild})}
+        with patch.object(config, "MOMENTUM_VOL_SCALE", False):
+            plain = {s.ticker: s for s in customer_momentum.run(self.universe, {"closes": wild})}
+        self.assertIn("vol scale", scaled["CHIP"].reason)
+        self.assertLessEqual(abs(scaled["CHIP"].direction), abs(plain["CHIP"].direction) + 1e-12)
+        vol = customer_momentum.basket_vol(wild, ["CLD"])
+        self.assertGreater(vol, 0.10)                                               # far above the 10% target -> multiplier below 1
+        self.assertIsNone(customer_momentum.basket_vol(wild.iloc[:20], ["CLD"]))
+
+    # the inherited tests run again under this class: harmless
+
+
 if __name__ == "__main__":
     unittest.main()

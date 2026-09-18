@@ -180,7 +180,7 @@ def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mod
         prior_only=False, long_short=None, sleeve_mix=None, rank_order_mode=False, target_clip_sigma=None,
         intercept=None, drop_dir=(), demean=None, demean_group=None, graph_transcripts_only=None, technical_residual=None,
         margin_rate=0.0, gross_target=None, beta_floor=None, vol_target=None, vol_target_mode=None, shadow=(),
-        drift=True, earnings_shift=0):
+        drift=True, earnings_shift=0, momentum_gate=None, momentum_vol_scale=None, conviction_ema=None):
     """tag: suffix for the output files (state/backtest<tag>.sqlite / backtest_report<tag>.json)
     so a long build can run while sweeps read the default files.
     exec_mode: 'close' = trade at the close the signals were computed on (optimistic);
@@ -225,6 +225,9 @@ def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mod
                 "margin_rate": float(margin_rate or 0.0), "gross_target": gross_target, "beta_floor": beta_floor,                  # round 42
                 "vol_target": vol_target, "vol_target_mode": vol_target_mode,                                                     # round 43
                 "shadow": list(shadow), "drift": bool(drift), "earnings_shift": int(earnings_shift or 0),                       # audit 2026-09-17
+                "momentum_gate": bool(config.MOMENTUM_TREND_GATE) if momentum_gate is None else bool(momentum_gate),           # round 45
+                "momentum_vol_scale": bool(config.MOMENTUM_VOL_SCALE) if momentum_vol_scale is None else bool(momentum_vol_scale),
+                "conviction_ema": conviction_ema,
                 "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     publish_progress(dict(run_info, status="loading", pct=0.0, message="downloading prices and earnings"))
     saved = (config.AGENTS, config.TECHNICAL_RESIDUAL, config.GROSS_TARGET, config.VOL_TARGET)
@@ -281,6 +284,9 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info, shadow_mods
     learner.TARGET_CLIP_SIGMA = run_info.get("target_clip_sigma")
     learner.INTERCEPT, learner.DROP_DIR = run_info.get("intercept"), tuple(run_info.get("drop_dir") or ())   # round 38
     live_agents, live_residual, live_gross, live_vol = config.AGENTS, config.TECHNICAL_RESIDUAL, config.GROSS_TARGET, config.VOL_TARGET
+    live_gate, live_vscale = config.MOMENTUM_TREND_GATE, config.MOMENTUM_VOL_SCALE
+    config.MOMENTUM_TREND_GATE, config.MOMENTUM_VOL_SCALE = bool(run_info.get("momentum_gate")), bool(run_info.get("momentum_vol_scale"))   # round 45
+    prev_conv = {}                                                         # round 45: yesterday's convictions for --conviction-ema
     config.AGENTS = PIT_AGENTS                       # the prior and the sizing see only the simulated agents
     config.TECHNICAL_RESIDUAL = bool(run_info.get("technical_residual"))   # round 40: the technical agent reads it per call
     if run_info.get("gross_target"):                                       # round 42: portfolio.targets reads the ceiling per call
@@ -408,6 +414,10 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info, shadow_mods
         conv, _ = learner.predict(signals, model)
         conv_prior, _ = learner.predict(signals, None)
         traded = conv_prior if run_info.get("prior_only") else conv   # learner ablation: trade on the equal-weight prior blend
+        alpha = run_info.get("conviction_ema")
+        if alpha and 0 < alpha < 1:                                    # round 45: sizing-side smoothing, conv_t = a conv + (1-a) conv_{t-1}
+            traded = {tk: alpha * c + (1 - alpha) * prev_conv.get(tk, c) for tk, c in traded.items()}
+            prev_conv = dict(traded)
         conv_rank = None
         if run_info.get("rank_order"):                                # round 37: the rank model orders, the return model sizes
             conv_rank, _ = learner.predict(signals, rank_model)
@@ -546,6 +556,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info, shadow_mods
     learner.TARGET_CLIP_SIGMA = None
     learner.INTERCEPT, learner.DROP_DIR = None, ()
     config.AGENTS, config.TECHNICAL_RESIDUAL, config.GROSS_TARGET, config.VOL_TARGET = live_agents, live_residual, live_gross, live_vol
+    config.MOMENTUM_TREND_GATE, config.MOMENTUM_VOL_SCALE = live_gate, live_vscale
     indicators.PRECOMPUTED = {}                        # never leave a run's RSI cache to a later consumer in the same process
 
     rets = np.diff(np.log([1.0] + [c["portfolio"] for c in curve]))
@@ -572,6 +583,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info, shadow_mods
         "technical_residual": bool(run_info.get("technical_residual")),
         "margin_rate": run_info.get("margin_rate"), "gross_target": run_info.get("gross_target"), "beta_floor": run_info.get("beta_floor"),
         "vol_target": run_info.get("vol_target"), "vol_target_mode": run_info.get("vol_target_mode"),
+        "momentum_gate": run_info.get("momentum_gate"), "momentum_vol_scale": run_info.get("momentum_vol_scale"), "conviction_ema": run_info.get("conviction_ema"),
         "shadow": run_info.get("shadow"),
         "sizing": {"size": config.SIZE_PER_CONVICTION, "cap": config.MAX_POSITION_PCT, "gross": config.GROSS_TARGET,
                    "long_short": run_info.get("long_short"),
@@ -670,6 +682,9 @@ if __name__ == "__main__":
     p.add_argument("--shadow", default="", help="comma list of agents to run and record without a vote (shadow agents), e.g. insider")
     p.add_argument("--no-drift", action="store_true", help="audit: reproduce the old constant-weight daily rebalancing (no drifted holdings)")
     p.add_argument("--earnings-shift", type=int, default=0, help="audit sensitivity: shift every earnings date N business days later")
+    p.add_argument("--momentum-gate", action=argparse.BooleanOptionalAction, default=None, help="round 45: customer_momentum silent below SOXX's 50-day average")
+    p.add_argument("--momentum-vol-scale", action=argparse.BooleanOptionalAction, default=None, help="round 45: customer_momentum scaled by its basket's realised vol")
+    p.add_argument("--conviction-ema", type=float, default=None, help="round 45: smooth convictions before sizing, e.g. 0.5 (1 = off)")
     p.add_argument("--prior-only", action="store_true", help="trade on the equal-weight prior blend instead of the fitted weights (learner ablation); the learner is still fit daily and both ICs are recorded per day")
     p.add_argument("--long-short", type=int, default=None, help="market-neutral book (round 33): long the top N and short the bottom N convictions, gross GROSS_TARGET under the vol target split so the legs' betas cancel, 2 bps/day borrow, no sleeve")
     p.add_argument("--position-cap", type=float, default=None, help="override MAX_POSITION_PCT, e.g. 0.30")
@@ -710,5 +725,6 @@ if __name__ == "__main__":
             graph_transcripts_only=args.graph_transcripts_only, technical_residual=args.technical_residual,
             margin_rate=args.margin_rate, gross_target=args.gross_target, beta_floor=args.beta_floor,
             vol_target=args.vol_target, vol_target_mode=args.vol_target_mode,
-            shadow=tuple(x for x in args.shadow.split(",") if x), drift=not args.no_drift, earnings_shift=args.earnings_shift)
+            shadow=tuple(x for x in args.shadow.split(",") if x), drift=not args.no_drift, earnings_shift=args.earnings_shift,
+            momentum_gate=args.momentum_gate, momentum_vol_scale=args.momentum_vol_scale, conviction_ema=args.conviction_ema)
     print(json.dumps({k: v for k, v in r.items() if k != "curve"}, indent=2)[:4000])

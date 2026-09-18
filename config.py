@@ -123,6 +123,10 @@ TECHNICAL_RESIDUAL = False        # round 40 candidate (2026-09-17, Blitz-Huij-M
                                   # beta x SOXX instead of SOXX (trailing 60-day pair beta, clipped to 0..3); False = plain relative return
 RESEARCH_TRIALS = 330             # audit 2026-09-17: floor for the deflated Sharpe's trial count: 221 sweep variants + ~70 hand-run
                                   # replays before round 39 + the trials of rounds 39-43. Raise it with every round's trial count
+MOMENTUM_TREND_GATE = False       # round 45 candidate: customer_momentum stays silent while SOXX is below its 50-day average (momentum
+                                  # crashes come in rebounds after bear markets, Daniel & Moskowitz 2016)
+MOMENTUM_VOL_SCALE = False        # round 45 candidate: customer_momentum's signal scaled by the customer basket's realised vol to a 10%
+                                  # per-21-day target, multiplier clipped to 0.25..2 (Barroso & Santa-Clara 2015)
 GROSS_TARGET = 1.50               # CEILING on gross exposure (150% of equity = 50% margin); not a target, cash is a position
 VOL_TARGET = 0.50                 # portfolio vol targeting: when the book's trailing realised vol (annualised) exceeds this, scale every
                                   # target down by VOL_TARGET / realised (never up). Sweep rounds 10-11 + re-validation (2026-09-11, 500 days,

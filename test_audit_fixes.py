@@ -84,3 +84,14 @@ class ReplayRoster(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SimulatedRoster(unittest.TestCase):
+    def test_every_simulated_agent_outside_the_fixed_set_has_a_module(self):
+        import importlib
+        for name in backtest.SIM_AGENTS:
+            if name not in backtest.SPECIAL_AGENTS:
+                mod = importlib.import_module(f"agents.{name}")
+                self.assertEqual(mod.NAME, name)
+                self.assertTrue(callable(mod.run))
+        self.assertIn("customer_momentum", backtest.SIM_AGENTS)

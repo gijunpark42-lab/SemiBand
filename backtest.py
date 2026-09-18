@@ -72,6 +72,7 @@ PROGRESS_EVERY = 5                                   # publish progress every N 
 PUBLISH = True                                       # --no-publish: keep test runs off the website's Backtest tab
 SIM_AGENTS = ["supply_chain", "neighbors", "technical", "mean_reversion", "events", "risk", "macro", "customer_momentum"]   # voter since 09-18 (review 2026-09-17: keep the replay roster equal to the live one)   # everything the replay can compute; all recorded
 PIT_AGENTS = [a for a in SIM_AGENTS if a in config.AGENTS]   # the roster the learner and the sizing see = the live roster minus the unsimulated agents
+SPECIAL_AGENTS = {"supply_chain", "neighbors", "technical", "mean_reversion", "risk", "macro", "events"}   # run through their own paths below
 EXTRA_AGENTS = {"momentum": None, "sue": None, "ml_ranker": None}   # re-testable with --extra momentum,sue,ml_ranker
 
 
@@ -348,6 +349,8 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info, shadow_mods
         mods = [m for m in (technical, mean_reversion, risk, macro) if m.NAME in PIT_AGENTS] + extra_mods
         if "events" in PIT_AGENTS:
             mods.append(events)
+        mods += [importlib.import_module(f"agents.{a}") for a in PIT_AGENTS          # any other simulated agent by name (2026-09-17:
+                 if a not in SPECIAL_AGENTS and a not in {m.NAME for m in mods}]       # customer_momentum never ran without this)
         for a in mods:
             at_open = bool(refresh) and a.NAME in refresh_names
             for use_open in ((True, False) if at_open and learn_preopen else (at_open,)):

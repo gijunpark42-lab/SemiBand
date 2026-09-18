@@ -157,6 +157,64 @@ def hedge_to(symbol, target_notional, client_order_id=None, dry_run=None):
     return int(delta)
 
 
+def _last_price(symbol):
+    bid, ask, _ = quote(symbol)
+    if bid and ask:
+        return (bid + ask) / 2
+    try:
+        return float(_client.get_latest_trade(symbol).price)
+    except Exception:
+        return None
+
+
+def moc(symbol, notional, side, client_order_id=None, dry_run=None):
+    """Round 48: a whole-share market-on-close order for a dollar amount (fills in the closing auction at the official close; the
+    fractional remainder is dropped). Under one share, or when the MOC is refused, the trade goes through _order (marketable
+    limit / market, DAY) so it still happens before the close."""
+    if _dry(dry_run):
+        log.info("DRY_RUN %s %s $%.2f MOC", side.name, symbol, notional)
+        return None
+    price = _last_price(symbol)
+    qty = int(notional / price) if price else 0
+    if qty < 1:
+        log.info("%s %s $%.2f: under one share at %s, sent as a day order", side.name, symbol, notional, price)
+        return _order(symbol, notional, side, client_order_id, dry_run)
+    try:
+        order = _client.submit_order(MarketOrderRequest(symbol=symbol, qty=qty, side=side, time_in_force=TimeInForce.CLS,
+                                                        client_order_id=client_order_id))
+        log.info("%s %s %d shares MOC (~$%.0f at %.2f, order %s)", side.name, symbol, qty, qty * price, price, order.id)
+        return order
+    except Exception as exc:
+        log.warning("MOC %s %s refused (%s); falling back to a day order", side.name, symbol, exc)
+        return _order(symbol, notional, side, client_order_id, dry_run)
+
+
+def close_moc(symbol, client_order_id=None, dry_run=None):
+    """Round 48: liquidate a position in the closing auction — the whole shares as MOC, a fractional remainder as a day market
+    order (fills at once). Falls back to close() when the MOC is refused."""
+    if _dry(dry_run):
+        log.info("DRY_RUN close %s MOC", symbol)
+        return None
+    qty = float(_client.get_open_position(symbol).qty)
+    side = OrderSide.SELL if qty > 0 else OrderSide.BUY
+    whole, frac = int(abs(qty)), abs(qty) - int(abs(qty))
+    order = None
+    if whole >= 1:
+        try:
+            order = _client.submit_order(MarketOrderRequest(symbol=symbol, qty=whole, side=side, time_in_force=TimeInForce.CLS,
+                                                            client_order_id=client_order_id))
+            log.info("CLOSE %s %d shares MOC (order %s)", symbol, whole, order.id)
+        except Exception as exc:
+            log.warning("MOC close %s refused (%s); closing with a day order", symbol, exc)
+            return close(symbol, client_order_id=client_order_id, dry_run=dry_run)
+    if frac > 1e-6:
+        rest = _client.submit_order(MarketOrderRequest(symbol=symbol, qty=round(frac, 6), side=side, time_in_force=TimeInForce.DAY,
+                                                       client_order_id=(client_order_id + "-frac")[:48] if client_order_id else None))
+        log.info("CLOSE %s fractional %.4f shares MARKET (order %s)", symbol, frac, rest.id)
+        order = order or rest
+    return order
+
+
 def buy(symbol, notional, client_order_id=None, dry_run=None):
     """Market buy for a dollar amount."""
     return _order(symbol, notional, OrderSide.BUY, client_order_id, dry_run)

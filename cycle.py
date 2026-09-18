@@ -60,6 +60,19 @@ def wait_for_open(max_minutes=45):
     return False
 
 
+def wait_until_et(hhmm, cutoff, today):
+    """Close mode (round 48): sleep until `hhmm` ET on `today`; False when `cutoff` ET has already passed (no order may go out)."""
+    target = pd.Timestamp(f"{today} {hhmm}", tz="America/New_York")
+    last = pd.Timestamp(f"{today} {cutoff}", tz="America/New_York")
+    now = pd.Timestamp.now(tz="America/New_York")
+    if now >= last:
+        return False
+    if now < target:
+        log.info("close mode: waiting until %s ET for the close refresh", hhmm)
+        time.sleep((target - now).total_seconds())
+    return True
+
+
 def _run_agent(name, universe, ctx):
     mod = importlib.import_module(f"agents.{name}")
     t0 = time.time()
@@ -89,14 +102,15 @@ def run_agents(universe, ctx, model, held, use_llm):
     keep = set(ranked[:config.LLM_MAX_TICKERS]) | (set(held) & set(universe))
     order = [t for t in universe if t in held] + [t for t in ranked if t in keep and t not in held]
     subset = {t: universe[t] for t in order}          # holdings first, then by prelim |conviction|
-    if config.LLM_STAGE_DEADLINE:      # no new Claude call after this ET time: the Claude stage must end before the open
-        llm.DEADLINE = pd.Timestamp(f"{ctx['today']} {config.LLM_STAGE_DEADLINE}", tz="America/New_York").tz_convert("UTC").to_pydatetime()
+    deadline = config.LLM_STAGE_DEADLINE_CLOSE if config.EXEC_MODE == "close" else config.LLM_STAGE_DEADLINE   # round 48
+    if deadline:      # no new Claude call after this ET time: the Claude stage must end before the execution window
+        llm.DEADLINE = pd.Timestamp(f"{ctx['today']} {deadline}", tz="America/New_York").tz_convert("UTC").to_pydatetime()
     llm.timing_summary()                # start the stage's timings clean
     llm.STAGE_SKIPPED = 0
     try:
         for name in llm_agents:
             if llm.DEADLINE is not None and pd.Timestamp.now(tz="UTC") >= pd.Timestamp(llm.DEADLINE):
-                log.warning("agent %-13s skipped: Claude stage deadline %s ET passed", name, config.LLM_STAGE_DEADLINE)
+                log.warning("agent %-13s skipped: Claude stage deadline %s ET passed", name, deadline)
                 continue
             signals += _run_agent(name, subset, ctx)
             summary = llm.timing_summary()
@@ -125,13 +139,13 @@ def convict(signals, model, shadow_model, notes=None, groups=None):
     return convictions, breakdown, shadow_convictions
 
 
-def open_refresh(universe, signals, today, betas, notes):
+def open_refresh(universe, signals, today, betas, notes, at="09:30"):
     """Right after the open: add today's first trades as a price row and re-run config.OPEN_REFRESH_AGENTS, so an
     overnight gap reaches the price-based signals the way it reaches the fills. Every other signal (Claude included)
     stays as computed before the open. An agent that returns nothing keeps its pre-open signals. The refreshed agents'
     predictions for today replace the pre-open ones in the ledger. -> (signals, {symbol: live price}); {} = unchanged."""
     names = [a for a in config.OPEN_REFRESH_AGENTS if a in config.AGENTS or a in config.SHADOW_AGENTS]
-    open_utc = pd.Timestamp(f"{today} 09:30", tz="America/New_York").tz_convert("UTC")
+    open_utc = pd.Timestamp(f"{today} {at}", tz="America/New_York").tz_convert("UTC")   # close mode passes 15:30: prints after it are today's latest
     wait = (open_utc + pd.Timedelta(seconds=30) - pd.Timestamp.now(tz="UTC")).total_seconds()
     if names and 0 < wait <= 60:
         time.sleep(wait)                                # let the opening prints land before reading them
@@ -164,7 +178,7 @@ def open_refresh(universe, signals, today, betas, notes):
     ledger.replace_predictions(today, done, [s for name in done for s in fresh[name]], price_at, betas)
     last = base[config.BENCHMARK].dropna()
     gap = live[config.BENCHMARK] / float(last.iloc[-1]) - 1 if config.BENCHMARK in live and len(last) else float("nan")
-    msg = (f"open refresh: {config.BENCHMARK} {gap:+.1%} vs last close; re-ran {', '.join(done)} on today's first trades "
+    msg = (f"{'open' if at == '09:30' else 'close'} refresh: {config.BENCHMARK} {gap:+.1%} vs last close; re-ran {', '.join(done)} on today's {'first' if at == '09:30' else 'latest'} trades "
            f"({len(live)} live prices)")
     log.info(msg)
     notes.append(msg)
@@ -252,6 +266,8 @@ def main():
     log.info("universe: %d tickers", len(universe))
 
     closes = market.closes(list(universe) + [config.BENCHMARK])
+    if config.EXEC_MODE == "close":                                   # round 48: the afternoon run must not see today's partial daily bar
+        closes = closes.loc[closes.index < pd.Timestamp(today)]
     last_close = {t: float(closes[t].dropna().iloc[-1]) for t in universe if t in closes.columns and closes[t].dropna().size}
 
     reuse = args.reuse_signals or REUSE_MARKER.exists()
@@ -290,14 +306,20 @@ def main():
 
     # 240 minutes: the wait starts only after every agent has run, and a 03:30 PT start whose agents finish by 04:30 would
     # give up just before the 06:30 PT open with 120 (audit 2026-09-15; yesterday's run only traded after a relaunch)
-    if not dry and not wait_for_open(max_minutes=240):
+    if not dry and config.EXEC_MODE == "close":                        # round 48: the close refresh window instead of the open
+        if not wait_until_et(config.CLOSE_REFRESH_TIME, config.MOC_CUTOFF, today):
+            log.info("close mode: past %s ET — predictions recorded, no orders", config.MOC_CUTOFF)
+            journal.publish_dashboard({"date": today, "weights": weights, "history": _previous_history(),
+                                       "notes": notes + [f"close mode: past {config.MOC_CUTOFF} ET, predictions recorded, no orders"]})
+            return 0
+    elif not dry and not wait_for_open(max_minutes=240):
         log.info("market did not open (holiday?) — predictions recorded, no orders")
         journal.publish_dashboard({"date": today, "weights": weights, "history": _previous_history(),
                                    "notes": notes + ["market did not open: predictions recorded, no orders"]})
         return 0
 
     if config.OPEN_REFRESH_AGENTS:
-        signals, live = open_refresh(universe, signals, today, prediction_betas, notes)
+        signals, live = open_refresh(universe, signals, today, prediction_betas, notes, at="15:30" if config.EXEC_MODE == "close" else "09:30")
         if live:
             convictions, breakdown, shadow_convictions = convict(signals, model, shadow_model, groups=groups)
 
@@ -360,7 +382,8 @@ def main():
     # Execution: exits in full now; buys and trims spread over EXECUTION_SLICES slices
     # (first slice now, the rest every EXECUTION_INTERVAL_MIN minutes after the
     # dashboard is published) so we do not pay the whole opening spread at once.
-    slices = 1 if dry else max(1, config.EXECUTION_SLICES)
+    moc = config.EXEC_MODE == "close"                                   # round 48: one slice of market-on-close orders
+    slices = 1 if (dry or moc) else max(1, config.EXECUTION_SLICES)
     done, later = [], []
     sleeve_sell_failed = False
     for o in orders:
@@ -374,13 +397,19 @@ def main():
         coid = f"{config.ORDER_PREFIX}{today}-{t}-{o['side'].lower()}"
         try:
             if o["side"] == "BUY":
-                broker.buy(t, round(o["notional"] / slices, 2), coid + "-1", dry_run=dry)
+                if moc:
+                    broker.moc(t, round(o["notional"] / slices, 2), broker.OrderSide.BUY, coid + "-1", dry_run=dry)
+                else:
+                    broker.buy(t, round(o["notional"] / slices, 2), coid + "-1", dry_run=dry)
                 size = o["notional"]
             elif o["notional"] is None:
-                broker.close(t, client_order_id=coid + "-1", dry_run=dry)
+                (broker.close_moc if moc else broker.close)(t, client_order_id=coid + "-1", dry_run=dry)
                 size = float(positions[t].market_value) if t in positions else None
             else:
-                broker.sell(t, round(o["notional"] / slices, 2), coid + "-1", dry_run=dry)
+                if moc:
+                    broker.moc(t, round(o["notional"] / slices, 2), broker.OrderSide.SELL, coid + "-1", dry_run=dry)
+                else:
+                    broker.sell(t, round(o["notional"] / slices, 2), coid + "-1", dry_run=dry)
                 size = o["notional"]
         except Exception as exc:
             log.error("order %s %s failed: %s", o["side"], t, exc)
@@ -511,7 +540,7 @@ def main():
                 (broker.buy if side == "BUY" else broker.sell)(t, part, f"{coid}-{k}", dry_run=dry)
             except Exception as exc:
                 log.error("slice %d %s %s failed: %s", k, side, t, exc)
-    if not dry and done:
+    if not dry and done and not moc:                                    # MOC orders fill in the auction: nothing to clean up
         log.info("waiting %d min for limit fills before the market cleanup", config.LIMIT_CLEANUP_MIN)
         time.sleep(config.LIMIT_CLEANUP_MIN * 60)
         n = broker.cleanup_open_orders(config.ORDER_PREFIX, dry_run=dry)

@@ -48,13 +48,15 @@ def run(closes: pd.DataFrame, today: str):
             # day's own close cost +895% -> +712% over 500 days with the open refresh on, RESEARCH.md round 27).
             # Coupled to config.OPEN_REFRESH_AGENTS: only with this label does the refresh tie no refresh (round 31); under the
             # order-day-open label every refresh form lost 6-7 bps/day. Never change the label alone: re-test the refresh first.
-            if pos < 1 or pos - 1 + h >= len(idx) or idx[pos] != pd.Timestamp(p["date"]):
+            same_close = bool(config.LABEL_SAME_CLOSE_FROM) and p["date"] >= config.LABEL_SAME_CLOSE_FROM   # close mode (round 48)
+            start = pos if same_close else pos - 1
+            if start < 0 or start + h >= len(idx) or pos >= len(idx) or idx[pos] != pd.Timestamp(p["date"]):
                 continue                        # not matured yet, or no close before the prediction date
             t = p["ticker"]
             if t not in closes.columns:
                 continue
-            c0, c1 = closes[t].iloc[pos - 1], closes[t].iloc[pos - 1 + h]
-            b0, b1 = bench.iloc[pos - 1], bench.iloc[pos - 1 + h]
+            c0, c1 = closes[t].iloc[start], closes[t].iloc[start + h]
+            b0, b1 = bench.iloc[start], bench.iloc[start + h]
             if any(not math.isfinite(v) or v <= 0 for v in (c0, c1, b0, b1)):
                 continue
             ret, bench_ret = float(c1 / c0 - 1), float(b1 / b0 - 1)

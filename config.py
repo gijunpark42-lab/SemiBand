@@ -65,6 +65,10 @@ AGENTS = [
                        # out-of-sample sign (Sharpe 0.82 -> 0.76 without it), so the effect is not robust: KEPT (RESEARCH.md)
     "risk",            # volatility and drawdown brake: speaks only when risk is elevated
     "macro",           # market regime (SOXX/SPY trend, VIX, 10y yield) expressed through each name's beta
+    "customer_momentum",   # its graph customers' 21-day return vs SOXX (Cohen & Frazzini 2008). Round 44 (2026-09-17, VM, fixed replay):
+                       # 2024-26 +1469% / Sharpe 2.33 / max DD 31.4% against +1031% / 2.14 / 30.1%; 2019-23 +69% / 0.36 / 46.8% against
+                       # +52% / 0.29 / 41.2%. Failed the v4 consistency/drawdown limits; ADOPTED by the user's decision ("낙폭 증가해도
+                       # 샤프랑 수익률 늘었으니까 하자") with the drawdown cost on record. Warm start = the _c3 replay ledger
     # Tested 2026-09-10 and NOT enabled: "momentum" (12-1m), "sue" (PEAD), "ml_ranker" (LightGBM) — each has a small
     # positive IC alone but adding them diluted convictions and cut backtest return (+373% -> +310% -> +265%).
     # The modules stay in agents/ for future re-tests; add a name here to re-enable.
@@ -73,7 +77,7 @@ AGENTS = [
     "llm_guidance",    # reads the company's own latest call signals: guidance momentum
     "llm_news",        # reads three weeks of headlines: catalysts
 ]
-SHADOW_AGENTS = ("insider", "customer_momentum")   # agents run and recorded every cycle and scored like the others, but never voting: no feature, no
+SHADOW_AGENTS = ("insider",)      # agents run and recorded every cycle and scored like the others, but never voting: no feature, no
                                   # prior share, no weight, no place in the per-name breakdown. A candidate builds its live record
                                   # here; promotion needs its own pre-registered test (RESEARCH.md 2026-09-16, shadow agents)
 HORIZONS = (10, 20)               # trading days after which a prediction is scored. v2.3 (2026-09-11 search, daily refits): dropping the 5-day

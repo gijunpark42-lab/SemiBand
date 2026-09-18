@@ -130,6 +130,11 @@ MOMENTUM_VOL_SCALE = False        # round 45 candidate: customer_momentum's sign
                                   # per-21-day target, multiplier clipped to 0.25..2 (Barroso & Santa-Clara 2015)
 MOMENTUM_INTRADAY = False         # round 46 candidate: customer_momentum measures its customers' 21-session return as compounded
                                   # open->close legs (the overnight leg of connected-firm spillover reverses, Wang 2025 JFQA)
+EVENTS_PRE_LEG = True             # round 47 candidate: False = events casts no pre-earnings "event risk" vote (round 46 diagnostic: names about
+                                  # to report made +1.5-2.6% beta-abnormal over the next 10 days, the -0.25 vote was against that)
+MOMENTUM_CONF = None              # round 47 candidate: a constant confidence for customer_momentum, e.g. 0.5, instead of 0.3 + 0.05 x customers
+                                  # (round 46 diagnostic: the customer count carries no forward information and dilutes the direction's IC)
+CHAIN_CAP = None                  # round 47 candidate (replay only until adopted): the power group's share of equity capped, e.g. 0.30
 GROSS_TARGET = 1.50               # CEILING on gross exposure (150% of equity = 50% margin); not a target, cash is a position
 VOL_TARGET = 0.50                 # portfolio vol targeting: when the book's trailing realised vol (annualised) exceeds this, scale every
                                   # target down by VOL_TARGET / realised (never up). Sweep rounds 10-11 + re-validation (2026-09-11, 500 days,

@@ -126,7 +126,7 @@ def signals(universe, ctx, side, name):
             if vol:
                 scale = min(max(VOL_TARGET_21D / vol, 0.25), 2.0)
         direction = math.tanh(GAIN * avg * scale)
-        confidence = clip(0.3 + 0.05 * len(vals), 0.3, 0.7)
+        confidence = config.MOMENTUM_CONF if config.MOMENTUM_CONF else clip(0.3 + 0.05 * len(vals), 0.3, 0.7)   # round 47: constant
         label = "customers" if side == "customers" else "suppliers"
         out.append(Signal(name, ticker, direction, confidence, 20,
                           f"{len(vals)} {label}, {DAYS}d return {avg * 100:+.1f}% vs {config.BENCHMARK}" + (f" (vol scale {scale:.2f})" if scale != 1.0 else "") + (" (intraday)" if intraday else "")).clipped())

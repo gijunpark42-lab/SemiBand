@@ -182,7 +182,7 @@ def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mod
         intercept=None, drop_dir=(), demean=None, demean_group=None, graph_transcripts_only=None, technical_residual=None,
         margin_rate=0.0, gross_target=None, beta_floor=None, vol_target=None, vol_target_mode=None, shadow=(),
         drift=True, earnings_shift=0, momentum_gate=None, momentum_vol_scale=None, conviction_ema=None,
-        momentum_intraday=None, prior_strength=None):
+        momentum_intraday=None, prior_strength=None, events_pre_leg=None, momentum_conf=None, chain_cap=None, exclude_group=None):
     """tag: suffix for the output files (state/backtest<tag>.sqlite / backtest_report<tag>.json)
     so a long build can run while sweeps read the default files.
     exec_mode: 'close' = trade at the close the signals were computed on (optimistic);
@@ -234,6 +234,8 @@ def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mod
                 "conviction_ema": conviction_ema,
                 "momentum_intraday": bool(config.MOMENTUM_INTRADAY) if momentum_intraday is None else bool(momentum_intraday),   # round 46
                 "prior_strength": prior_strength,
+                "events_pre_leg": bool(config.EVENTS_PRE_LEG) if events_pre_leg is None else bool(events_pre_leg),          # round 47
+                "momentum_conf": momentum_conf, "chain_cap": chain_cap, "exclude_group": exclude_group,
                 "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     publish_progress(dict(run_info, status="loading", pct=0.0, message="downloading prices and earnings"))
     saved = (config.AGENTS, config.TECHNICAL_RESIDUAL, config.GROSS_TARGET, config.VOL_TARGET)
@@ -254,6 +256,9 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info, shadow_mods
         universe = universe_mod.refresh()
     else:
         universe = universe_mod.load()
+    if run_info.get("exclude_group"):                       # round 47: e.g. "power" = the names whose only chain tag is power_cooling
+        grp = graph_pit.groups(universe)
+        universe = {t: c for t, c in universe.items() if grp.get(t) != run_info["exclude_group"]}
     tickers = list(universe)
     extra = [config.BENCHMARK, "SPY", "^VIX", "^TNX"]
     if any(m.NAME.startswith("factor_") for m in extra_mods):   # cross-asset factor series (oil, fed funds futures, ...)
@@ -280,6 +285,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info, shadow_mods
                     for tk, rows in earnings.items()}
     pit = PointInTimeMap(transcripts_only=run_info.get("graph_transcripts_only"))
     groups = graph_pit.groups_from(pit, universe) if run_info.get("demean_group") == "chain" else None   # round 39
+    cap_groups = graph_pit.groups_from(pit, universe) if run_info.get("chain_cap") else None                # round 47
 
     # RSI over the whole history once per ticker (causal, so identical to the day-by-day prefix computation)
     indicators.PRECOMPUTED = {tk: indicators.rsi_series(closes[tk].dropna()) for tk in tickers if tk in closes.columns}
@@ -295,6 +301,9 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info, shadow_mods
     prev_conv = {}                                                         # round 45: yesterday's convictions for --conviction-ema
     live_intraday, live_lam, live_grid = config.MOMENTUM_INTRADAY, learner.PRIOR_STRENGTH, learner.LAMBDA_GRID
     config.MOMENTUM_INTRADAY = bool(run_info.get("momentum_intraday"))                                   # round 46
+    live_pre, live_mconf = config.EVENTS_PRE_LEG, config.MOMENTUM_CONF
+    config.EVENTS_PRE_LEG = bool(run_info.get("events_pre_leg", True))                                    # round 47
+    config.MOMENTUM_CONF = run_info.get("momentum_conf")
     if run_info.get("prior_strength"):                                                                 # round 46: lambda for the run
         learner.PRIOR_STRENGTH, learner.LAMBDA_GRID = float(run_info["prior_strength"]), (float(run_info["prior_strength"]),)
     config.AGENTS = PIT_AGENTS                       # the prior and the sizing see only the simulated agents
@@ -481,6 +490,8 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info, shadow_mods
         else:
             targets = portfolio.targets(traded, config.CAPITAL, realized_vol=realized)   # dollars, same rules as live
             w = {tk: v / config.CAPITAL for tk, v in targets.items()}   # -> weights
+            if run_info.get("chain_cap"):                                   # round 47: the power group's share of equity capped
+                w = portfolio.chain_cap(w, cap_groups, "power", float(run_info["chain_cap"]))
         if config.HEDGE_SIZE and B[i] < float(np.nanmean(B[max(0, i - config.HEDGE_LOOKBACK): i + 1])):   # regime hedge, as live
             scale = min(1.0, config.VOL_TARGET / realized) if (config.VOL_TARGET and realized and realized > config.VOL_TARGET) else 1.0
             w["__HEDGE__"] = -min(config.HEDGE_SIZE * scale, sum(w.values()))   # capped at the long gross: a hedge, never a net short
@@ -572,6 +583,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info, shadow_mods
     config.AGENTS, config.TECHNICAL_RESIDUAL, config.GROSS_TARGET, config.VOL_TARGET = live_agents, live_residual, live_gross, live_vol
     config.MOMENTUM_TREND_GATE, config.MOMENTUM_VOL_SCALE = live_gate, live_vscale
     config.MOMENTUM_INTRADAY, learner.PRIOR_STRENGTH, learner.LAMBDA_GRID = live_intraday, live_lam, live_grid
+    config.EVENTS_PRE_LEG, config.MOMENTUM_CONF = live_pre, live_mconf
     indicators.PRECOMPUTED = {}                        # never leave a run's RSI cache to a later consumer in the same process
 
     rets = np.diff(np.log([1.0] + [c["portfolio"] for c in curve]))
@@ -601,6 +613,8 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info, shadow_mods
         "momentum_gate": run_info.get("momentum_gate"), "momentum_vol_scale": run_info.get("momentum_vol_scale"), "conviction_ema": run_info.get("conviction_ema"),
         "shadow": run_info.get("shadow"),
         "momentum_intraday": run_info.get("momentum_intraday"), "prior_strength": run_info.get("prior_strength"),   # round 46
+        "events_pre_leg": run_info.get("events_pre_leg"), "momentum_conf": run_info.get("momentum_conf"),                  # round 47
+        "chain_cap": run_info.get("chain_cap"), "exclude_group": run_info.get("exclude_group"),
         "sizing": {"size": config.SIZE_PER_CONVICTION, "cap": config.MAX_POSITION_PCT, "gross": config.GROSS_TARGET,
                    "long_short": run_info.get("long_short"),
                    "min_book": config.MIN_STOCK_BOOK, "idle_sleeve": config.IDLE_SLEEVE,
@@ -703,6 +717,10 @@ if __name__ == "__main__":
     p.add_argument("--conviction-ema", type=float, default=None, help="round 45: smooth convictions before sizing, e.g. 0.5 (1 = off)")
     p.add_argument("--momentum-intraday", action=argparse.BooleanOptionalAction, default=None, help="round 46: customer_momentum on compounded open->close legs (needs --exec open)")
     p.add_argument("--prior-strength", type=float, default=None, help="round 46: lambda (pseudo-observations behind the equal-weight prior) for the run, e.g. 1000")
+    p.add_argument("--events-pre-leg", action=argparse.BooleanOptionalAction, default=None, help="round 47: --no-events-pre-leg = events casts no pre-earnings vote")
+    p.add_argument("--momentum-conf", type=float, default=None, help="round 47: constant confidence for customer_momentum, e.g. 0.5")
+    p.add_argument("--chain-cap", type=float, default=None, help="round 47: the power group's share of equity capped, e.g. 0.30")
+    p.add_argument("--exclude-group", default=None, help="round 47: drop a graph group from the universe, e.g. power (semiconductor-only book)")
     p.add_argument("--prior-only", action="store_true", help="trade on the equal-weight prior blend instead of the fitted weights (learner ablation); the learner is still fit daily and both ICs are recorded per day")
     p.add_argument("--long-short", type=int, default=None, help="market-neutral book (round 33): long the top N and short the bottom N convictions, gross GROSS_TARGET under the vol target split so the legs' betas cancel, 2 bps/day borrow, no sleeve")
     p.add_argument("--position-cap", type=float, default=None, help="override MAX_POSITION_PCT, e.g. 0.30")
@@ -745,5 +763,6 @@ if __name__ == "__main__":
             vol_target=args.vol_target, vol_target_mode=args.vol_target_mode,
             shadow=tuple(x for x in args.shadow.split(",") if x), drift=not args.no_drift, earnings_shift=args.earnings_shift,
             momentum_gate=args.momentum_gate, momentum_vol_scale=args.momentum_vol_scale, conviction_ema=args.conviction_ema,
-            momentum_intraday=args.momentum_intraday, prior_strength=args.prior_strength)
+            momentum_intraday=args.momentum_intraday, prior_strength=args.prior_strength,
+            events_pre_leg=args.events_pre_leg, momentum_conf=args.momentum_conf, chain_cap=args.chain_cap, exclude_group=args.exclude_group)
     print(json.dumps({k: v for k, v in r.items() if k != "curve"}, indent=2)[:4000])

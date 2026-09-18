@@ -58,6 +58,18 @@ def beta_floor(weights, betas, floor, cap, sleeve="__SLEEVE__"):
     return out
 
 
+def chain_cap(weights, groups, group, cap):
+    """Round 47 candidate: the names of `group` (groups = {ticker: group}) may hold at most `cap` of equity together; above it they
+    are scaled down proportionally, other names and "__" keys untouched (the freed capacity is idle: the sleeve rule may fill it).
+    -> new weights"""
+    members = {t: x for t, x in weights.items() if not t.startswith("__") and groups.get(t) == group}
+    total = sum(members.values())
+    if total <= 0 or total <= cap:
+        return dict(weights)
+    k = cap / total
+    return {t: (x * k if t in members else x) for t, x in weights.items()}
+
+
 def plan(target_usd, positions, convictions, universe, equity, buying_power, extra_proceeds=0.0):
     """-> list of {ticker, side, notional|None(close), reason_tag}. Sells first, then buys.
 

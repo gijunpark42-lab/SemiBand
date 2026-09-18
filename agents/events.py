@@ -32,7 +32,7 @@ def run(universe: dict, ctx: dict) -> list[Signal]:
             continue
         future = [r for r in rows if r["date"] >= today.isoformat()]
         past = [r for r in rows if r["date"] < today.isoformat()]
-        if future:
+        if future and config.EVENTS_PRE_LEG:                       # round 47: the pre-earnings leg can be switched off
             nxt = min(future, key=lambda r: r["date"])
             days = (date.fromisoformat(nxt["date"]) - today).days
             if 0 <= days <= PRE_DAYS:

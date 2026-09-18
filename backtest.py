@@ -70,7 +70,7 @@ PROGRESS_BLOB = "semiband-v2/backtest_progress.json"
 CURVE_POINTS = 300                                   # the live page gets the curve thinned to this many points
 PROGRESS_EVERY = 5                                   # publish progress every N traded days (an upload costs ~1 s)
 PUBLISH = True                                       # --no-publish: keep test runs off the website's Backtest tab
-SIM_AGENTS = ["supply_chain", "neighbors", "technical", "mean_reversion", "events", "risk", "macro"]   # everything the replay can compute; all recorded
+SIM_AGENTS = ["supply_chain", "neighbors", "technical", "mean_reversion", "events", "risk", "macro", "customer_momentum"]   # voter since 09-18 (review 2026-09-17: keep the replay roster equal to the live one)   # everything the replay can compute; all recorded
 PIT_AGENTS = [a for a in SIM_AGENTS if a in config.AGENTS]   # the roster the learner and the sizing see = the live roster minus the unsimulated agents
 EXTRA_AGENTS = {"momentum": None, "sue": None, "ml_ranker": None}   # re-testable with --extra momentum,sue,ml_ranker
 

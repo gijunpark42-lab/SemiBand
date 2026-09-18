@@ -1779,3 +1779,17 @@ Report fields now present in every run: equal-weight buy-and-hold of the same 14
 - 2024–26: `_c0` baseline; `_c1` `--agents technical,mean_reversion,risk,macro,events` (price stack only: what the graph agents add in their covered months); `_c2` `--shadow customer_momentum,supplier_momentum` (both recorded, scored, non-voting: event-study spread and IC with `insider_eval.py`); `_c3` `--extra customer_momentum` and `_c4` `--extra supplier_momentum` (voting candidates).
 - 2019–23: `_d0` baseline, `_d3` and `_d4` the two voting candidates (the older window has the prices; the edges are today's).
 - Gate v4 for `_c3` / `_c4` against `_c0`, confirmation on `_d3` / `_d4` against `_d0`. `_c1` is a diagnostic, not a gate. Expectation: link momentum at half the published effect would be worth about +0.5 bp/d; the graph diagnostic is expected to show most of the 2025-10 onward difference. Trials: 5 (+2 diagnostics).
+
+### Round 44 results, 2024–26 (2026-09-17 18:05 PT, VM, fixed replay): customer momentum is a real signal; as a vote it fails block consistency; the graph agents net about zero in their covered months
+
+| Run | Return / Sharpe / max DD | IC | vs `_c0` paired (t, NW) | Blocks ≥ 0 | Gate |
+|---|---|---|---|---|---|
+| `_c0` baseline | +1031% / 2.14 / 30.1% | 0.029 | — | — | base |
+| `_c1` price agents only (no supply_chain / neighbors) | +1021% / 2.17 / 24.1% | 0.037 | −0.4 bp/d (−0.11, −0.13) | 3/6 [+1.0, −8.9, +3.0, −0.9, −11.2, +29.0] | diagnostic |
+| `_c2` both link agents as shadows | = `_c0` by construction | | | | shadow eval below |
+| `_c3` + customer_momentum (voting) | +1469% / 2.33 / 31.4% | 0.044 | +7.6 bp/d (+1.31, +1.20) | 3/6 [+17.7, −9.6, −8.6, +10.2, −2.9, +4.2] | FAIL (consistency) |
+| `_c4` + supplier_momentum (voting) | +842% / 1.98 / 31.4% | 0.029 | −3.9 bp/d (−1.98, −1.78) | 1/6 | FAIL |
+
+Shadow evaluation (`_c2` ledger, 20-day beta-abnormal, event-study spread of signalled names over the rest): **customer_momentum** 46,381 scored rows (93 names a day): +0.82% per 20 d, overlap-adjusted t +1.46, positive in every half-year (+0.99, +0.90, +0.59, +0.76, +1.16), 61% of dates positive, pooled rank IC +0.097. **supplier_momentum**: +0.89% but −0.06% in 2024H2, IC +0.015. The published customer-momentum effect (~1.5% a month, 1980–2004) shows up here at about half strength, as the protocol expected of a published anomaly.
+
+**Reading.** (1) Customer momentum carries information (the most consistent signal measured so far), but as a voting agent it swings the whole book: it wins the 2024Q4 and 2025Q4–2026Q1 blocks and loses the two 2025 crash-and-rebound blocks, the same reversal signature as residual momentum (round 40). Not adopted as a vote under v4; from 09-18 it runs live as a shadow. Pre-registered next (round 45): the same agent gated to trend states (emit only while SOXX is above its 50-day average, the momentum-crash guard of Daniel & Moskowitz 2016), one value, judged under v4 on a fresh day, plus the 2019–23 confirmation from `_d3` / `_d4`. (2) The graph agents supply_chain and neighbors net about zero over their covered months with six points more drawdown (they helped in 2025-01..05 and 2026-01..04 and hurt in 2026-04..08). Removing them fails v4 (paired −0.4 bp/d), so they stay; the finding is recorded as the question the live Claude agents, which the replay cannot contain, will have to answer. Trials: 5 (+2 diagnostics).

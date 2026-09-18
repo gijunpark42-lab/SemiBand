@@ -121,8 +121,8 @@ GRAPH_TRANSCRIPTS_ONLY = True     # the graph agents' point-in-time map skips SE
                                   # t +1.5, Sharpe 2.20 vs 2.11, max DD +0.8 pts, 5/6 blocks not worse). Live from the 09-18 cycle
 TECHNICAL_RESIDUAL = False        # round 40 candidate (2026-09-17, Blitz-Huij-Martens residual momentum): technical's rel20/rel60 subtract
                                   # beta x SOXX instead of SOXX (trailing 60-day pair beta, clipped to 0..3); False = plain relative return
-RESEARCH_TRIALS = 350             # audit 2026-09-17: floor for the deflated Sharpe's trial count: 221 sweep variants + ~70 hand-run;
-                                  # 350 after rounds 44-45 (15 more trials, 2026-09-17); raise with every round
+RESEARCH_TRIALS = 355             # audit 2026-09-17: floor for the deflated Sharpe's trial count: 221 sweep variants + ~70 hand-run;
+                                  # 350 after rounds 44-45 (2026-09-17), 355 after round 46 (2026-09-18); raise with every round
                                   # replays before round 39 + the trials of rounds 39-43. Raise it with every round's trial count
 MOMENTUM_TREND_GATE = False       # round 45 candidate: customer_momentum stays silent while SOXX is below its 50-day average (momentum
                                   # crashes come in rebounds after bear markets, Daniel & Moskowitz 2016)

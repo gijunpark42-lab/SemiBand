@@ -58,6 +58,33 @@ def beta_floor(weights, betas, floor, cap, sleeve="__SLEEVE__"):
     return out
 
 
+def apply_beta_floor(target_usd, betas, equity, closes, realized_vol=None):
+    """Round 47: the live beta floor. While config.IDLE_SLEEVE closed above its IDLE_SLEEVE_TREND-day average, the stock book's
+    beta to the benchmark is raised to config.BETA_FLOOR with the sleeve ETF through beta_floor() (cap = GROSS_TARGET, as the
+    replay). betas = {ticker: beta or None}, missing -> 1.0. -> (new target_usd, sleeve USD the floor needs, note); the targets
+    unchanged and 0.0 when the floor is off, not binding, or the ETF is below its average."""
+    floor, etf = config.BETA_FLOOR, config.IDLE_SLEEVE
+    if not floor or not etf or equity <= 0 or not target_usd:
+        return target_usd, 0.0, ""
+    n = config.IDLE_SLEEVE_TREND
+    c = closes[etf].dropna() if etf in closes.columns else closes.iloc[:0, :0]
+    if len(c) < (n or 1):
+        return target_usd, 0.0, f"beta floor {floor:.2f}: no usable {etf} closes, off"
+    if n and float(c.iloc[-1]) <= float(c.iloc[-n:].mean()):
+        return target_usd, 0.0, f"beta floor {floor:.2f}: off ({etf} at or below its {n}-day average)"
+    b = {t: float(v) for t, v in (betas or {}).items() if v is not None and v == v}
+    w = {t: usd / equity for t, usd in target_usd.items()}
+    beta_before = sum(x * b.get(t, 1.0) for t, x in w.items())
+    out = beta_floor(w, b, float(floor), config.GROSS_TARGET)
+    sleeve = out.pop("__SLEEVE__", 0.0)
+    if sleeve <= 0:
+        return target_usd, 0.0, f"beta floor {floor:.2f}: book beta {beta_before:.2f}, nothing to add"
+    k = sum(out.values()) / sum(w.values()) if sum(w.values()) else 1.0
+    new = {t: round(x * equity, 2) for t, x in out.items() if x * equity >= config.MIN_ORDER_USD}
+    note = f"beta floor {floor:.2f}: book beta {beta_before:.2f} -> {etf} {sleeve:.0%} of equity" + (f", stocks scaled x{k:.2f} (gross ceiling)" if k < 0.999 else "")
+    return new, round(sleeve * equity, 2), note
+
+
 def chain_cap(weights, groups, group, cap):
     """Round 47 candidate: the names of `group` (groups = {ticker: group}) may hold at most `cap` of equity together; above it they
     are scaled down proportionally, other names and "__" keys untouched (the freed capacity is idle: the sleeve rule may fill it).

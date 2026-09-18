@@ -319,6 +319,11 @@ def main():
         notes.append(f"realised vol {realized:.0%} ({config.VOL_LOOKBACK_DAYS}d) vs target {config.VOL_TARGET:.0%}: "
                      + (f"book scaled x{config.VOL_TARGET / realized:.2f}" if scaled else "no scaling"))
     target_usd = portfolio.targets(convictions_for_sizing, equity, realized_vol=realized)
+    floor_usd = 0.0
+    if config.BETA_FLOOR:                                                  # round 47: trend-gated beta floor through the sleeve ETF
+        target_usd, floor_usd, why = portfolio.apply_beta_floor(target_usd, prediction_betas, equity, closes, realized)
+        if why:
+            notes.append(why)
     shadow_targets = portfolio.targets(shadow_for_sizing, equity, realized_vol=realized) if shadow_for_sizing else {}
     ledger.save_shadow_targets(today, config.LEARNER_TARGET_MODE, convictions, target_usd, last_close,
                                config.VOL_TARGET, active=True)
@@ -327,6 +332,8 @@ def main():
     sleeve_orders, sleeve_proceeds = [], 0.0
     if config.IDLE_SLEEVE:
         sleeve_usd = portfolio.sleeve_target(target_usd, equity, closes, realized)
+        if sleeve_usd is not None and floor_usd > sleeve_usd:               # round 47: the floor's sleeve replaces a smaller idle sleeve
+            sleeve_usd = floor_usd
         sleeve_orders = [] if sleeve_usd is None else portfolio.plan_sleeve(sleeve_usd, positions)
         if sleeve_usd is None:
             notes.append(f"idle sleeve {config.IDLE_SLEEVE}: no usable closes, position left as is")

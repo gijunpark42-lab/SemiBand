@@ -135,6 +135,9 @@ EVENTS_PRE_LEG = True             # round 47 candidate: False = events casts no 
 MOMENTUM_CONF = None              # round 47 candidate: a constant confidence for customer_momentum, e.g. 0.5, instead of 0.3 + 0.05 x customers
                                   # (round 46 diagnostic: the customer count carries no forward information and dilutes the direction's IC)
 CHAIN_CAP = None                  # round 47 candidate (replay only until adopted): the power group's share of equity capped, e.g. 0.30
+BETA_FLOOR = None                 # round 47 candidate: while IDLE_SLEEVE closed above its trend average, the stock book's beta to SOXX is
+                                  # raised to this floor with the sleeve ETF (portfolio.beta_floor: the sleeve grows under the gross
+                                  # ceiling, past it the stocks shrink together); None = off. Replay: --beta-floor
 GROSS_TARGET = 1.50               # CEILING on gross exposure (150% of equity = 50% margin); not a target, cash is a position
 VOL_TARGET = 0.50                 # portfolio vol targeting: when the book's trailing realised vol (annualised) exceeds this, scale every
                                   # target down by VOL_TARGET / realised (never up). Sweep rounds 10-11 + re-validation (2026-09-11, 500 days,

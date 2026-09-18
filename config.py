@@ -121,8 +121,8 @@ GRAPH_TRANSCRIPTS_ONLY = True     # the graph agents' point-in-time map skips SE
                                   # t +1.5, Sharpe 2.20 vs 2.11, max DD +0.8 pts, 5/6 blocks not worse). Live from the 09-18 cycle
 TECHNICAL_RESIDUAL = False        # round 40 candidate (2026-09-17, Blitz-Huij-Martens residual momentum): technical's rel20/rel60 subtract
                                   # beta x SOXX instead of SOXX (trailing 60-day pair beta, clipped to 0..3); False = plain relative return
-RESEARCH_TRIALS = 355             # audit 2026-09-17: floor for the deflated Sharpe's trial count: 221 sweep variants + ~70 hand-run;
-                                  # 350 after rounds 44-45 (2026-09-17), 355 after round 46 (2026-09-18); raise with every round
+RESEARCH_TRIALS = 366             # audit 2026-09-17: floor for the deflated Sharpe's trial count: 221 sweep variants + ~70 hand-run;
+                                  # 350 after rounds 44-45 (2026-09-17), 355 after round 46, 366 after round 47 (2026-09-18); raise with every round
                                   # replays before round 39 + the trials of rounds 39-43. Raise it with every round's trial count
 MOMENTUM_TREND_GATE = False       # round 45 candidate: customer_momentum stays silent while SOXX is below its 50-day average (momentum
                                   # crashes come in rebounds after bear markets, Daniel & Moskowitz 2016)
@@ -135,9 +135,11 @@ EVENTS_PRE_LEG = True             # round 47 candidate: False = events casts no 
 MOMENTUM_CONF = None              # round 47 candidate: a constant confidence for customer_momentum, e.g. 0.5, instead of 0.3 + 0.05 x customers
                                   # (round 46 diagnostic: the customer count carries no forward information and dilutes the direction's IC)
 CHAIN_CAP = None                  # round 47 candidate (replay only until adopted): the power group's share of equity capped, e.g. 0.30
-BETA_FLOOR = None                 # round 47 candidate: while IDLE_SLEEVE closed above its trend average, the stock book's beta to SOXX is
-                                  # raised to this floor with the sleeve ETF (portfolio.beta_floor: the sleeve grows under the gross
-                                  # ceiling, past it the stocks shrink together); None = off. Replay: --beta-floor
+BETA_FLOOR = 0.5                  # round 47 (2026-09-18, the user delegated the choice; pre-registered rule): while IDLE_SLEEVE closed above its
+                                  # trend average, the stock book's beta to SOXX is raised to this floor with the sleeve ETF (portfolio.beta_floor:
+                                  # the sleeve grows under the gross ceiling, past it the stocks shrink together); None = off. Replay --beta-floor:
+                                  # 2024-26 +1196% / 2.17 / DD 31.3% against +1221% / 2.19 / 29.6%; 2019-23 +65% / 0.34 / 47.1% against +75% /
+                                  # 0.38 / 46.9% (the trend gate held through 2022). Bought for up-capture: the live book's beta was 0.12-0.18
 GROSS_TARGET = 1.50               # CEILING on gross exposure (150% of equity = 50% margin); not a target, cash is a position
 VOL_TARGET = 0.50                 # portfolio vol targeting: when the book's trailing realised vol (annualised) exceeds this, scale every
                                   # target down by VOL_TARGET / realised (never up). Sweep rounds 10-11 + re-validation (2026-09-11, 500 days,

@@ -1812,3 +1812,20 @@ Applied: `customer_momentum` appended to `config.AGENTS` after `macro` (a free a
 - `_e6` `--horizons 10,20,40`: a third, slower label for the slow signals (customer momentum, graph statements); dropping the 5-day horizon was the biggest single gain in v2.3, adding a slower one is the untested side.
 - `_e7` `--momentum-gate --momentum-vol-scale` (both guards).
 Hypotheses: `_e1`/`_e2` lower the 2025 rebound losses at a small cost elsewhere; `_e3`/`_e4` identify the weaker graph agent; `_e5` cuts turnover cost with some signal lag; `_e6` is inside noise. Adoption of anything passing is decided the next evening, after the 09-18 live session, one change a day. Trials: 7.
+
+### Round 45 results (2026-09-17 20:20 PT, VM, fixed replay, code 4871bfd): nothing passes; the trend gate is a risk dial, supply_chain carries the graph's value, conviction smoothing halves turnover at a small cost
+
+The first batch was void: the replay instantiated a fixed tuple of agent modules, so `customer_momentum` never executed and the three momentum-guard variants were byte-identical to the baseline (fixed in 4871bfd, simulated agents outside the fixed set are imported by name, test `SimulatedRoster`; the whole batch re-run from scratch). This time `_e0` holds 48,178 customer_momentum rows and the gated runs `_e1`/`_e7` 31,122 (silent on the days SOXX sat at or below its 50-day average). `_e0` reproduces round 44's `_c3` on the full window (+1469% / 2.33 / 31.4% at 5 bps); the gate table is on the 450 common sessions 2024-10-01..2026-07-20.
+
+| Run | Return / Sharpe / max DD | Turnover | IC | vs `_e0` paired (t, NW) | Blocks ≥ 0 | Gate |
+|---|---|---|---|---|---|---|
+| `_e0` live roster of 09-18 | +1573% / 2.49 / 27.1% | 0.41 | 0.044 | — | — | base |
+| `_e1` momentum trend gate | +1224% / 2.29 / 22.7% | 0.40 | 0.037 | −5.4 bp/d (−1.21, −1.34) | 3/6 [−17.0, +9.9, +0.4, −1.4, −9.9, +4.7] | FAIL |
+| `_e2` momentum vol scale | +1154% / 2.26 / 30.1% | 0.42 | 0.044 | −6.7 bp/d (−1.80, −1.69) | 3/6 | FAIL |
+| `_e3` no neighbors | +1486% / 2.48 / 27.4% | 0.42 | 0.041 | −1.5 bp/d (−0.48, −0.64) | 2/6 | FAIL |
+| `_e4` no supply_chain | +1341% / 2.39 / 27.4% | 0.42 | 0.050 | −3.6 bp/d (−1.14, −1.81) | 1/6 | FAIL |
+| `_e5` conviction EMA 0.5 | +1423% / 2.42 / 25.7% | 0.24 | 0.044 | −2.3 bp/d (−0.51, −0.62) | 2/6 [−18.0, −1.9, −1.6, −15.2, +4.2, +9.8] | FAIL |
+| `_e6` horizons 10/20/40 | +1420% / 2.37 / 32.9% | 0.41 | 0.046 | −2.0 bp/d (−0.43, −0.40) | 2/6 | FAIL |
+| `_e7` gate + vol scale | +1105% / 2.23 / 22.6% | 0.40 | 0.037 | −7.6 bp/d (−1.64, −1.59) | 4/6 | FAIL (paired, Sharpe) |
+
+**Reading.** (1) The momentum-crash guards behave like the sizing dials of rounds 42–43: the trend gate takes 4.4 points off the drawdown and 5 bp/d off the return (its first block, 2024Q4, is where it is silent through a rising market's dips: −17 pts), vol scaling loses on both sides. Customer momentum stays as adopted, ungated. (2) Of the two graph agents, supply_chain carries the value (−3.6 bp/d without it, 1/6 blocks) and neighbors is close to nothing (−1.5 bp/d, t −0.5): neighbors is the candidate to demote to a shadow if a later round confirms it; not touched today (removing it does not pass either). (3) Conviction smoothing halves turnover (0.41 → 0.24/day) for −2.3 bp/d at the gate's 5 bps; the reports' own cost tables put the crossover between 15 and 30 bps (at 15 bps +1163% / 2.16 against +1197% / 2.17; at 30 bps +961% / 2.01 against +874% / 1.93). The EMA is the right setting if the live cost per unit turnover is above ~15 bps and wrong below it, so the decision is deferred to a measurement, not a replay: the realised slippage of the live fills (`state/trades.json` fills against the signal close and the open) is the next diagnostic. (4) A third, slower horizon adds 5.8 points of drawdown for nothing. Nothing adopted; no 2019–23 confirmation needed; VM stopped. Trials: 7 (`RESEARCH_TRIALS` raised to 350).

@@ -182,7 +182,8 @@ def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mod
         intercept=None, drop_dir=(), demean=None, demean_group=None, graph_transcripts_only=None, technical_residual=None,
         margin_rate=0.0, gross_target=None, beta_floor=None, vol_target=None, vol_target_mode=None, shadow=(),
         drift=True, earnings_shift=0, momentum_gate=None, momentum_vol_scale=None, conviction_ema=None,
-        momentum_intraday=None, prior_strength=None, events_pre_leg=None, momentum_conf=None, chain_cap=None, exclude_group=None):
+        momentum_intraday=None, prior_strength=None, events_pre_leg=None, momentum_conf=None, chain_cap=None, exclude_group=None,
+        rebalance_every=None, cost_bps=None):
     """tag: suffix for the output files (state/backtest<tag>.sqlite / backtest_report<tag>.json)
     so a long build can run while sweeps read the default files.
     exec_mode: 'close' = trade at the close the signals were computed on (optimistic);
@@ -236,16 +237,19 @@ def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mod
                 "prior_strength": prior_strength,
                 "events_pre_leg": bool(config.EVENTS_PRE_LEG) if events_pre_leg is None else bool(events_pre_leg),          # round 47
                 "momentum_conf": momentum_conf, "chain_cap": chain_cap, "exclude_group": exclude_group,
+                "rebalance_every": int(rebalance_every or 1), "cost_bps": cost_bps,                                          # round 49
                 "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     publish_progress(dict(run_info, status="loading", pct=0.0, message="downloading prices and earnings"))
-    saved = (config.AGENTS, config.TECHNICAL_RESIDUAL, config.GROSS_TARGET, config.VOL_TARGET)
+    saved = (config.AGENTS, config.TECHNICAL_RESIDUAL, config.GROSS_TARGET, config.VOL_TARGET, config.COST_BPS)
+    if cost_bps is not None:
+        config.COST_BPS = float(cost_bps)                                # round 49: the run's cost, restored after the report
     try:
         return _run(days, refit_every, warmup, extra_mods, exec_mode, run_info, shadow_mods)
     except Exception as exc:
         publish_progress(dict(run_info, status="failed", message=f"{type(exc).__name__}: {exc}"))
         raise
     finally:                                                          # a run that dies mid-way leaves no mutated globals behind
-        config.AGENTS, config.TECHNICAL_RESIDUAL, config.GROSS_TARGET, config.VOL_TARGET = saved
+        config.AGENTS, config.TECHNICAL_RESIDUAL, config.GROSS_TARGET, config.VOL_TARGET, config.COST_BPS = saved
         indicators.PRECOMPUTED = {}
 
 
@@ -518,6 +522,9 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info, shadow_mods
             n_tr = config.IDLE_SLEEVE_TREND
             if n_tr is None or (i >= n_tr and s[i] > float(np.nanmean(s[i - n_tr + 1: i + 1]))):
                 w = portfolio.beta_floor(w, prediction_betas, float(floor), config.GROSS_TARGET)
+        every = int(run_info.get("rebalance_every") or 1)              # round 49: trade every N sessions, hold the drifted book between
+        if every > 1 and (i - start) % every:
+            w = dict(prev_w)
         for tk in w:                                                 # rebalance band, as portfolio.plan() does live: a held name is
             if tk in prev_w and abs(w[tk] - prev_w[tk]) < config.REBALANCE_BAND * abs(w[tk]):   # not resized for a move under 30% of target
                 w[tk] = prev_w[tk]
@@ -615,6 +622,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info, shadow_mods
         "momentum_intraday": run_info.get("momentum_intraday"), "prior_strength": run_info.get("prior_strength"),   # round 46
         "events_pre_leg": run_info.get("events_pre_leg"), "momentum_conf": run_info.get("momentum_conf"),                  # round 47
         "chain_cap": run_info.get("chain_cap"), "exclude_group": run_info.get("exclude_group"),
+        "rebalance_every": run_info.get("rebalance_every"), "cost_bps": run_info.get("cost_bps"),                            # round 49
         "sizing": {"size": config.SIZE_PER_CONVICTION, "cap": config.MAX_POSITION_PCT, "gross": config.GROSS_TARGET,
                    "long_short": run_info.get("long_short"),
                    "min_book": config.MIN_STOCK_BOOK, "idle_sleeve": config.IDLE_SLEEVE,
@@ -721,6 +729,8 @@ if __name__ == "__main__":
     p.add_argument("--momentum-conf", type=float, default=None, help="round 47: constant confidence for customer_momentum, e.g. 0.5")
     p.add_argument("--chain-cap", type=float, default=None, help="round 47: the power group's share of equity capped, e.g. 0.30")
     p.add_argument("--exclude-group", default=None, help="round 47: drop a graph group from the universe, e.g. power (semiconductor-only book)")
+    p.add_argument("--rebalance-every", type=int, default=None, help="round 49: trade only every N sessions (the book drifts between), e.g. 2 or 5")
+    p.add_argument("--cost-bps", type=float, default=None, help="round 49: cost per dollar traded for this run, e.g. 20 (default config.COST_BPS)")
     p.add_argument("--prior-only", action="store_true", help="trade on the equal-weight prior blend instead of the fitted weights (learner ablation); the learner is still fit daily and both ICs are recorded per day")
     p.add_argument("--long-short", type=int, default=None, help="market-neutral book (round 33): long the top N and short the bottom N convictions, gross GROSS_TARGET under the vol target split so the legs' betas cancel, 2 bps/day borrow, no sleeve")
     p.add_argument("--position-cap", type=float, default=None, help="override MAX_POSITION_PCT, e.g. 0.30")
@@ -764,5 +774,6 @@ if __name__ == "__main__":
             shadow=tuple(x for x in args.shadow.split(",") if x), drift=not args.no_drift, earnings_shift=args.earnings_shift,
             momentum_gate=args.momentum_gate, momentum_vol_scale=args.momentum_vol_scale, conviction_ema=args.conviction_ema,
             momentum_intraday=args.momentum_intraday, prior_strength=args.prior_strength,
-            events_pre_leg=args.events_pre_leg, momentum_conf=args.momentum_conf, chain_cap=args.chain_cap, exclude_group=args.exclude_group)
+            events_pre_leg=args.events_pre_leg, momentum_conf=args.momentum_conf, chain_cap=args.chain_cap, exclude_group=args.exclude_group,
+            rebalance_every=args.rebalance_every, cost_bps=args.cost_bps)
     print(json.dumps({k: v for k, v in r.items() if k != "curve"}, indent=2)[:4000])

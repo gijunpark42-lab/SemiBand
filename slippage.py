@@ -71,8 +71,13 @@ def fills(days):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--days", type=int, default=14)
+    p.add_argument("--window", default="09:45", help="ET time that ends the open window (pre-registered 09:45; the second execution slice fills at ~09:47)")
+    p.add_argument("--exclude", default="", help="comma list of symbols to leave out, e.g. SOXX (the idle sleeve trades in size)")
     args = p.parse_args()
-    rows = fills(args.days)
+    global OPEN_WINDOW_END
+    OPEN_WINDOW_END = (int(args.window[:2]), int(args.window[3:]))
+    skip = {s for s in args.exclude.split(",") if s}
+    rows = [r for r in fills(args.days) if r[2] not in skip]
     if not rows:
         print("no fills in the window")
         return

@@ -33,6 +33,7 @@ import ledger
 import learning_targets
 import liquidate
 import market
+import paper_twins
 import portfolio
 import score
 import snapshots
@@ -368,6 +369,16 @@ def main():
         # re-entry day is not capped by a sleeve about to be sold (audit 2026-09-15; the sleeve can be ~100% of equity)
         sleeve_proceeds = sum((float(positions[o["ticker"]].market_value) if o["notional"] is None else o["notional"])
                               for o in sleeve_orders if o["side"] == "SELL" and (o["notional"] is not None or o["ticker"] in positions))
+    twins_summary = {}
+    try:                                                                  # paper twins (2026-09-18): counterfactual books, no orders
+        twin_books = paper_twins.books(signals, model, shadow_model, groups, convictions_for_sizing, target_usd,
+                                       (sleeve_usd if config.IDLE_SLEEVE else 0.0), equity, realized, closes, prediction_betas)
+        paper_twins.record(today, twin_books, config.EXEC_MODE)
+        paper_twins.mark(today, closes, market.official_opens)
+        twins_summary = paper_twins.summary()
+        notes.append("paper twins: " + paper_twins.note(twins_summary))
+    except Exception as exc:
+        log.warning("paper twins: %s", exc)
     orders = portfolio.plan(target_usd, positions, convictions, universe, equity, buying_power, extra_proceeds=sleeve_proceeds)
     fallback_buys = {}                # the buys sized without the sleeve's proceeds, used only if its sale fails at the broker
     if sleeve_proceeds > 0:
@@ -528,6 +539,7 @@ def main():
         "convictions": [{"ticker": t, "conviction": round(c, 3), "target_usd": target_usd.get(t),
                          "agents": breakdown.get(t, {})} for t, c in ranked[:60]],
         "orders": done,
+        "twins": twins_summary,
         "notes": notes,
     })
     for k in range(2, slices + 1):

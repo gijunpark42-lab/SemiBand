@@ -94,6 +94,38 @@ def live_prices(symbols, max_age_hours=6, prefer_after=None) -> dict:
     return {symbol: price for symbol, (price, _) in best.items()}
 
 
+def official_opens(days):
+    """{YYYY-MM-DD: {symbol: official open}} for the given sessions from Alpaca's daily bars (SIP, unadjusted; IEX fallback) for
+    the universe plus the benchmark and SPY: the paper twins' open-execution book (2026-09-18). {} on any failure."""
+    import requests
+    if not days:
+        return {}
+    try:
+        import universe as universe_mod
+        symbols = sorted(set(universe_mod.load()) | {config.BENCHMARK, "SPY"})
+    except Exception:
+        return {}
+    out = {d: {} for d in days}
+    headers = {"APCA-API-KEY-ID": config.API_KEY, "APCA-API-SECRET-KEY": config.SECRET_KEY}
+    for feed in ("sip", "iex"):
+        for i in range(0, len(symbols), 100):
+            params = {"symbols": ",".join(symbols[i:i + 100]), "timeframe": "1Day", "start": min(days), "end": max(days),
+                      "adjustment": "raw", "feed": feed, "limit": 10000}
+            try:
+                r = requests.get("https://data.alpaca.markets/v2/stocks/bars", headers=headers, params=params, timeout=30)
+                r.raise_for_status()
+                bars = (r.json() or {}).get("bars") or {}
+            except Exception as exc:
+                log.warning("official opens (%s): %s", feed, exc)
+                break
+            for symbol, rows in bars.items():
+                for b in rows:
+                    day = b["t"][:10]
+                    if day in out and symbol not in out[day] and b.get("o"):
+                        out[day][symbol] = float(b["o"])
+    return {d: v for d, v in out.items() if v}
+
+
 def index_levels(symbols):
     """{symbol: latest level} for index tickers such as ^VIX and ^TNX (Alpaca has no index trades) from yfinance's fast
     quote; a symbol that fails is left out and keeps its last close upstream."""

@@ -22,6 +22,7 @@ import config
 NY = ZoneInfo("America/New_York")
 BARS = "https://data.alpaca.markets/v2/stocks/bars"
 OPEN_WINDOW_END = (9, 45)
+REFERENCE = "open"                              # or 'close' (round 48, close mode)
 THRESHOLD_BPS = 18.5
 
 
@@ -45,8 +46,9 @@ def official_opens(symbols, start, end):
                 for symbol, bars in (body.get("bars") or {}).items():
                     for b in bars:
                         key = (b["t"][:10], symbol)
-                        if key not in out and b.get("o"):
-                            out[key] = float(b["o"])
+                        ref = b.get("c") if REFERENCE == "close" else b.get("o")
+                        if key not in out and ref:
+                            out[key] = float(ref)
                 token = body.get("next_page_token")
                 if not token:
                     break
@@ -73,9 +75,13 @@ def main():
     p.add_argument("--days", type=int, default=14)
     p.add_argument("--window", default="09:45", help="ET time that ends the open window (pre-registered 09:45; the second execution slice fills at ~09:47)")
     p.add_argument("--exclude", default="", help="comma list of symbols to leave out, e.g. SOXX (the idle sleeve trades in size)")
+    p.add_argument("--reference", choices=("open", "close"), default="open", help="close: fills against the official close, window = fills from 15:30 ET (close mode)")
     args = p.parse_args()
-    global OPEN_WINDOW_END
+    global OPEN_WINDOW_END, REFERENCE
     OPEN_WINDOW_END = (int(args.window[:2]), int(args.window[3:]))
+    REFERENCE = args.reference
+    if REFERENCE == "close":
+        OPEN_WINDOW_END = (15, 29)                     # close mode: the auction fills (16:00) are the window; earlier fills are 'later'
     skip = {s for s in args.exclude.split(",") if s}
     rows = [r for r in fills(args.days) if r[2] not in skip]
     if not rows:
@@ -92,7 +98,7 @@ def main():
             continue
         adverse = (price - o) if side == "buy" else (o - price)
         hh, mm = int(hhmm[:2]), int(hhmm[3:])
-        window = "open" if (hh, mm) <= OPEN_WINDOW_END else "later"
+        window = ("close" if (hh, mm) > OPEN_WINDOW_END else "later") if REFERENCE == "close" else ("open" if (hh, mm) <= OPEN_WINDOW_END else "later")
         for key in (("all", window), ("side", window, side), ("type", window, kind), ("day", window, day)):
             g = groups[key]
             g[0] += adverse * qty
@@ -103,7 +109,7 @@ def main():
         return 1e4 * g[0] / g[1] if g[1] else float("nan")
 
     print(f"{len(rows)} fills {start}..{end}, {missing} without an official open (skipped)")
-    for window in ("open", "later"):
+    for window in (("close", "later") if REFERENCE == "close" else ("open", "later")):
         g = groups.get(("all", window))
         if not g:
             continue
@@ -112,7 +118,7 @@ def main():
             print(f"   {key[0]} {key[2]:<7} {groups[key][2]:>4} fills  {bps(groups[key]):+7.1f} bps  (${groups[key][1]:,.0f})")
         for key in sorted(k for k in groups if k[0] == "day" and k[1] == window):
             print(f"   {key[2]}  {groups[key][2]:>4} fills  {bps(groups[key]):+7.1f} bps  (${groups[key][1]:,.0f})")
-    g = groups.get(("all", "open"))
+    g = groups.get(("all", "close" if REFERENCE == "close" else "open"))
     if g:
         verdict = "adopt the conviction EMA" if bps(g) >= THRESHOLD_BPS else "the EMA item is closed"
         print(f"\nopen-window headline {bps(g):+.1f} bps vs the pre-registered {THRESHOLD_BPS} bps -> {verdict}")

@@ -183,7 +183,7 @@ def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mod
         margin_rate=0.0, gross_target=None, beta_floor=None, vol_target=None, vol_target_mode=None, shadow=(),
         drift=True, earnings_shift=0, momentum_gate=None, momentum_vol_scale=None, conviction_ema=None,
         momentum_intraday=None, prior_strength=None, events_pre_leg=None, momentum_conf=None, chain_cap=None, exclude_group=None,
-        rebalance_every=None, cost_bps=None):
+        rebalance_every=None, cost_bps=None, conviction_zscore=None):
     """tag: suffix for the output files (state/backtest<tag>.sqlite / backtest_report<tag>.json)
     so a long build can run while sweeps read the default files.
     exec_mode: 'close' = trade at the close the signals were computed on (optimistic);
@@ -238,6 +238,7 @@ def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mod
                 "events_pre_leg": bool(config.EVENTS_PRE_LEG) if events_pre_leg is None else bool(events_pre_leg),          # round 47
                 "momentum_conf": momentum_conf, "chain_cap": chain_cap, "exclude_group": exclude_group,
                 "rebalance_every": int(rebalance_every or 1), "cost_bps": cost_bps,                                          # round 49
+                "conviction_zscore": conviction_zscore,                                                                     # round 51
                 "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     publish_progress(dict(run_info, status="loading", pct=0.0, message="downloading prices and earnings"))
     saved = (config.AGENTS, config.TECHNICAL_RESIDUAL, config.GROSS_TARGET, config.VOL_TARGET, config.COST_BPS)
@@ -441,6 +442,13 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info, shadow_mods
         conv, _ = learner.predict(signals, model)
         conv_prior, _ = learner.predict(signals, None)
         traded = conv_prior if run_info.get("prior_only") else conv   # learner ablation: trade on the equal-weight prior blend
+        zk = run_info.get("conviction_zscore")
+        if zk and len(traded) > 2:                                     # round 51: the day's convictions rescaled to std K (sizing held equal)
+            vals = np.array(list(traded.values()), float)
+            sd = float(vals.std())
+            if sd > 0:
+                mu = float(vals.mean())
+                traded = {tk: (c - mu) / sd * float(zk) for tk, c in traded.items()}
         alpha = run_info.get("conviction_ema")
         if alpha and 0 < alpha < 1:                                    # round 45: sizing-side smoothing, conv_t = a conv + (1-a) conv_{t-1}
             traded = {tk: alpha * c + (1 - alpha) * prev_conv.get(tk, c) for tk, c in traded.items()}
@@ -623,6 +631,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info, shadow_mods
         "events_pre_leg": run_info.get("events_pre_leg"), "momentum_conf": run_info.get("momentum_conf"),                  # round 47
         "chain_cap": run_info.get("chain_cap"), "exclude_group": run_info.get("exclude_group"),
         "rebalance_every": run_info.get("rebalance_every"), "cost_bps": run_info.get("cost_bps"),                            # round 49
+        "conviction_zscore": run_info.get("conviction_zscore"),                                                              # round 51
         "sizing": {"size": config.SIZE_PER_CONVICTION, "cap": config.MAX_POSITION_PCT, "gross": config.GROSS_TARGET,
                    "long_short": run_info.get("long_short"),
                    "min_book": config.MIN_STOCK_BOOK, "idle_sleeve": config.IDLE_SLEEVE,
@@ -731,6 +740,7 @@ if __name__ == "__main__":
     p.add_argument("--exclude-group", default=None, help="round 47: drop a graph group from the universe, e.g. power (semiconductor-only book)")
     p.add_argument("--rebalance-every", type=int, default=None, help="round 49: trade only every N sessions (the book drifts between), e.g. 2 or 5")
     p.add_argument("--cost-bps", type=float, default=None, help="round 49: cost per dollar traded for this run, e.g. 20 (default config.COST_BPS)")
+    p.add_argument("--conviction-zscore", type=float, default=None, help="round 51: rescale the day's convictions to this cross-sectional std before sizing, e.g. 0.08")
     p.add_argument("--prior-only", action="store_true", help="trade on the equal-weight prior blend instead of the fitted weights (learner ablation); the learner is still fit daily and both ICs are recorded per day")
     p.add_argument("--long-short", type=int, default=None, help="market-neutral book (round 33): long the top N and short the bottom N convictions, gross GROSS_TARGET under the vol target split so the legs' betas cancel, 2 bps/day borrow, no sleeve")
     p.add_argument("--position-cap", type=float, default=None, help="override MAX_POSITION_PCT, e.g. 0.30")
@@ -775,5 +785,5 @@ if __name__ == "__main__":
             momentum_gate=args.momentum_gate, momentum_vol_scale=args.momentum_vol_scale, conviction_ema=args.conviction_ema,
             momentum_intraday=args.momentum_intraday, prior_strength=args.prior_strength,
             events_pre_leg=args.events_pre_leg, momentum_conf=args.momentum_conf, chain_cap=args.chain_cap, exclude_group=args.exclude_group,
-            rebalance_every=args.rebalance_every, cost_bps=args.cost_bps)
+            rebalance_every=args.rebalance_every, cost_bps=args.cost_bps, conviction_zscore=args.conviction_zscore)
     print(json.dumps({k: v for k, v in r.items() if k != "curve"}, indent=2)[:4000])

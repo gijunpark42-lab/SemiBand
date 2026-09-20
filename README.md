@@ -1,140 +1,157 @@
-# SemiBand v2 — self-weighting agent ensemble (Alpaca paper)
+# SemiBand v2
 
-Eleven agents each give an opinion on every stock in the universe. The opinions are blended with
-trust weights, the blend is traded in an Alpaca paper account, and every prediction is scored
-10 / 20 trading days later against SOXX (the 5-day horizon was dropped in v2.3: it scored noise). Agents that were right gain weight; agents that
-were wrong lose it. LLM work runs through the Claude Max subscription (`claude -p`) — no API key.
-The universe is every US-listed, Alpaca-tradable name in the earnings-ai supply-chain graph (150 tickers, no market-cap cap since 2026-09-11).
-Live Claude calls use `LLM_MODEL` (Opus 5, high effort via the local server); research scripts that ever call Claude must use `LLM_MODEL_RESEARCH` (Sonnet, low effort).
+A daily trading system for the AI semiconductor supply chain. Twelve agents score every stock in the
+universe, a Bayesian ridge learner re-weights each agent by how well its past calls scored, and the blend
+trades a paper account once a day. Every research decision is written down before the run that tests it,
+and the log of what was tried and rejected is in [RESEARCH.md](RESEARCH.md).
 
-## One cycle a day (`cycle.py`, 03:30 PT, orders at the 09:30 ET open)
+Live dashboard: [semiband-dashboard.vercel.app](https://semiband-dashboard.vercel.app)
+Paper trading only. `config.PAPER = True` and there is no live-account switch.
 
-1. If `state/liquidate_pending` exists, liquidate everything first (fresh start).
-2. Abort if orders without our `sb2-` client-order prefix appeared in the last 24h — another bot is
-   trading this account. `--force` overrides.
-3. Graph snapshot (`snapshots.py`, dated copy of earnings-ai when it changed) → universe (`universe.py`) → daily closes (`market.py`, yfinance).
-4. Score matured predictions and update weights (`score.py`, `ensemble.hedge_update`). Everything
-   lives in `state/ledger.sqlite`.
-5. Run the agents (`agents/`), each with its own information source:
-   - Free rule agents: `supply_chain` (the map: transitions, sold-out capacity, freshness, curated
-     guidance wording) · `neighbors` (the map one hop out: are customers/suppliers hot) ·
-     `fundamentals` (growth, margins, valuation, target) · `technical` (20/60-day momentum, trend,
-     RSI) · `mean_reversion` (fade 5-day overextension; the opposite temperament of technical) ·
-     `events` (earnings within 7 days = risk, reported within 14 days = drift) · `risk` (volatility and
-     drawdown brake; speaks only when risk is elevated) · `macro` (SOXX/SPY trend, VIX, 10-year
-     yield, FRED curve slope and NFCI → a regime score expressed through each name's beta)
-   - Claude agents: `llm_supply` (the supply-chain report: structure, deals, transitions) ·
-     `llm_guidance` (the company's own call statements + curated metrics: guidance momentum) ·
-     `llm_news` (three weeks of headlines from Finnhub + yfinance: catalysts)
-   - `moderator` does not vote; it writes agreement / disagreement / verdict / watch for every order.
-6. Blend → conviction per ticker → targets (`portfolio.py`: conviction ≥ 0.10, top 15, 15% per name,
-   150% gross ceiling, scaled down when the book's trailing 20-day vol exceeds `VOL_TARGET`, within buying power) → orders (`broker.py`).
-7. Journal (`state/trades.json`) and dashboard (`state/dashboard.json`) are uploaded to Vercel Blob
-   under `semiband-v2/`; `web/` renders them.
+## What it trades
 
-## Running
+The universe is every US-listed, Alpaca-tradable company in the [earnings-ai](https://gijun42.com)
+supply-chain graph: 176 names as of 2026-09-18, from chip designers and foundries through packaging,
+optics and memory to the power and cooling companies that feed the data centres. The list is rebuilt from
+the graph at the start of every cycle, so a company added to the graph joins the universe the next day.
+
+## The agents
+
+Nine of them read data and follow fixed rules:
+
+| Agent | What it reads |
+|---|---|
+| `supply_chain` | dated statements from the graph: transitions, sold-out capacity, guidance wording |
+| `neighbors` | the same statements one hop out: are this name's customers and suppliers busy |
+| `customer_momentum` | the 21-day return of a name's graph customers against SOXX (Cohen & Frazzini 2008) |
+| `fundamentals` | growth, margins, valuation, analyst targets |
+| `technical` | 20/60-day momentum against SOXX, trend, RSI |
+| `mean_reversion` | 5-day overextension, the opposite temperament of `technical` |
+| `events` | earnings inside a week (risk) or just reported (drift) |
+| `risk` | volatility and drawdown, speaks only when risk is elevated |
+| `macro` | SOXX and SPY trend, VIX, the 10-year yield, FRED curve and NFCI, expressed through each name's beta |
+
+Three read text with Claude, one call per stock per agent through a local server on the Max subscription:
+`llm_supply` (the supply-chain report), `llm_guidance` (the company's own call statements) and `llm_news`
+(three weeks of headlines). A `moderator` writes the minutes for each order and casts no vote.
+
+Shadow agents run and are scored every day but never vote. `insider` (opportunistic Form 4 purchases) is
+the current one. A shadow becomes a voting candidate only through its own pre-registered replay.
+
+## How a day runs
+
+The scheduled cycle (`cycle.py`) starts at 03:30 PT and trades at the 09:30 ET open. From 2026-09-21 it
+starts at 11:30 PT and trades in the closing auction instead, which the backtest and the live fills both
+preferred.
+
+1. Refresh the graph snapshot and the universe, download closes.
+2. Score the predictions that matured today and refit the stacking model on everything known at the time.
+3. Run the agents. The Claude stage has a wall-clock deadline so a slow server cannot push the run past
+   the execution window.
+4. Blend the opinions into one conviction per stock, subtract the day's cross-sectional mean, and size:
+   enter above 0.10 conviction, 0.60 of equity per unit of conviction, 15% per name, 150% gross ceiling,
+   scaled down when the book's own 20-day volatility runs above 50% annualised. Idle equity sits in SOXX
+   while SOXX is above its 200-day average, and a trend-gated beta floor holds the book's beta to SOXX at
+   0.5 so a rally is not missed by a defensive book.
+5. Send the orders, write the journal and publish the dashboard.
+
+`guardian.py` runs hourly during the session, reads today's headlines for each holding, and exits a
+position only on a material adverse event. It never buys. Price stop-losses were tested and cut both
+return and Sharpe, so there are none.
+
+## Results
+
+The replay is point-in-time: agents see only what existed on the simulated day, the learner refits daily
+on scored outcomes, holdings drift with their own returns, and every run charges 5 bps per dollar traded
+plus 7% annual interest on gross above 1.0.
+
+Over 500 sessions from 2024-10 to 2026-08, the live configuration returned **+1,028% at Sharpe 2.14** with
+a 30.1% maximum drawdown. Three comparisons matter more than the headline:
+
+| Line | Return |
+|---|---|
+| the book | +1,028% |
+| the same stocks held equal weight | +245% |
+| SOXX | +152% |
+| the book at 15 bps of cost | +893% |
+| the book at 30 bps | +656% |
+
+The universe is today's graph membership, so the equal-weight line is the honest benchmark rather than
+SOXX. Selecting the best of 330 tested variants would reach Sharpe 1.46 by luck alone; the observed 2.14
+clears that at 82% probability (deflated Sharpe, Bailey & López de Prado 2014). On an independent
+2019-2023 window the price agents made +53% against +160% for the same names held equal weight, so the
+edge measured here belongs to the 2024-2026 regime and to information the older window cannot contain.
+Live expectations were set near Sharpe 1 before trading started.
+
+## How research is run
+
+Every change is pre-registered in [RESEARCH.md](RESEARCH.md) before the run that tests it: the hypothesis,
+the exact flags, the pass number. Protocol v4.1 then decides:
+
+- the paired daily difference against a same-day, same-machine baseline is at least zero,
+- Sharpe is not lower and maximum drawdown is within 2 points,
+- the paired difference is at least zero in two thirds of the informative blocks (six purged blocks, ties
+  excluded; a change that can act on only part of the window is also scored on those days alone),
+- an independent 2019-2023 window confirms anything that passes.
+
+51 rounds have run this way. Six changes were adopted and more than forty were rejected, including several
+that looked good on one window: stop-losses, a short book, a hedge overlay, regime gates, residual
+momentum, a sector-momentum vote, weekly rebalancing, and stronger shrinkage that the cross-validation
+itself preferred. `config.RESEARCH_TRIALS` (384) carries the trial count into the deflated Sharpe, so the
+bar rises with every experiment.
+
+`paper_twins.py` records counterfactual books from the same signals every day (the previous execution
+rule, no beta floor, the other confidence rule, the raw-return target) and marks them at official prices
+with the replay's cost model, so each live change carries its own control without a second account.
+
+An audit runs weekly and before any adoption: look-ahead, leakage, ignored costs, arithmetic. It has
+found real defects, including free daily rebalancing worth 7-9% a year, a FRED look-ahead, a wrong trial
+count in the deflated Sharpe, and an undercharged rank book. They are fixed and recorded.
+
+## Running it
 
 ```
-python cycle.py --dry-run --no-llm          # free agents only, no orders
-python cycle.py --dry-run --tickers NVDA,AMD,MU
-python cycle.py                             # the real thing: computes, waits for the open, sends paper orders
+python cycle.py --dry-run --no-llm          # rule agents only, no orders
+python cycle.py                             # the real thing: computes, waits, sends paper orders
+python backtest.py --days 500 --exec close  # a replay; --exec open for the old execution
+python slippage.py --days 14                # what the live fills actually cost
 python liquidate.py --dry-run               # preview a full liquidation
-python universe.py                          # refresh the universe
 ```
 
-Python: `C:\Users\calif\AppData\Local\Python\bin\python.exe` with `PYTHONUTF8=1`.
-If the local Claude server is down, `agents/llm.py` starts `dev\TradingAgents\local-claude\server.py`.
+Python 3.13 with `PYTHONUTF8=1`. Secrets live in `.env` (`ALPACA_API_KEY`, `ALPACA_SECRET_KEY`,
+`BLOB_READ_WRITE_TOKEN`); `state/` holds the ledger, models and caches and is not tracked.
 
-Scheduled task (weekdays 03:30 PT — the three Claude agents run on Opus 5 at HIGH effort, ~16 s and ~1k output tokens per call, ~300 calls per cycle in ~40 min. Tried on 2026-09-11: Fable 5.1 max (~10k tokens, 55 s per call) and Opus max (105 s per call, would have missed the open). The start moved from 05:50 to keep the 09:30 ET open):
+Tests:
 
 ```
-schtasks /Create /F /SC WEEKLY /D MON,TUE,WED,THU,FRI /ST 03:30 /TN SemiBand-Cycle /TR "cmd /c cd /d C:\Users\calif\Desktop\Trading && set PYTHONUTF8=1 && C:\Users\calif\AppData\Local\Python\bin\python.exe cycle.py >> state\run_daily.log 2>&1"
+set ALPACA_API_KEY=x && set ALPACA_SECRET_KEY=x && python -m unittest discover -s . -p "test_*.py"
 ```
 
-## Learning rule (Bayesian ridge stacking, `learner.py`)
+## The learning rule
 
-Per horizon h in {10, 20} (5 was dropped in v2.3): target y = abnormal return / scale_h; features x = [direction_i x confidence_i] +
-[direction_i] for every agent (0 when silent); posterior mean w = (X'DX + lambda I)^-1 (X'Dy + lambda w0) with an
-exponential time decay D (half-life 90 days) and prior mean w0 = the equal-weight blend. lambda is fixed at 150
-pseudo-observations (the 2026-09-10 sweep showed walk-forward lambda selection was too timid). Conviction =
-reliability-weighted blend of the three horizon predictions, clipped to [-1, 1]. Weights may go negative
-(a reliably wrong agent becomes a contrarian signal). Hedge (multiplicative weights) is still computed as a
-reference line on the dashboard. Day one is identical to the equal blend by construction.
+For each horizon h in {10, 20} trading days, the target is the stock's return minus its prediction-time
+60-day beta times SOXX's, divided by a scale. The features are `direction x confidence` and `direction`
+for every agent, zero when an agent is silent. The posterior mean is a ridge with an exponential time
+decay (90-day half-life) around a prior of the equal-weight blend, worth 150 pseudo-observations. Weights
+may go negative, which makes a reliably wrong agent a contrarian signal, and several are negative today.
+Conviction is the reliability-weighted blend of the horizons, clipped to [-1, 1].
 
-## Backtest (`backtest.py`)
-
-`python backtest.py --days 250` replays the point-in-time agents (technical, mean_reversion, risk, macro, events,
-and time-filtered supply_chain / neighbors) day by day, scores every opinion against SOXX at 10/20 days, refits
-the learner every day (like the live cycle) on outcomes known at the time, and simulates the live sizing rules plus a top-15 rank portfolio.
-Output: `state/backtest_report.json` (published to the dashboard) and `state/backtest.sqlite`, which warm-starts the
-live learner at half weight (`WARM_START_WEIGHT`). Not simulated: fundamentals (no point-in-time data) and the Claude agents.
-**Data caveat:** the earnings-ai graph's dated statements start in 2025-10 (85% from 2026-04 on), so `supply_chain` /
-`neighbors` are silent for the whole OOS year (2024-09 → 2025-09); backtest verdicts on the graph agents rest on 2026-02 → 08
-only, and their real test is the live scoreboard (RESEARCH.md, "data coverage").
-
-- `--exec open` trades at the NEXT open and marks open-to-open, which is what the live cycle actually gets; the default
-  `close` mode trades at the close the signals were computed on and is optimistic (it books the overnight move).
-- Every 5 traded days the run writes `state/backtest_progress.json`; `watch_backtest.cmd` (= `cd web && npm run dev`, then
-  http://localhost:3000/backtest) shows it live on this machine with no Vercel traffic. The Blob copy the website reads is
-  uploaded per `config.PROGRESS_UPLOAD` — default `final`: only the finished result, so the Vercel quota is not spent on
-  progress. `sweep.py` publishes the same way (table so far locally, final table + PBO to the site).
-- `robustness.py` is attached to every report: block-bootstrap Sharpe CI, deflated Sharpe for the number of sweep
-  trials on record (`state/backtest_sweep*.json`), monthly/quarterly tables, cost sensitivity (0/5/15/30 bps),
-  rolling 60-day Sharpe, and the share of the return that came from the single best quarter. `sweep.py` stores each
-  variant's daily returns and reports the probability of backtest overfitting (CSCV) for the round.
-- Rule of thumb: the 2025-09 → 2026-08 window is where every sizing knob was chosen, so its numbers are in-sample.
-  Judge changes on `--days 500` (the earlier year is out-of-sample), with `--exec open`, and only adopt a knob when
-  the out-of-sample numbers improve too. `sweep.py --exec open --oos-end 2025-09-24` reports both windows per variant.
-- `RESEARCH.md` is the log of every idea tried (rounds 1-11 and the generational search), its numbers and the verdict. Read it before testing anything.
-- `sweep.py --workers 10 --search 3 --pop 10 --exec open --oos-end 2025-09-24 --tag _v22` evaluates 10 variants in parallel per generation and
-  mutates the best; every trial lands in `state/backtest_search<tag>.json` and on the website's Backtest tab.
-- Portfolio vol targeting (`VOL_TARGET`, round 10): the book is scaled down when its own trailing 20-day realised vol exceeds
-  50% annualised; live, the realised vol comes from the Alpaca portfolio history, so it is off until the new account has 20 days.
-
-### Learning target modes
-
-The learner stores two labels side by side. `abnormal` remains the original stock return minus SOXX return, while
-`beta_abnormal` is stock return minus the prediction-time 60-day beta times SOXX return. `LEARNER_TARGET_MODE` selects
-the active model; the other mode is still fitted and its intended 0.50-vol targets are written to `shadow_targets` for
-forward comparison. Raw labels are never overwritten. `migrate_beta_targets.py` makes consistent SQLite backups and
-adds parallel beta columns. It automatically uses prices strictly before the date for `ledger.sqlite` (pre-open
-predictions), and through the date for historical post-close predictions. Existing researched beta scores can be
-imported with `--beta-source` after exact source identity checks. The learner rejects any missing/nonfinite beta
-label before replacing its model. See `BETA_IMPLEMENTATION.md` for activation, verification and rollback.
-
-`sweep.py --target-mode raw` remains the default for legacy research ledgers; migrated parallel beta columns require
-`--target-mode beta`. This prevents the paper default from silently changing old research commands. The raw shadow
-records intended allocations using the active account's equity/volatility and the same agent opinions; it is a
-controlled signal comparison, not a separately executed or independently financed paper account.
-
-## Execution and the intraday guardian
-
-- Orders: exits go out in full at the open; buys and trims are split into `EXECUTION_SLICES` (2) orders 10 minutes
-  apart (09:30, 09:40 ET). The entry-time study (`timing.py`, hourly bars) showed the open beats every later hour.
-  Each order is a marketable LIMIT (ask + 20 bps for buys, bid - 20 bps for sells) when a fresh IEX quote with a
-  spread under 300 bps exists, otherwise a market order; unfilled limit remainders are cancelled and re-sent as
-  market orders after `LIMIT_CLEANUP_MIN` minutes. Wide-spread small caps therefore never get run over by one print.
-- `guardian.py` runs hourly during the session (Task Scheduler "SemiBand-Guardian", 07:35–13:05 PT). For each
-  holding it pulls today's headlines (Finnhub + DuckDuckGo), and only when there are NEW titles asks Claude whether
-  they describe a material adverse event. It exits only on action=exit with severity ≥ `GUARDIAN_EXIT_SEVERITY`
-  (0.7), records the exit in `state/guardian_exits.json`, and the daily cycle will not rebuy that name for
-  `GUARDIAN_COOLDOWN_DAYS` (3). It never buys. Checks appear on the dashboard under Guardian.
-- Backtests showed price-based stop-losses (6–20% below entry) reduced both return and Sharpe, so there is no
-  price stop; the guardian reacts to news, not to price.
-
-## Rules
-
-- Never write into earnings-ai (`chains/`, `graph/`, `company_metrics.json`). Read only.
-- `config.PAPER = True`. There is no live-account switch.
-- Output is paper-trading research, not investment advice.
-- The user runs git commits and pushes unless they say otherwise.
+Two labels are stored side by side (raw abnormal return and beta-adjusted). The inactive one is fitted in
+parallel and its intended book is recorded for comparison, so switching targets is a measurement rather
+than a guess.
 
 ## Web
 
-`web/` is a Next.js app deployed on Vercel (project `semiband`, Root Directory `web`).
-Env: `ALPACA_API_KEY`, `ALPACA_SECRET_KEY`, `TRADES_URL`, `BLOB_READ_WRITE_TOKEN`. Deploy with
-`vercel --prod` from the repo root. All code and UI text are in English.
+`web/` is a Next.js app on Vercel. `/` shows the paper account, the day's decisions and the agent
+scoreboard; `/backtest` shows the latest replay and the research log.
 
-Pages: `/` (the paper account, decisions, agents) and `/backtest` (the live backtest / sweep view, polling
-`/api/backtest`, which reads `backtest_progress.json` from the same Blob folder as `trades.json`; set
-`BACKTEST_PROGRESS_URL` only if it lives elsewhere).
+## Caveats
+
+- Paper trading, not investment advice.
+- The universe is today's graph membership, which is survivorship by construction. The equal-weight line
+  is reported next to every result for that reason.
+- The graph's dated statements start in 2025-10, so the graph agents are silent for the first year of any
+  long replay.
+- The three Claude agents cannot be replayed honestly: the models' training data covers the test window.
+  Their evidence is the live scoreboard alone.
+- Never write into the earnings-ai project. This repository reads its graph.

@@ -5,6 +5,7 @@ the close-refresh time, the wait/cutoff helper. Inert unless config.EXEC_MODE ==
 """
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -109,9 +110,17 @@ class CloseModeCycle(unittest.TestCase):
             cycle.open_refresh({"NVDA": "NVIDIA"}, [], "2026-09-22", {}, [], at="15:30")
         self.assertEqual(seen["after"], pd.Timestamp("2026-09-22 15:30", tz="America/New_York").tz_convert("UTC"))
 
-    def test_the_mode_switch_defaults_to_open(self):
-        self.assertEqual(config.EXEC_MODE, "open")
-        self.assertIsNone(config.LABEL_SAME_CLOSE_FROM)
+    def test_the_live_execution_mode_and_its_label_date_agree(self):
+        """Close execution scores its predictions from their own day's close, so the two settings move together
+        (adopted 2026-09-21). An open-mode config must not carry a label date, and a close-mode config must."""
+        self.assertIn(config.EXEC_MODE, ("open", "close"))
+        if config.EXEC_MODE == "close":
+            self.assertIsNotNone(config.LABEL_SAME_CLOSE_FROM)
+            date.fromisoformat(config.LABEL_SAME_CLOSE_FROM)          # a real ISO date
+            self.assertTrue(config.CLOSE_REFRESH_TIME < config.MOC_CUTOFF)
+            self.assertTrue(config.LLM_STAGE_DEADLINE_CLOSE < config.CLOSE_REFRESH_TIME)
+        else:
+            self.assertIsNone(config.LABEL_SAME_CLOSE_FROM)
 
 
 if __name__ == "__main__":

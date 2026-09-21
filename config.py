@@ -133,7 +133,8 @@ MOMENTUM_INTRADAY = False         # round 46 candidate: customer_momentum measur
                                   # open->close legs (the overnight leg of connected-firm spillover reverses, Wang 2025 JFQA)
 EVENTS_PRE_LEG = True             # round 47 candidate: False = events casts no pre-earnings "event risk" vote (round 46 diagnostic: names about
                                   # to report made +1.5-2.6% beta-abnormal over the next 10 days, the -0.25 vote was against that)
-MOMENTUM_CONF = None              # round 47 candidate: a constant confidence for customer_momentum, e.g. 0.5, instead of 0.3 + 0.05 x customers
+MOMENTUM_CONF = 0.5               # round 47 (adopted 2026-09-21, v4.1 pass +2.0 bp/d and the 2019-23 confirmation): a constant confidence for
+                                  # customer_momentum instead of 0.3 + 0.05 x customers (the customer count carried no forward information)
                                   # (round 46 diagnostic: the customer count carries no forward information and dilutes the direction's IC)
 CHAIN_CAP = None                  # round 47 candidate (replay only until adopted): the power group's share of equity capped, e.g. 0.30
 BETA_FLOOR = 0.5                  # round 47 (2026-09-18, the user delegated the choice; pre-registered rule): while IDLE_SLEEVE closed above its
@@ -141,7 +142,7 @@ BETA_FLOOR = 0.5                  # round 47 (2026-09-18, the user delegated the
                                   # the sleeve grows under the gross ceiling, past it the stocks shrink together); None = off. Replay --beta-floor:
                                   # 2024-26 +1196% / 2.17 / DD 31.3% against +1221% / 2.19 / 29.6%; 2019-23 +65% / 0.34 / 47.1% against +75% /
                                   # 0.38 / 46.9% (the trend gate held through 2022). Bought for up-capture: the live book's beta was 0.12-0.18
-EXEC_MODE = "open"                # round 48 (2026-09-18): "close" = the afternoon cycle (task at 11:30 PT): the price agents refreshed on the
+EXEC_MODE = "close"               # round 48 (2026-09-18): "close" = the afternoon cycle (task at 11:30 PT): the price agents refreshed on the
                                   # latest trades at CLOSE_REFRESH_TIME, one slice of market-on-close orders, labels from the prediction day's
                                   # own close (LABEL_SAME_CLOSE_FROM). Replay --exec close +1709% / 2.42 / DD 27.3% against --exec open +1196% /
                                   # 2.17 / 31.3% (2024-26); +111% / 0.49 against +65% / 0.34 (2019-23). Live from 2026-09-22 once switched here,
@@ -149,7 +150,7 @@ EXEC_MODE = "open"                # round 48 (2026-09-18): "close" = the afterno
 CLOSE_REFRESH_TIME = "15:45"      # ET: close mode re-runs the refresh agents on the latest trades at this time (the open refresh, moved)
 MOC_CUTOFF = "15:48"              # ET: close mode sends no order after this (Alpaca refuses market-on-close orders from 15:50)
 LLM_STAGE_DEADLINE_CLOSE = "15:35"   # ET: the Claude stage's deadline in close mode (LLM_STAGE_DEADLINE is the open mode's 09:05)
-LABEL_SAME_CLOSE_FROM = None      # ISO date: predictions dated on or after it are scored from their own day's close (close mode);
+LABEL_SAME_CLOSE_FROM = "2026-09-21"   # ISO date: predictions dated on or after it are scored from their own day's close (close mode);
                                   # None = every label starts at the close before the prediction date (open mode, score.py)
 GROSS_TARGET = 1.50               # CEILING on gross exposure (150% of equity = 50% margin); not a target, cash is a position
 VOL_TARGET = 0.50                 # portfolio vol targeting: when the book's trailing realised vol (annualised) exceeds this, scale every

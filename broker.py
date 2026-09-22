@@ -208,7 +208,7 @@ def close_moc(symbol, client_order_id=None, dry_run=None):
             log.warning("MOC close %s refused (%s); closing with a day order", symbol, exc)
             return close(symbol, client_order_id=client_order_id, dry_run=dry_run)
     if frac > 1e-6:
-        rest = _client.submit_order(MarketOrderRequest(symbol=symbol, qty=round(frac, 6), side=side, time_in_force=TimeInForce.DAY,
+        rest = _client.submit_order(MarketOrderRequest(symbol=symbol, qty=int(frac * 1e6) / 1e6, side=side, time_in_force=TimeInForce.DAY,
                                                        client_order_id=(client_order_id + "-frac")[:48] if client_order_id else None))
         log.info("CLOSE %s fractional %.4f shares MARKET (order %s)", symbol, frac, rest.id)
         order = order or rest

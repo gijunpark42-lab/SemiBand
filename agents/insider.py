@@ -109,7 +109,8 @@ def run(universe: dict, ctx: dict) -> list[Signal]:
     today = ctx.get("asof")
     if today is None:                                          # live: the cycle's date, refreshed once a day
         today = date.fromisoformat(ctx["today"]) if ctx.get("today") else date.today()
-        refresh(universe, today)
+        if config.INSIDER_REFRESH_IN_CYCLE:                      # 2026-09-22: off; the nightly task keeps the files current
+            refresh(universe, today)
     elif isinstance(today, str):
         today = date.fromisoformat(today)
     data = _purchases()

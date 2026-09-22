@@ -147,6 +147,17 @@ EXEC_MODE = "close"               # round 48 (2026-09-18): "close" = the afterno
                                   # own close (LABEL_SAME_CLOSE_FROM). Replay --exec close +1709% / 2.42 / DD 27.3% against --exec open +1196% /
                                   # 2.17 / 31.3% (2024-26); +111% / 0.49 against +65% / 0.34 (2019-23). Live from 2026-09-22 once switched here,
                                   # in LABEL_SAME_CLOSE_FROM and in the task's start time
+CLOSE_ORDER_TYPE = "market"         # 2026-09-22: "market" = the close refresh's orders go through the marketable-limit / market path
+                                  # with a CLOSE_CLEANUP_MIN clean-up, cut off at CLOSE_ORDER_CUTOFF; "moc" = market-on-close orders. On
+                                  # 09-22, 18 of 19 MOC orders expired unfilled on the Alpaca paper account, so paper uses "market"
+CLOSE_ORDER_CUTOFF = "15:55"       # ET: close mode with CLOSE_ORDER_TYPE "market" sends no order after this (+ the clean-up = before 16:00)
+CLOSE_CLEANUP_MIN = 3             # minutes the close-mode limit orders get before their remainders go out as market orders
+INSIDER_REFRESH_IN_CYCLE = False  # 2026-09-22: the cycle never fetches insider data (the nightly SemiBand-Insider task does); the
+                                  # in-cycle refresh ran 1,316 s against its 300 s budget and delayed the voting Claude agents
+LLM_ORDER = ("llm_news", "llm_guidance", "llm_supply")   # Claude-stage order: news first, because a headline signal cannot be
+                                  # carried to another day, so it is the agent the deadline must not cut
+CARRY_FORWARD_AGENTS = ("llm_supply", "llm_guidance")   # 2026-09-22 (user): when a call fails or is skipped, reuse the name's
+CARRY_FORWARD_SESSIONS = 3        # last signal from the last N recorded sessions (slow-moving inputs); llm_news is never carried
 CLOSE_REFRESH_TIME = "15:45"      # ET: close mode re-runs the refresh agents on the latest trades at this time (the open refresh, moved)
 MOC_CUTOFF = "15:48"              # ET: close mode sends no order after this (Alpaca refuses market-on-close orders from 15:50)
 LLM_STAGE_DEADLINE_CLOSE = "15:35"   # ET: the Claude stage's deadline in close mode (LLM_STAGE_DEADLINE is the open mode's 09:05)

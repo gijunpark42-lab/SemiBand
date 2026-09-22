@@ -83,6 +83,27 @@ def predictions_on(date):
     return list({(r["agent"], r["ticker"]): r for r in rows}.values())
 
 
+def carried_signals(agent, tickers, date, sessions):
+    """2026-09-22 carry-forward: for each ticker, the agent's most recent own signal (never one that was itself carried) from the
+    last `sessions` cycle dates before `date`, as Signal rows whose reason names the source date; an older view expires. -> list[Signal]"""
+    from agents.base import Signal
+    tickers = list(tickers)
+    if not tickers or sessions < 1:
+        return []
+    with connect() as con:
+        dates = [r[0] for r in con.execute("SELECT DISTINCT date FROM predictions WHERE date < ? ORDER BY date DESC LIMIT ?",
+                                          (date, int(sessions))).fetchall()]
+        if not dates:
+            return []
+        marks = ",".join("?" * len(tickers))
+        rows = con.execute(f"SELECT date, ticker, direction, confidence, horizon, reason FROM predictions WHERE agent = ? AND date >= ? "
+                           f"AND date < ? AND COALESCE(reason, '') NOT LIKE 'carried from%' AND ticker IN ({marks}) ORDER BY date, id",
+                           (agent, min(dates), date, *tickers)).fetchall()
+    latest = {r["ticker"]: r for r in rows}                       # ordered by date, id: the last row per ticker wins
+    return [Signal(agent, t, r["direction"], r["confidence"], r["horizon"], f"carried from {r['date']}: {r['reason']}")
+            for t, r in latest.items()]
+
+
 def replace_predictions(date, agents, signals, price_at, benchmark_beta=None):
     """Swap one date's predictions of `agents` for fresh ones in one transaction (the open refresh re-runs the
     price-based agents on today's first trades)."""

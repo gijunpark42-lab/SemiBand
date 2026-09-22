@@ -92,7 +92,8 @@ def run_agents(universe, ctx, model, held, use_llm):
     capped by config.LLM_MAX_TICKERS (None = every name)."""
     roster = [*config.AGENTS, *config.SHADOW_AGENTS]   # shadow agents run and are recorded like the others; the learner never sees them
     free = [a for a in roster if not a.startswith("llm_")]
-    llm_agents = [a for a in roster if a.startswith("llm_")]
+    llm_agents = sorted((a for a in roster if a.startswith("llm_")),
+                        key=lambda a: config.LLM_ORDER.index(a) if a in config.LLM_ORDER else len(config.LLM_ORDER))   # news first
     signals = []
     for name in free:
         signals += _run_agent(name, universe, ctx)
@@ -108,12 +109,21 @@ def run_agents(universe, ctx, model, held, use_llm):
         llm.DEADLINE = pd.Timestamp(f"{ctx['today']} {deadline}", tz="America/New_York").tz_convert("UTC").to_pydatetime()
     llm.timing_summary()                # start the stage's timings clean
     llm.STAGE_SKIPPED = 0
+    llm.ensure_server()                 # 2026-09-22: warm and answering before the first call (a dead server lost 176 calls)
     try:
         for name in llm_agents:
             if llm.DEADLINE is not None and pd.Timestamp.now(tz="UTC") >= pd.Timestamp(llm.DEADLINE):
                 log.warning("agent %-13s skipped: Claude stage deadline %s ET passed", name, deadline)
-                continue
-            signals += _run_agent(name, subset, ctx)
+                out = []
+            else:
+                out = _run_agent(name, subset, ctx)
+            if name in config.CARRY_FORWARD_AGENTS:                  # 2026-09-22 (user): a failed or skipped call keeps yesterday's view
+                got = {s.ticker for s in out}
+                carried = ledger.carried_signals(name, [t for t in subset if t not in got], ctx["today"], config.CARRY_FORWARD_SESSIONS)
+                if carried:
+                    log.info("agent %-13s carried %d signals from its last %d recorded sessions", name, len(carried), config.CARRY_FORWARD_SESSIONS)
+                out += carried
+            signals += out
             summary = llm.timing_summary()
             if summary:
                 log.info("agent %-13s claude calls %d: end-to-end mean %.0fs, p90 %.0fs, max %.0fs, skipped by the deadline %d",
@@ -237,6 +247,9 @@ def main():
     vol_label = f"{config.VOL_TARGET:.0%}" if config.VOL_TARGET is not None else "off"
     notes = [f"learner target mode: {config.LEARNER_TARGET_MODE}; portfolio vol target: {vol_label}"]
     log.info("=== cycle %s dry_run=%s llm=%s ===", today, dry, not args.no_llm)
+    if sys.platform == "win32":         # 2026-09-22: the PC idled to sleep 11:37-11:55 PT mid-cycle; no idle sleep until this process
+        import ctypes                   # exits (ES_CONTINUOUS | ES_SYSTEM_REQUIRED). A closed lid still sleeps the PC
+        ctypes.windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)
 
     # Signals are computed before the open (yesterday's closes, today's news and
     # fundamentals are all available); the wait for the open happens right
@@ -293,9 +306,12 @@ def main():
         notes.append(f"reused {len(signals)} signals recorded earlier today (no agent re-run, no Claude calls)")
         log.info("reusing %d signals recorded earlier on %s", len(signals), today)
     else:
+        if not args.no_llm:
+            llm.ensure_server()           # 2026-09-22: warm the Claude server while the rule agents run
         signals = run_agents(universe, ctx, model, positions, use_llm=not args.no_llm)
         if llm.STAGE_SKIPPED:
-            notes.append(f"Claude stage cut at {config.LLM_STAGE_DEADLINE} ET: {llm.STAGE_SKIPPED} calls skipped, rule agents carried the rest")
+            cut_at = config.LLM_STAGE_DEADLINE_CLOSE if config.EXEC_MODE == "close" else config.LLM_STAGE_DEADLINE
+            notes.append(f"Claude stage cut at {cut_at} ET: {llm.STAGE_SKIPPED} calls skipped, rule agents carried the rest")
         prediction_betas = learning_targets.latest_betas(closes, {s.ticker for s in signals}, today)
         ledger.add_predictions(today, signals, last_close, prediction_betas)
     if reuse and not dry:
@@ -308,10 +324,11 @@ def main():
     # 240 minutes: the wait starts only after every agent has run, and a 03:30 PT start whose agents finish by 04:30 would
     # give up just before the 06:30 PT open with 120 (audit 2026-09-15; yesterday's run only traded after a relaunch)
     if not dry and config.EXEC_MODE == "close":                        # round 48: the close refresh window instead of the open
-        if not wait_until_et(config.CLOSE_REFRESH_TIME, config.MOC_CUTOFF, today):
-            log.info("close mode: past %s ET — predictions recorded, no orders", config.MOC_CUTOFF)
+        cutoff = config.MOC_CUTOFF if config.CLOSE_ORDER_TYPE == "moc" else config.CLOSE_ORDER_CUTOFF
+        if not wait_until_et(config.CLOSE_REFRESH_TIME, cutoff, today):
+            log.info("close mode: past %s ET — predictions recorded, no orders", cutoff)
             journal.publish_dashboard({"date": today, "weights": weights, "history": _previous_history(),
-                                       "notes": notes + [f"close mode: past {config.MOC_CUTOFF} ET, predictions recorded, no orders"]})
+                                       "notes": notes + [f"close mode: past {cutoff} ET, predictions recorded, no orders"]})
             return 0
     elif not dry and not wait_for_open(max_minutes=240):
         log.info("market did not open (holiday?) — predictions recorded, no orders")
@@ -393,8 +410,9 @@ def main():
     # Execution: exits in full now; buys and trims spread over EXECUTION_SLICES slices
     # (first slice now, the rest every EXECUTION_INTERVAL_MIN minutes after the
     # dashboard is published) so we do not pay the whole opening spread at once.
-    moc = config.EXEC_MODE == "close"                                   # round 48: one slice of market-on-close orders
-    slices = 1 if (dry or moc) else max(1, config.EXECUTION_SLICES)
+    close_mode = config.EXEC_MODE == "close"                            # round 48: one slice at the close refresh
+    moc = close_mode and config.CLOSE_ORDER_TYPE == "moc"               # 2026-09-22: paper fills MOC unreliably -> "market"
+    slices = 1 if (dry or close_mode) else max(1, config.EXECUTION_SLICES)
     done, later = [], []
     sleeve_sell_failed = False
     for o in orders:
@@ -434,6 +452,12 @@ def main():
         ledger.add_order(today, t, o["side"], size, reason, coid, dry)
         est_cost = round((size or 0.0) * config.COST_BPS / 10_000, 2)
         done.append({"ticker": t, "side": o["side"], "notional": size, "reason": reason, "est_cost_usd": est_cost})
+    if not dry and done and close_mode and not moc:                     # 2026-09-22: before the moderator's Claude calls (8 min on
+        log.info("close mode: waiting %d min for limit fills before the market cleanup", config.CLOSE_CLEANUP_MIN)   # 09-22), so the
+        time.sleep(config.CLOSE_CLEANUP_MIN * 60)                       # remainders go out as market orders before the 16:00 bell
+        n = broker.cleanup_open_orders(config.ORDER_PREFIX, dry_run=dry)
+        if n:
+            notes.append(f"{n} limit remainders converted to market")
 
     # Regime hedge (v2.4): short config.HEDGE_SYMBOL by HEDGE_SIZE x equity while it closes below its HEDGE_LOOKBACK-day
     # average; flat otherwise. Scaled like the book when the vol target is active. One whole-share market order.
@@ -552,7 +576,7 @@ def main():
                 (broker.buy if side == "BUY" else broker.sell)(t, part, f"{coid}-{k}", dry_run=dry)
             except Exception as exc:
                 log.error("slice %d %s %s failed: %s", k, side, t, exc)
-    if not dry and done and not moc:                                    # MOC orders fill in the auction: nothing to clean up
+    if not dry and done and not close_mode:                             # close mode cleaned up above (MOC: nothing to clean up)
         log.info("waiting %d min for limit fills before the market cleanup", config.LIMIT_CLEANUP_MIN)
         time.sleep(config.LIMIT_CLEANUP_MIN * 60)
         n = broker.cleanup_open_orders(config.ORDER_PREFIX, dry_run=dry)

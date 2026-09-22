@@ -53,6 +53,14 @@ OPINION_SCHEMA = {
 }
 
 
+def refused(exc):
+    """True when a URLError means nothing is listening (the server died or never bound), not an HTTP error from it."""
+    if isinstance(exc, urllib.error.HTTPError):
+        return False
+    reason = getattr(exc, "reason", None)
+    return isinstance(reason, (ConnectionRefusedError, ConnectionResetError)) or getattr(reason, "winerror", None) in (10061, 10054)
+
+
 def health():
     try:
         with urllib.request.urlopen(config.LLM_URL.rsplit("/v1", 1)[0] + "/health", timeout=3) as r:
@@ -61,8 +69,16 @@ def health():
         return False
 
 
+_SERVER_LOCK = threading.Lock()   # 2026-09-22: concurrent callers (six worker threads) must never spawn two servers
+
+
 def ensure_server(wait_s=40):
     """Start local-claude/server.py if it is not answering; wait until it is."""
+    with _SERVER_LOCK:
+        return _ensure_server(wait_s)
+
+
+def _ensure_server(wait_s):
     if health():
         return True
     python = config.TRADINGAGENTS_DIR / ".venv" / "Scripts" / "python.exe"
@@ -112,8 +128,17 @@ def ask_json(system, user, schema=OPINION_SCHEMA, model=None, timeout=None, tool
     )
     t0 = time.time()
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            data = json.load(r)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                data = json.load(r)
+        except urllib.error.URLError as exc:
+            if not refused(exc):
+                raise
+            log.warning("local Claude server refused the call (%s): restarting it and retrying once", exc.reason)
+            if not ensure_server():
+                raise
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                data = json.load(r)
     finally:
         TIMINGS.append(time.time() - t0)
     content = data["choices"][0]["message"]["content"]

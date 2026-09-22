@@ -120,8 +120,11 @@ def main():
             print(f"   {key[2]}  {groups[key][2]:>4} fills  {bps(groups[key]):+7.1f} bps  (${groups[key][1]:,.0f})")
     g = groups.get(("all", "close" if REFERENCE == "close" else "open"))
     if g:
-        verdict = "adopt the conviction EMA" if bps(g) >= THRESHOLD_BPS else "the EMA item is closed"
-        print(f"\nopen-window headline {bps(g):+.1f} bps vs the pre-registered {THRESHOLD_BPS} bps -> {verdict}")
+        if REFERENCE == "open":                    # the pre-registered EMA rule is about the open execution only
+            verdict = "adopt the conviction EMA" if bps(g) >= THRESHOLD_BPS else "the EMA item is closed"
+            print(f"\nopen-window headline {bps(g):+.1f} bps vs the pre-registered {THRESHOLD_BPS} bps -> {verdict}")
+        else:
+            print(f"\nclose-window headline {bps(g):+.1f} bps per dollar traded against the official close")
 
 
 if __name__ == "__main__":

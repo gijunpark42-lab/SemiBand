@@ -149,7 +149,8 @@ EXEC_MODE = "close"               # round 48 (2026-09-18): "close" = the afterno
                                   # in LABEL_SAME_CLOSE_FROM and in the task's start time
 CLOSE_ORDER_TYPE = "market"         # 2026-09-22: "market" = the close refresh's orders go through the marketable-limit / market path
                                   # with a CLOSE_CLEANUP_MIN clean-up, cut off at CLOSE_ORDER_CUTOFF; "moc" = market-on-close orders. On
-                                  # 09-22, 18 of 19 MOC orders expired unfilled on the Alpaca paper account, so paper uses "market"
+                                  # 09-22 the Alpaca paper account filled 1 of 19 MOC orders, 2 in part (ENTG 610/672, RLAY 3,141/3,888)
+                                  # and expired the other 16 with nothing, so paper uses "market"
 CLOSE_ORDER_CUTOFF = "15:55"       # ET: close mode with CLOSE_ORDER_TYPE "market" sends no order after this (+ the clean-up = before 16:00)
 CLOSE_CLEANUP_MIN = 3             # minutes the close-mode limit orders get before their remainders go out as market orders
 INSIDER_REFRESH_IN_CYCLE = False  # 2026-09-22: the cycle never fetches insider data (the nightly SemiBand-Insider task does); the

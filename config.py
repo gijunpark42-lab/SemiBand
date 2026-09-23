@@ -121,9 +121,9 @@ GRAPH_TRANSCRIPTS_ONLY = True     # the graph agents' point-in-time map skips SE
                                   # t +1.5, Sharpe 2.20 vs 2.11, max DD +0.8 pts, 5/6 blocks not worse). Live from the 09-18 cycle
 TECHNICAL_RESIDUAL = False        # round 40 candidate (2026-09-17, Blitz-Huij-Martens residual momentum): technical's rel20/rel60 subtract
                                   # beta x SOXX instead of SOXX (trailing 60-day pair beta, clipped to 0..3); False = plain relative return
-RESEARCH_TRIALS = 384             # audit 2026-09-17: floor for the deflated Sharpe's trial count: 221 sweep variants + ~70 hand-run;
+RESEARCH_TRIALS = 386             # audit 2026-09-17: floor for the deflated Sharpe's trial count: 221 sweep variants + ~70 hand-run;
                                   # 350 after rounds 44-45 (2026-09-17), 355 after 46, 366 after 47, 370 after 48, 378 after 49, 381 after 50,
-                                  # 384 after 51 (2026-09-18)
+                                  # 384 after 51 (2026-09-18), 386 after 52 (2026-09-23)
                                   # replays before round 39 + the trials of rounds 39-43. Raise it with every round's trial count
 MOMENTUM_TREND_GATE = False       # round 45 candidate: customer_momentum stays silent while SOXX is below its 50-day average (momentum
                                   # crashes come in rebounds after bear markets, Daniel & Moskowitz 2016)
@@ -159,6 +159,11 @@ LLM_ORDER = ("llm_news", "llm_guidance", "llm_supply")   # Claude-stage order: n
                                   # carried to another day, so it is the agent the deadline must not cut
 CARRY_FORWARD_AGENTS = ("llm_supply", "llm_guidance")   # 2026-09-22 (user): when a call fails or is skipped, reuse the name's
 CARRY_FORWARD_SESSIONS = 3        # last signal from the last N recorded sessions (slow-moving inputs); llm_news is never carried
+CONVICTION_EMA = 0.5              # round 52 (adopted 2026-09-23): the traded convictions are smoothed before demeaning, conv = a x today
+                                  # + (1 - a) x the previous cycle's smoothed value (state/conviction_ema.json; a name without one keeps
+                                  # its own; a previous value older than 7 days is ignored). At the measured 20 bps: 2024-26 +1016% / 2.24 /
+                                  # 28.7% against +770% / 1.94 / 28.6%, turnover 0.50 -> 0.32; 2019-23 +31% / 0.18 / 50.5% against -24% /
+                                  # -0.17 / 60.5%. None = off
 LLM_REUSE_AGENTS = ("llm_supply", "llm_guidance")   # 2026-09-22 (user): reuse a name's last answer while its prompt minus the price
                                   # line is unchanged (agents/llm_reuse.py); 164/176 supply reports were identical 09-18 -> 09-22
 LLM_REUSE_MAX_DAYS = 7            # calendar days an answer may be reused before the name is asked again anyway

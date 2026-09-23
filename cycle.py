@@ -21,7 +21,7 @@ import json
 import logging
 import sys
 import time
-from datetime import datetime
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 import broker
@@ -133,10 +133,37 @@ def run_agents(universe, ctx, model, held, use_llm):
     return signals
 
 
-def convict(signals, model, shadow_model, notes=None, groups=None):
+def smooth_convictions(convictions, today, notes=None):
+    """Round 52: conv = a x today + (1 - a) x the smoothed convictions of the last cycle date before `today`
+    (state/conviction_ema.json), as the replay's --conviction-ema. Today's result is stored under today, so a same-day re-run
+    (the close refresh) smooths against the same previous day. A name without a previous value keeps its own conviction; a
+    previous day more than 7 calendar days back is not used."""
+    a = config.CONVICTION_EMA
+    if not a or not 0 < a < 1 or not convictions:
+        return convictions
+    path = config.STATE_DIR / "conviction_ema.json"
+    try:
+        hist = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        hist = {}
+    earlier = sorted(d for d in hist if d < today)
+    prev_day = earlier[-1] if earlier and (date.fromisoformat(today) - date.fromisoformat(earlier[-1])).days <= 7 else None
+    prev = hist[prev_day] if prev_day else {}
+    out = {t: a * c + (1 - a) * prev.get(t, c) for t, c in convictions.items()}
+    hist[today] = out
+    path.write_text(json.dumps({d: hist[d] for d in sorted(hist)[-5:]}), encoding="utf-8")
+    if notes is not None:
+        notes.append(f"convictions smoothed (EMA {a}) with {prev_day}'s" if prev_day else f"conviction EMA {a}: no previous day, unsmoothed")
+    return out
+
+
+def convict(signals, model, shadow_model, notes=None, groups=None, today=None):
     """Convictions from the active model, its breakdown, and the shadow model's convictions (demeaned when configured;
-    groups = {ticker: group} demeans within DEMEAN_GROUP groups, round 39)."""
+    groups = {ticker: group} demeans within DEMEAN_GROUP groups, round 39). With `today`, the active convictions are
+    smoothed before demeaning (round 52, config.CONVICTION_EMA)."""
     convictions, breakdown = learner.predict(signals, model)
+    if today:
+        convictions = smooth_convictions(convictions, today, notes)
     shadow_convictions, _ = learner.predict(signals, shadow_model) if shadow_model else ({}, {})
     if config.DEMEAN_CONVICTION and convictions:
         convictions, means = learner.demean(convictions, groups, config.DEMEAN_GROUP_MIN)
@@ -319,7 +346,7 @@ def main():
     shadow_mode = "raw" if config.LEARNER_TARGET_MODE == "beta" else "beta"
     shadow_model = learner.load(shadow_mode)
     groups = graph_pit.groups(universe) if config.DEMEAN_CONVICTION and config.DEMEAN_GROUP else None
-    convictions, breakdown, shadow_convictions = convict(signals, model, shadow_model, notes, groups)
+    convictions, breakdown, shadow_convictions = convict(signals, model, shadow_model, notes, groups, today=today)
 
     # 240 minutes: the wait starts only after every agent has run, and a 03:30 PT start whose agents finish by 04:30 would
     # give up just before the 06:30 PT open with 120 (audit 2026-09-15; yesterday's run only traded after a relaunch)
@@ -339,7 +366,7 @@ def main():
     if config.OPEN_REFRESH_AGENTS:
         signals, live = open_refresh(universe, signals, today, prediction_betas, notes, at="15:30" if config.EXEC_MODE == "close" else "09:30")
         if live:
-            convictions, breakdown, shadow_convictions = convict(signals, model, shadow_model, groups=groups)
+            convictions, breakdown, shadow_convictions = convict(signals, model, shadow_model, groups=groups, today=today)
 
     acct = broker.account()          # fresh numbers at the open
     equity, cash = float(acct.equity), float(acct.cash)

@@ -159,6 +159,11 @@ LLM_ORDER = ("llm_news", "llm_guidance", "llm_supply")   # Claude-stage order: n
                                   # carried to another day, so it is the agent the deadline must not cut
 CARRY_FORWARD_AGENTS = ("llm_supply", "llm_guidance")   # 2026-09-22 (user): when a call fails or is skipped, reuse the name's
 CARRY_FORWARD_SESSIONS = 3        # last signal from the last N recorded sessions (slow-moving inputs); llm_news is never carried
+LLM_REUSE_AGENTS = ("llm_supply", "llm_guidance")   # 2026-09-22 (user): reuse a name's last answer while its prompt minus the price
+                                  # line is unchanged (agents/llm_reuse.py); 164/176 supply reports were identical 09-18 -> 09-22
+LLM_REUSE_MAX_DAYS = 7            # calendar days an answer may be reused before the name is asked again anyway
+LLM_REUSE_MOVE_PP = 10.0          # ask again once the 20-day move relative to SOXX shifted this many points since the answer
+                                  # (recent history: 10% of names after 1 session, 25% after 3, 34% after 5)
 CLOSE_REFRESH_TIME = "15:45"      # ET: close mode re-runs the refresh agents on the latest trades at this time (the open refresh, moved)
 MOC_CUTOFF = "15:48"              # ET: close mode sends no order after this (Alpaca refuses market-on-close orders from 15:50)
 LLM_STAGE_DEADLINE_CLOSE = "15:35"   # ET: the Claude stage's deadline in close mode (LLM_STAGE_DEADLINE is the open mode's 09:05)

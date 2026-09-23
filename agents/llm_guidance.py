@@ -13,7 +13,7 @@ from datetime import date
 
 import config
 import market
-from agents import llm
+from agents import llm, llm_reuse
 from agents.base import NOT_TRANSCRIPT, Signal
 from agents.supply_chain import _load, curated_metrics
 
@@ -52,7 +52,7 @@ def _own_signals(node):
     return rows[:MAX_SIGNALS]
 
 
-def _one(ticker, company, node, price_line):
+def _one(ticker, company, node, price_line, reuse=None):
     rows = _own_signals(node)
     if not rows:
         return None
@@ -75,14 +75,14 @@ def _one(ticker, company, node, price_line):
             f"Company's own recent earnings-call and conference statements, newest first:\n" + "\n".join(lines)
             + "\n\nTrading is commission-free but each order costs about 5 bps in slippage, and there is no obligation to trade: a direction near 0 with low confidence is a valid answer. Give your opinion as JSON.")
     try:
-        o = llm.ask_json(SYSTEM, user)
+        o, since = reuse.ask(ticker, SYSTEM, user, price_line) if reuse else (llm.ask_json(SYSTEM, user), None)
     except llm.StageDeadline:   # the cycle's Claude stage was cut: quiet, the stage log carries the count
         return None
     except Exception as exc:
         log.warning("%s %s: %s", NAME, ticker, exc)
         return None
-    return Signal(NAME, ticker, o["direction"], o["confidence"], int(o["horizon_days"]),
-                  str(o["reason"])[:200]).clipped()
+    reason = str(o["reason"]) if since is None else f"reused from {since} (same input): {o['reason']}"
+    return Signal(NAME, ticker, o["direction"], o["confidence"], int(o["horizon_days"]), reason[:200]).clipped()
 
 
 def run(universe: dict, ctx: dict) -> list[Signal]:
@@ -97,6 +97,10 @@ def run(universe: dict, ctx: dict) -> list[Signal]:
         return market.move_line(closes, t, live)
 
     jobs = [(t, c, by_id[c]) for t, c in universe.items() if c in by_id]
+    reuse = llm_reuse.Session(NAME, ctx.get("today") or date.today().isoformat()) if NAME in config.LLM_REUSE_AGENTS else None
     with ThreadPoolExecutor(max_workers=config.LLM_WORKERS) as pool:
-        results = list(pool.map(lambda j: _one(j[0], j[1], j[2], price_line(j[0])), jobs))
+        results = list(pool.map(lambda j: _one(j[0], j[1], j[2], price_line(j[0]), reuse), jobs))
+    if reuse:
+        reuse.save()
+        log.info("%s: %d answers reused (same input), %d asked", NAME, reuse.reused, len(reuse.updates))
     return [s for s in results if s]

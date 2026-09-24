@@ -35,9 +35,13 @@ def _market_caps(tickers):
     return caps
 
 
+def _allowed(mapping):
+    return {t: c for t, c in mapping.items() if t not in config.EXCLUDED_TICKERS}
+
+
 def refresh():
     config.STATE_DIR.mkdir(exist_ok=True)
-    mapping = _from_graph()
+    mapping = _allowed(_from_graph())
     ok = set(broker.tradable(list(mapping)))
     not_tradable = sorted(set(mapping) - ok)
     mapping = {t: c for t, c in mapping.items() if t in ok}
@@ -52,21 +56,23 @@ def refresh():
         "too_big": too_big,
         "not_tradable": not_tradable,
         "cap_unknown": sorted(t for t in mapping if caps.get(t) is None),
+        "excluded": sorted(config.EXCLUDED_TICKERS),
     }, indent=2), encoding="utf-8")
     return mapping
 
 
 def load():
-    """{ticker: company_name}; refreshed once per calendar day."""
+    """{ticker: company_name}; refreshed once per calendar day; config.EXCLUDED_TICKERS never in it (a cache written before
+    an exclusion is filtered too)."""
     if CACHE.exists():
         data = json.loads(CACHE.read_text(encoding="utf-8"))
         if data.get("date") == date.today().isoformat():
-            return data["tickers"]
+            return _allowed(data["tickers"])
     try:
         return refresh()
     except (OSError, ValueError) as exc:
         if CACHE.exists():
-            return json.loads(CACHE.read_text(encoding="utf-8"))["tickers"]
+            return _allowed(json.loads(CACHE.read_text(encoding="utf-8"))["tickers"])
         raise RuntimeError(f"cannot build the universe: {exc}") from exc
 
 

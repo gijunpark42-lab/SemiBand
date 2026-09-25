@@ -1923,6 +1923,21 @@ Average intraday path of the equal-weight universe (bps per session): 09:30→10
 
 **Decision rule.** Gate v4.1 at 20 bps against `_fa0`, then the 2019–23 confirmation against `_fb0` (paired ≥ 0, max DD ≤ base + 3 pts). Among the frequency candidates the least frequent that passes both is adopted (round 49's rule). The band candidate is adopted only if it passes both and either no frequency candidate passes or its 2024–26 paired difference is larger (one change). If nothing passes, daily trading stays. Sortino reported for information. Expected: every-2 between 0 and +1 bp/d (the EMA already removed most churn), every-3 negative, band 0.5 about 0. Trials: 3 (+ confirmations); `RESEARCH_TRIALS` → 391.
 
+### Round 54 results (2026-09-25 03:15 PT, VM, code 02f5237, 20 bps, live configuration): nothing passes; daily trading stays
+
+| Window | Run | Return / Sharpe / Sortino / max DD | Turnover | vs daily paired (t, NW) | Blocks ≥ 0 | Gate |
+|---|---|---|---|---|---|---|
+| 2024–26 (470 d) | `_fa0` daily | +1194% / 2.34 / 3.77 / 27.7% | 0.32 | — | — | base |
+| 2024–26 | `_fa1` every 2 sessions | +1262% / 2.38 / 3.83 / 29.4% | 0.27 | +1.2 bp/d (+0.49, +0.50) | 2/6 [−5.9, −4.3, −0.7, +8.7, −3.8, +2.0] | FAIL |
+| 2024–26 | `_fa2` every 3 sessions | +1158% / 2.24 / 3.54 / 30.5% | 0.23 | −0.1 bp/d (−0.03, −0.03) | 1/6 | FAIL |
+| 2024–26 | `_fa3` resize band 0.5 | +1101% / 2.36 / 3.83 / 25.5% | 0.30 | −2.1 bp/d (−1.14, −0.99) | 2/6 | FAIL |
+| 2019–23 (information) | `_fb0` daily | +30% / 0.17 / 0.24 / 52.7% | 0.28 | — | — | base |
+| 2019–23 | `_fb1` every 2 | +21% / 0.12 / 0.17 / 52.6% | 0.23 | −0.6 bp/d (−0.48) | 2/6 | — |
+| 2019–23 | `_fb2` every 3 | +87% / 0.39 / 0.56 / 46.6% | 0.20 | +3.3 bp/d (+1.70, +2.12) | 6/6 | — |
+| 2019–23 | `_fb3` band 0.5 | +24% / 0.15 / 0.21 / 48.0% | 0.26 | −0.6 bp/d (−0.73) | 3/6 | — |
+
+**Reading and decision.** No candidate passes the 2024–26 gate, so none is adopted and the 2019–23 runs are information only. Every-2 is ahead in total (+1.2 bp/d, Sharpe +0.04) but behind in four of six blocks; every-3 is flat in 2024–26 and clearly ahead in 2019–23 (+3.3 bp/d, 6/6, drawdown −6 points) — the two windows disagree, which is what a turnover–signal-decay trade-off near break-even looks like at this cost. With the conviction EMA already taking turnover from 0.50 to 0.32, trading less often adds nothing robust. **Daily trading stays, with daily inference.** Trials: 3; `RESEARCH_TRIALS` 391. (The `_fa1` report was fetched after a VM restart: the first download dropped it.)
+
 **Earnings-ai update (information, 0 trials).** The user refreshed the earnings-ai project overnight (graph generated 2026-09-25 00:57; the IR pipeline still had 7 files pending): 379 companies (Intel Foundry folded into Intel, Naver Cloud renamed Naver), 22 edges replaced, 14 companies with +85 statement rows (Coherent, CoreWeave, Corning, Intel, Lumentum, Marvell, Microchip, Synopsys, …). The US-listed public set is unchanged (177 → 177), so the trading universe stays 175 names. The 09-25 cycle snapshots and uses the new graph; the answer-reuse cache re-asks Claude only for the names whose report or statements changed. This round pins the 09-22 snapshot so it compares with round 53.
 
 ## 2026-09-25 00:50 PT — round 53, pre-registered before any result (user: "급격히 떨어진 수익률 모델이나 문제 있는지 체크 … 니가 알아서 전부 싹다 향상시켜줘"): the beta floor re-tested under the live configuration, and a train-equals-serve warm start

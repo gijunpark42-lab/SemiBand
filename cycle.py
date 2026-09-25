@@ -1,6 +1,8 @@
-"""One daily cycle of the self-weighting ensemble. Scheduled at 05:50 PT on
-trading days (Task Scheduler "SemiBand-Cycle"): signals are computed before
-the open, orders go out right after 09:30 ET. Safe to run by hand with --dry-run.
+"""One daily cycle of the self-weighting ensemble. Scheduled at 10:00 PT on
+weekdays (Task Scheduler "SemiBand-Cycle"). Close mode (config.EXEC_MODE, live since
+2026-09-21): signals during the session, the price agents refreshed 15 min before
+the close, orders before the close (after hours if the cycle started too late);
+open mode: orders right after 09:30 ET. Safe to run by hand with --dry-run.
 
     python cycle.py                 the real thing (waits for the open, sends paper orders)
     python cycle.py --dry-run       no orders, no waiting; still writes predictions + dashboard
@@ -541,7 +543,7 @@ def main():
         journal.record(t, o["side"], reason + (f" | {slices} slices over {(slices - 1) * config.EXECUTION_INTERVAL_MIN} min" if slices > 1 else ""),
                        last_close.get(t), notional=size, dry_run=dry)
         ledger.add_order(today, t, o["side"], size, reason, coid, dry)
-        est_cost = round((size or 0.0) * config.COST_BPS / 10_000, 2)
+        est_cost = round((size or 0.0) * config.LIVE_COST_BPS / 10_000, 2)
         done.append({"ticker": t, "side": o["side"], "notional": size, "reason": reason, "est_cost_usd": est_cost})
     if not dry and done and close_mode and not moc and not after_hours:  # 2026-09-22: before the moderator's Claude calls (8 min on
         log.info("close mode: waiting %d min for limit fills before the market cleanup", config.CLOSE_CLEANUP_MIN)   # 09-22), so the
@@ -582,7 +584,7 @@ def main():
 
     if done:
         notes.append(f"estimated trading cost this cycle ${sum(d['est_cost_usd'] for d in done):,.0f} "
-                     f"({config.COST_BPS} bps per order; commission $0)")
+                     f"({config.LIVE_COST_BPS} bps per dollar traded, the measured live cost; commission $0)")
     ledger.add_cycle(today, equity, cash, len(positions), len(done), "; ".join(notes))
     ranked = sorted(convictions.items(), key=lambda kv: -kv[1])       # best longs first: with demeaned convictions about half are
                                                                        # negative, and |conv| would rank the most-avoided names on top
@@ -604,7 +606,7 @@ def main():
                      f"size = conviction x {config.SIZE_PER_CONVICTION:.0%} of equity (so weak convictions stay small and cash is fine), "
                      f"cap {config.MAX_POSITION_PCT:.0%} of equity, {config.GROSS_TARGET:.0%} gross, within buying power; "
                      f"held names resized only when the target moves > {config.REBALANCE_BAND:.0%}; "
-                     f"cost assumed {config.COST_BPS} bps per order"),
+                     f"cost {config.LIVE_COST_BPS} bps per dollar traded (measured live)"),
         })
     if decisions and not args.no_llm:
         moderator.run([d for d in decisions if d["ticker"] in universe])   # minutes per traded stock; the idle sleeve has no agent debate

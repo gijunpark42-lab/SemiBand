@@ -205,7 +205,11 @@ MIN_ORDER_USD = 250               # ignore rebalancing dust below this
 REBALANCE_BAND = 0.30             # only resize a held name when the target moved by more than 30% of it (sweep: same Sharpe, less churn)
 
 # --- trading costs (Alpaca: $0 commission on US stocks; sells pay tiny SEC/FINRA fees; market orders pay the spread) ---
-COST_BPS = 5                      # assumed round-trip cost per order in basis points (slippage + fees), used for the ledger and shown to agents
+COST_BPS = 5                      # cost per dollar traded, ONE-WAY, in bps (the replay charges it on sum |dw|; the dashboard estimate uses
+                                  # it). Measured live 2026-09-10..24: +17.9 bps (open and close windows), so rounds are decided at
+                                  # --cost-bps 20 since round 52; this default stays 5 so older reports remain comparable
+LIVE_COST_BPS = 18                # the measured live cost per dollar traded (slippage.py, 397 open/close-window fills, 09-10..24),
+                                  # used for the dashboard's per-cycle cost estimate
 
 PROGRESS_UPLOAD = "final"         # backtest/sweep progress to the Blob store: 'always' (live website view, costs Blob writes + reads),
                                   # 'final' (only the finished result; watch runs locally with watch_backtest.cmd), 'never'

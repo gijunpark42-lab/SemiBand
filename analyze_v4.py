@@ -41,6 +41,13 @@ def stats(t, days):
     return float(eq[-1] - 1), logs.mean() / (logs.std() or 1e-9) * math.sqrt(252), float((1 - eq / np.maximum.accumulate(eq)).max())
 
 
+def sortino(t, days):
+    """Information only (the gate reads the Sharpe): mean log return over the downside deviation below 0, annualised."""
+    logs = np.log1p(np.array([curves[t][d]["ret"] for d in days]))
+    down = math.sqrt(float(np.mean(np.minimum(logs, 0.0) ** 2)))
+    return logs.mean() / down * math.sqrt(252) if down > 0 else float("nan")
+
+
 def nw_t(x, lags=10):
     """Newey-West t of the mean (Bartlett weights): two variants of one book hold the same names for days, so the daily
     differences are autocorrelated and the iid t is too large (audit 2026-09-17)."""
@@ -69,7 +76,7 @@ print(f"{len(dates)} common days {dates[0]}..{dates[-1]} | {BLOCKS} blocks of ~{
 for t in tags:
     r, s, dd = stats(t, dates)
     nm, gr, tu = book(t, dates)
-    print(f"{t:5} full: return {r:+.0%} Sharpe {s:.2f} maxDD {dd:.1%} names {nm:.1f} gross {gr:.2f} turnover {tu:.2f} | ic {reps[t].get('ic_10d', {}).get('learned')}")
+    print(f"{t:5} full: return {r:+.0%} Sharpe {s:.2f} Sortino {sortino(t, dates):.2f} maxDD {dd:.1%} names {nm:.1f} gross {gr:.2f} turnover {tu:.2f} | ic {reps[t].get('ic_10d', {}).get('learned')}")
 s0, dd0 = stats(base, dates)[1], stats(base, dates)[2]
 for t in tags[1:]:
     s, dd = stats(t, dates)[1], stats(t, dates)[2]

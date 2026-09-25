@@ -1,12 +1,12 @@
 """Thin wrapper over the Alpaca trading API. Honors config.DRY_RUN."""
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import AssetClass, AssetStatus, OrderSide, QueryOrderStatus, TimeInForce
 from alpaca.data.historical import StockHistoricalDataClient
-from alpaca.data.requests import StockLatestQuoteRequest
-from alpaca.trading.requests import GetAssetsRequest, GetOrdersRequest, LimitOrderRequest, MarketOrderRequest
+from alpaca.data.requests import StockLatestQuoteRequest, StockLatestTradeRequest
+from alpaca.trading.requests import GetAssetsRequest, GetCalendarRequest, GetOrdersRequest, LimitOrderRequest, MarketOrderRequest
 
 import config
 
@@ -138,9 +138,8 @@ def hedge_to(symbol, target_notional, client_order_id=None, dry_run=None):
         bid, ask, _ = quote(symbol)
         price = (bid + ask) / 2 if bid and ask else None
     if price is None:
-        try:
-            price = float(_client.get_latest_trade(symbol).price)   # last resort
-        except Exception:
+        price = latest_trade(symbol)                                # last resort
+        if price is None:
             log.warning("hedge %s: no price, skipped", symbol)
             return 0
     target_qty = -int(target_notional / price) if target_notional > 0 else 0
@@ -157,14 +156,52 @@ def hedge_to(symbol, target_notional, client_order_id=None, dry_run=None):
     return int(delta)
 
 
+def latest_trade(symbol):
+    """The latest trade price from the data client (2026-09-24: this used to call the trading client, which has no
+    get_latest_trade, so every fallback returned None); None if unavailable."""
+    try:
+        return float(_data.get_stock_latest_trade(StockLatestTradeRequest(symbol_or_symbols=symbol))[symbol].price)
+    except Exception as exc:
+        log.warning("latest trade %s: %s", symbol, exc)
+        return None
+
+
 def _last_price(symbol):
     bid, ask, _ = quote(symbol)
     if bid and ask:
         return (bid + ask) / 2
-    try:
-        return float(_client.get_latest_trade(symbol).price)
-    except Exception:
+    return latest_trade(symbol)
+
+
+def session_close(day):
+    """The regular session's close on `day` (ISO date) as a naive ET datetime from Alpaca's calendar (16:00, 13:00 on half
+    days); None when the market does not open that day (2026-09-24: close mode had no holiday guard, and a DAY order sent
+    on a holiday waits for the next open)."""
+    d = date.fromisoformat(day)
+    cal = _client.get_calendar(GetCalendarRequest(start=d, end=d))
+    return cal[0].close if cal else None
+
+
+def extended_limit(symbol, side, notional=None, qty=None, client_order_id=None, dry_run=None, collar=0.02):
+    """An extended-hours order (after the close, until the extended session ends): whole shares, DAY, extended_hours, limit at
+    the latest trade +/- `collar` (the free IEX feed has no after-hours quotes), so it is marketable unless the price runs
+    away; unfilled shares expire with the session. `qty` = shares (a full exit, the fraction is left), else `notional` $."""
+    if _dry(dry_run):
+        log.info("DRY_RUN %s %s extended-hours limit (%s)", side.name, symbol, f"{qty} shares" if qty is not None else f"${notional:.2f}")
         return None
+    last = latest_trade(symbol)
+    if not last:
+        log.warning("extended-hours %s %s: no price, skipped", side.name, symbol)
+        return None
+    limit = round(last * (1 + collar) if side == OrderSide.BUY else last * (1 - collar), 2)
+    shares = int(qty) if qty is not None else int(notional / limit)
+    if shares < 1:
+        log.info("extended-hours %s %s: under one share, skipped", side.name, symbol)
+        return None
+    order = _client.submit_order(LimitOrderRequest(symbol=symbol, qty=shares, side=side, time_in_force=TimeInForce.DAY,
+                                                   limit_price=limit, extended_hours=True, client_order_id=client_order_id))
+    log.info("%s %s %d shares EXTENDED-HOURS LIMIT %.2f (last %.2f, order %s)", side.name, symbol, shares, limit, last, order.id)
+    return order
 
 
 def moc(symbol, notional, side, client_order_id=None, dry_run=None):

@@ -31,6 +31,13 @@ def sharpe(rets):
     return float(np.mean(rets) / (np.std(rets) or 1e-9) * ANN) if len(rets) > 1 else 0.0
 
 
+def sortino(rets):
+    """Annualised Sortino of daily (log) returns: the mean over the downside deviation below 0 (user 2026-09-24)."""
+    rets = np.asarray(rets, dtype=float)
+    down = float(np.sqrt(np.mean(np.minimum(rets, 0.0) ** 2))) if len(rets) > 1 else 0.0
+    return float(np.mean(rets) / down * ANN) if down > 0 else 0.0
+
+
 def block_bootstrap_ci(rets, block=10, n=2000, seed=0):
     """95% CI of the annualised Sharpe from resampled blocks of daily returns."""
     rets = np.asarray(rets, dtype=float)
@@ -167,6 +174,7 @@ def summary(curve, n_trials=None, trial_sharpes=None):
         n_trials = max(n_trials, int(getattr(config, "RESEARCH_TRIALS", 0) or 0))   # hand-run rounds count too (audit 2026-09-17)
     return {
         "sharpe": round(sharpe(rets), 2),
+        "sortino": round(sortino(rets), 2),
         "sharpe_ci95": block_bootstrap_ci(rets),
         "deflated": deflated_sharpe(rets, max(n_trials, 1), trial_sharpes),
         "calendar": calendar(curve),

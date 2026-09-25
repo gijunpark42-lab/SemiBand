@@ -156,6 +156,10 @@ CLOSE_ORDER_TYPE = "market"         # 2026-09-22: "market" = the close refresh's
                                   # and expired the other 16 with nothing, so paper uses "market"
 CLOSE_ORDER_CUTOFF = "15:55"       # ET: close mode with CLOSE_ORDER_TYPE "market" sends no order after this (+ the clean-up = before 16:00)
 CLOSE_CLEANUP_MIN = 3             # minutes the close-mode limit orders get before their remainders go out as market orders
+AFTER_HOURS_CATCHUP = True        # 2026-09-24 (user: "며칠 타이밍 놓쳤더니 작살났거든"): a close-mode cycle that starts too late for the
+                                  # close window (the PC woke late) trades in the extended session with whole-share limit orders at the
+                                  # latest trade +/- 2%, until 30 min before that session ends; the 09-22 after-hours fills cost ~24 bps.
+                                  # Holidays (no session in Alpaca's calendar) never trade; half days use their 13:00 close
 INSIDER_REFRESH_IN_CYCLE = False  # 2026-09-22: the cycle never fetches insider data (the nightly SemiBand-Insider task does); the
                                   # in-cycle refresh ran 1,316 s against its 300 s budget and delayed the voting Claude agents
 LLM_ORDER = ("llm_news", "llm_guidance", "llm_supply")   # Claude-stage order: news first, because a headline signal cannot be

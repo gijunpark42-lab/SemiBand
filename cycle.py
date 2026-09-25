@@ -21,7 +21,7 @@ import json
 import logging
 import sys
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import broker
@@ -72,6 +72,25 @@ def wait_until_et(hhmm, cutoff, today):
         log.info("close mode: waiting until %s ET for the close refresh", hhmm)
         time.sleep((target - now).total_seconds())
     return True
+
+
+def close_times(close_at):
+    """(refresh, cutoff, prints_after) ET clock times for close mode, set before the session's close (a naive ET datetime:
+    16:00, or 13:00 on half days) at the distances CLOSE_REFRESH_TIME, the order cutoff and 15:30 keep before 16:00."""
+    def before_close(hhmm):
+        h, m = map(int, hhmm.split(":"))
+        return (close_at - timedelta(minutes=16 * 60 - (h * 60 + m))).strftime("%H:%M")
+    cutoff = config.MOC_CUTOFF if config.CLOSE_ORDER_TYPE == "moc" else config.CLOSE_ORDER_CUTOFF
+    return before_close(config.CLOSE_REFRESH_TIME), before_close(cutoff), before_close("15:30")
+
+
+def extended_session_open(close_at):
+    """2026-09-24: a cycle that missed the close window (the PC woke late) catches up in the extended session, until 30
+    minutes before that session ends (4 h after the close: 20:00 ET, 17:00 on half days)."""
+    if not config.AFTER_HOURS_CATCHUP:
+        return False
+    now = pd.Timestamp.now(tz="America/New_York").tz_localize(None)
+    return now < pd.Timestamp(close_at) + pd.Timedelta(hours=3, minutes=30)
 
 
 def _run_agent(name, universe, ctx):
@@ -254,6 +273,27 @@ def reason_line(conv, per_agent):
     return " | ".join(parts)
 
 
+def keep_running():
+    """2026-09-24: on battery with the lid closed the laptop still went into Modern Standby 10:07-11:50 PT and the cycle froze.
+    Best effort on top of SetThreadExecutionState: a power request of types SystemRequired and ExecutionRequired (the
+    latter keeps this process from being suspended in standby). Held until the process exits; a closed lid on battery can
+    still win, which only a charger and the AC lid setting fix."""
+    import ctypes
+
+    class Reason(ctypes.Structure):     # REASON_CONTEXT, simple string
+        _fields_ = [("Version", ctypes.c_ulong), ("Flags", ctypes.c_ulong), ("SimpleReasonString", ctypes.c_wchar_p)]
+
+    k32 = ctypes.windll.kernel32
+    k32.PowerCreateRequest.restype = ctypes.c_void_p
+    k32.PowerCreateRequest.argtypes = [ctypes.POINTER(Reason)]
+    k32.PowerSetRequest.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    handle = k32.PowerCreateRequest(ctypes.byref(Reason(0, 1, "SemiBand cycle")))
+    if handle and handle != ctypes.c_void_p(-1).value:
+        for kind in (1, 3):             # PowerRequestSystemRequired, PowerRequestExecutionRequired
+            k32.PowerSetRequest(handle, kind)
+    return handle
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--dry-run", action="store_true")
@@ -277,6 +317,7 @@ def main():
     if sys.platform == "win32":         # 2026-09-22: the PC idled to sleep 11:37-11:55 PT mid-cycle; no idle sleep until this process
         import ctypes                   # exits (ES_CONTINUOUS | ES_SYSTEM_REQUIRED). A closed lid still sleeps the PC
         ctypes.windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)
+        keep_running()
 
     # Signals are computed before the open (yesterday's closes, today's news and
     # fundamentals are all available); the wait for the open happens right
@@ -350,13 +391,25 @@ def main():
 
     # 240 minutes: the wait starts only after every agent has run, and a 03:30 PT start whose agents finish by 04:30 would
     # give up just before the 06:30 PT open with 120 (audit 2026-09-15; yesterday's run only traded after a relaunch)
+    after_hours = False
+    prints_after = "15:30" if config.EXEC_MODE == "close" else "09:30"
     if not dry and config.EXEC_MODE == "close":                        # round 48: the close refresh window instead of the open
-        cutoff = config.MOC_CUTOFF if config.CLOSE_ORDER_TYPE == "moc" else config.CLOSE_ORDER_CUTOFF
-        if not wait_until_et(config.CLOSE_REFRESH_TIME, cutoff, today):
-            log.info("close mode: past %s ET — predictions recorded, no orders", cutoff)
+        close_at = broker.session_close(today)
+        if close_at is None:                                            # 2026-09-24: holidays (a DAY order would wait for the next open)
+            log.info("close mode: the market does not open today — predictions recorded, no orders")
             journal.publish_dashboard({"date": today, "weights": weights, "history": _previous_history(),
-                                       "notes": notes + [f"close mode: past {cutoff} ET, predictions recorded, no orders"]})
+                                       "notes": notes + ["market closed today: predictions recorded, no orders"]})
             return 0
+        refresh_at, cutoff, prints_after = close_times(close_at)        # 15:45 / 15:55 ET; 12:45 / 12:55 on half days
+        if not wait_until_et(refresh_at, cutoff, today):
+            if not extended_session_open(close_at):
+                log.info("close mode: past %s ET — predictions recorded, no orders", cutoff)
+                journal.publish_dashboard({"date": today, "weights": weights, "history": _previous_history(),
+                                           "notes": notes + [f"close mode: past {cutoff} ET, predictions recorded, no orders"]})
+                return 0
+            after_hours = True                                          # 2026-09-24: the PC woke late (09-21, 09-23); catch up
+            log.info("close mode: past %s ET — catching up in the extended session with limit orders", cutoff)
+            notes.append(f"close mode: past {cutoff} ET, caught up in the extended session (limit orders, whole shares)")
     elif not dry and not wait_for_open(max_minutes=240):
         log.info("market did not open (holiday?) — predictions recorded, no orders")
         journal.publish_dashboard({"date": today, "weights": weights, "history": _previous_history(),
@@ -364,7 +417,7 @@ def main():
         return 0
 
     if config.OPEN_REFRESH_AGENTS:
-        signals, live = open_refresh(universe, signals, today, prediction_betas, notes, at="15:30" if config.EXEC_MODE == "close" else "09:30")
+        signals, live = open_refresh(universe, signals, today, prediction_betas, notes, at=prints_after)
         if live:
             convictions, breakdown, shadow_convictions = convict(signals, model, shadow_model, groups=groups, today=today)
 
@@ -438,7 +491,7 @@ def main():
     # (first slice now, the rest every EXECUTION_INTERVAL_MIN minutes after the
     # dashboard is published) so we do not pay the whole opening spread at once.
     close_mode = config.EXEC_MODE == "close"                            # round 48: one slice at the close refresh
-    moc = close_mode and config.CLOSE_ORDER_TYPE == "moc"               # 2026-09-22: paper fills MOC unreliably -> "market"
+    moc = close_mode and config.CLOSE_ORDER_TYPE == "moc" and not after_hours   # 2026-09-22: paper fills MOC unreliably -> "market"
     slices = 1 if (dry or close_mode) else max(1, config.EXECUTION_SLICES)
     done, later = [], []
     sleeve_sell_failed = False
@@ -452,7 +505,18 @@ def main():
         reason = reason_line(convictions.get(t, 0.0), breakdown.get(t, {})) + f" | {o['tag']}"
         coid = f"{config.ORDER_PREFIX}{today}-{t}-{o['side'].lower()}"
         try:
-            if o["side"] == "BUY":
+            if after_hours:                                             # 2026-09-24: extended session, whole-share limits only
+                full = o["notional"] is None
+                if full and t not in positions:
+                    continue
+                if o["side"] == "BUY" and done and not any(d["side"] == "BUY" for d in done):
+                    time.sleep(20)                                      # the buys are sized on the sells' proceeds: let them fill
+                broker.extended_limit(t, broker.OrderSide.BUY if o["side"] == "BUY" else broker.OrderSide.SELL,
+                                      notional=None if full else round(o["notional"], 2),
+                                      qty=float(positions[t].qty) if full else None, client_order_id=coid + "-ah", dry_run=dry)
+                size = float(positions[t].market_value) if full else o["notional"]
+                reason += " | extended-hours catch-up"
+            elif o["side"] == "BUY":
                 if moc:
                     broker.moc(t, round(o["notional"] / slices, 2), broker.OrderSide.BUY, coid + "-1", dry_run=dry)
                 else:
@@ -479,7 +543,7 @@ def main():
         ledger.add_order(today, t, o["side"], size, reason, coid, dry)
         est_cost = round((size or 0.0) * config.COST_BPS / 10_000, 2)
         done.append({"ticker": t, "side": o["side"], "notional": size, "reason": reason, "est_cost_usd": est_cost})
-    if not dry and done and close_mode and not moc:                     # 2026-09-22: before the moderator's Claude calls (8 min on
+    if not dry and done and close_mode and not moc and not after_hours:  # 2026-09-22: before the moderator's Claude calls (8 min on
         log.info("close mode: waiting %d min for limit fills before the market cleanup", config.CLOSE_CLEANUP_MIN)   # 09-22), so the
         time.sleep(config.CLOSE_CLEANUP_MIN * 60)                       # remainders go out as market orders before the 16:00 bell
         n = broker.cleanup_open_orders(config.ORDER_PREFIX, dry_run=dry)

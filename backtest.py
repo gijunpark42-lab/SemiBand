@@ -646,6 +646,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info, shadow_mods
             "universe_names_priced": len(ew), "missing_return_name_days": missing_ret,
             "ann_vol": round(float(np.std(rets) * math.sqrt(252)), 4),
             "sharpe": round(float(np.mean(rets) / (np.std(rets) or 1e-9) * math.sqrt(252)), 2),
+            "sortino": round(robustness.sortino(rets), 2),
             "max_drawdown": round(float(dd.max()), 4),
             "avg_gross": round(float(np.mean([c["gross"] for c in curve])), 3),
             "avg_names": round(float(np.mean([c["n"] for c in curve])), 1),

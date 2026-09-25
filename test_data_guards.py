@@ -37,9 +37,9 @@ class ClosesCache(unittest.TestCase):
         second = pd.concat({"Close": pd.DataFrame({"SOXX": np.arange(10.0) + 500}, index=idx)}, axis=1)
         with tempfile.TemporaryDirectory() as tmp, patch.object(config, "STATE_DIR", Path(tmp)), \
                 patch.object(market.yf, "download", side_effect=[first, second]) as download:
-            a = market.closes(["NVDA", "SOXX"])
-            self.assertTrue(a["SOXX"].isna().all())
-            b = market.closes(["NVDA", "SOXX"])
+            a = market.closes(["NVDA", "SOXX"], lookback_days=20)         # a window the ten cached days cover (2026-09-25:
+            self.assertTrue(a["SOXX"].isna().all())                        # a cache shorter than the request is refetched whole)
+            b = market.closes(["NVDA", "SOXX"], lookback_days=20)
             self.assertEqual(download.call_count, 2)                       # the empty SOXX column was fetched again
             self.assertEqual(download.call_args_list[1].args[0], ["SOXX"])
             self.assertEqual(float(b["SOXX"].iloc[-1]), 509.0)

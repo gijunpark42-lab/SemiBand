@@ -29,11 +29,16 @@ def closes(symbols, lookback_days=config.LOOKBACK_DAYS, cache=True) -> pd.DataFr
         if old != cache:
             old.unlink(missing_ok=True)
     cached = pickle.loads(cache.read_bytes()) if cache.exists() else None
+    start = date.today() - timedelta(days=lookback_days)
+    if cached is not None and len(cached) and cached.index[0] > pd.Timestamp(start) + pd.Timedelta(days=10):
+        # 2026-09-25: a diagnostic called this with lookback 200 first, and the cycle would have read its 139 rows (no
+        # 200-day trend: the beta floor off, the 200-day technicals on the 50-day fallback). A short cache is refetched.
+        log.warning("closes: today's cache starts %s, after the requested %s: refetching", cached.index[0].date(), start)
+        cached = None
     # a symbol whose download failed comes back as an all-NaN column: treat it as missing so the next call retries
     missing = symbols if cached is None else [s for s in symbols if s not in cached.columns or cached[s].isna().all()]
     if not missing:
         return cached[symbols].dropna(how="all")
-    start = date.today() - timedelta(days=lookback_days)
     raw = yf.download(missing, start=start.isoformat(), auto_adjust=True, progress=False, threads=True)
     df = raw["Close"] if isinstance(raw.columns, pd.MultiIndex) else raw[["Close"]].rename(columns={"Close": missing[0]})
     df = df.dropna(how="all")

@@ -39,6 +39,13 @@ class Key(unittest.TestCase):
         with patch.object(config, "LLM_MODEL", "another-model"):
             self.assertNotEqual(k, llm_reuse.key(SYSTEM, prompt(price(8.0)), price(8.0)))
 
+    def test_the_daily_age_counter_is_not_part_of_the_key(self):
+        a = prompt(price(8.0), "Newest data point: 2026-09-21 (6 days old)")
+        b = prompt(price(8.0), "Newest data point: 2026-09-21 (7 days old)")
+        c = prompt(price(8.0), "Newest data point: 2026-09-28 (0 days old)")     # new data: a new date asks again
+        self.assertEqual(llm_reuse.key(SYSTEM, a, price(8.0)), llm_reuse.key(SYSTEM, b, price(8.0)))
+        self.assertNotEqual(llm_reuse.key(SYSTEM, a, price(8.0)), llm_reuse.key(SYSTEM, c, price(8.0)))
+
     def test_relative_reads_the_live_move_line(self):
         idx = pd.bdate_range("2026-06-01", periods=40)
         closes = pd.DataFrame({"NVDA": np.linspace(100, 130, 40), "SOXX": np.linspace(400, 420, 40)}, index=idx)

@@ -18,6 +18,7 @@ import config
 from agents import llm
 
 _RELATIVE = re.compile(r"\(relative ([+-]?\d+(?:\.\d+)?)%\)")
+_AGE = re.compile(r"\(\d+ days? old\)")      # the supply report's "Newest data point: <date> (N days old)" counts up daily
 
 
 def path():
@@ -25,7 +26,9 @@ def path():
 
 
 def key(system, user, price_line):
-    text = "\n".join([str(config.LLM_MODEL), str(config.LLM_EFFORT), system, user.replace(price_line, "")])
+    """2026-09-28: the age counter is left out of the key (it changed every day, so llm_supply reused nothing on 09-25 and
+    09-28); the newest data point's date stays in, so new data still asks again, and LLM_REUSE_MAX_DAYS bounds staleness."""
+    text = "\n".join([str(config.LLM_MODEL), str(config.LLM_EFFORT), system, _AGE.sub("", user.replace(price_line, ""))])
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:20]
 
 

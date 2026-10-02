@@ -1923,6 +1923,16 @@ Average intraday path of the equal-weight universe (bps per session): 09:30→10
 
 **Decision rule.** Gate v4.1 at 20 bps against `_ga0`, then the 2019–23 confirmation (paired ≥ 0, max DD ≤ base + 3 pts). If both candidates pass, the larger 2024–26 paired difference is adopted. Realised beta to SOXX and up-capture are reported for information (the user's underlying aim is up-capture). If neither passes, the book stays as is. Expected: `_ga1` negative (round 39), `_ga2` small cost with higher beta. Trials: 2 (+ confirmations); `RESEARCH_TRIALS` → 393.
 
+### Round 55 results (2026-10-01 21:40 PT, VM, code d41f53e, 20 bps, live configuration, 189 names, snapshot 2026-10-01): both fail; the book is not split by sector
+
+| Run | Return / Sharpe / Sortino / max DD | Beta / up-capture / down-capture | vs baseline paired (t, NW) | Blocks ≥ 0 | Gate |
+|---|---|---|---|---|---|
+| `_ga0` baseline | +827% / 2.09 / 3.41 / 28.3% | 0.98 / 1.80 / −0.29 | — | — | base |
+| `_ga1` sector-neutral demeaning | +272% / 1.30 / 2.00 / 29.9% | 1.00 / 1.19 / +0.20 | **−20.2 bp/d (−3.46, −3.15)** | 2/6 [+1.7, +1.2, −30.5, −5.3, −27.8, −24.1] | FAIL |
+| `_ga2` at most 3 names per sector | +629% / 1.88 / 3.02 / 31.0% | 1.02 / 1.65 / −0.14 | −5.2 bp/d (−1.65, −1.89) | 2/6 | FAIL |
+
+**Reading and decision.** Forcing the book across sectors destroys most of its edge: within-sector ranking loses 20 bp/d (t −3.5) and takes up-capture from 1.80 to 1.19; the sector cap loses 5 bp/d with 2.7 more points of drawdown. Neither raises beta (the replay's book already sits near 1.0). The learner's value is in choosing *which* sector to hold at a given time, and a sector split takes that choice away — the same finding as rounds 39 (two groups, −11 bp/d) and 47 (semiconductor-only universe, −5.3 bp/d), now with twelve sectors. **Nothing adopted; the sector code stays in place switched off.** The 2019–23 runs were not needed by the rule and the VM was stopped before they finished. Note: the baseline on the 189-name universe and the 10-01 snapshot (+827% / 2.09) is below round 54's on 175 names and the 09-22 snapshot (+1194% / 2.34): the fourteen names the earnings-ai refresh added, and the refreshed graph, lower the replay — a candidate for a later diagnostic (which names). Trials: 2; `RESEARCH_TRIALS` 393.
+
 ## 2026-09-25 01:50 PT — round 54, pre-registered before any result (user: "추론을 매일 하는 건 맞는 것 같은데 거래를 매일 하는 게 맞을까? … 니가 알아서 다 해줘"): daily inference, less frequent trading, under the live configuration
 
 **Why.** Rounds 49 and 52 asked the frequency question without the conviction EMA: at 20 bps every-2 was cost-neutral (round 52 `_t1` +0.3 bp/d, Sharpe −0.01) and the EMA won instead. The EMA has been live since 09-24 (replay turnover 0.50 → 0.32; live 09-24 about 15% of equity). The question now: with the ranking already smoothed every day, does trading only every 2 or 3 sessions, or resizing held names only on larger moves, save more than it costs? Inference stays daily in every run: the learner fits and the EMA updates each session, only the orders change.

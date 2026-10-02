@@ -45,6 +45,8 @@ class PointInTimeMap:
             self.signals[n["id"]] = rows
         self.full_cap = full_cap   # company -> date flagged
         self.chains = {n["id"]: set(n.get("chains") or []) for n in graph["nodes"]}
+        self.layers = {n["id"]: list(n.get("layers") or []) for n in graph["nodes"]}   # round 55: the primary layer first
+        self.sector_tags = {n["id"]: list(n.get("sectors") or []) for n in graph["nodes"]}
         self.signals_chain = {}    # company -> [(date, text, chain)]
         for n in graph["nodes"]:
             rows = []
@@ -139,3 +141,32 @@ def groups_from(pit, universe):
 
 def groups(universe):
     return groups_from(pit_map(), universe)
+
+
+SECTOR_OF_LAYER = {   # round 55 (user: "섹터별로 나눈 담에 투자시킬까? 광학/메모리/네오클라우드…"): the graph's 13 layers in 9 sectors
+    "compute_hardware": "compute", "memory": "memory", "interconnect": "networking_optical", "equipment": "equipment",
+    "foundry": "foundry_packaging", "advanced_packaging": "foundry_packaging", "cloud_infra": "cloud",
+    "system_integration": "systems", "software_infra": "software_apps", "application": "software_apps",
+    "ai_models": "software_apps", "materials": "materials", "minerals": "materials"}
+
+
+_BIO = re.compile(r"pharma|drug|omics|biolog|genom|clinical|therapeut", re.I)
+
+
+def sectors_from(pit, universe):
+    """{ticker: sector}: "power" for the power-only names (as group_of); "biopharma" for the AI-drug-discovery and pharma names;
+    else the primary graph layer's sector; names without a layer (mostly power semiconductors) -> "power_semis"."""
+    out = {}
+    for t, company in universe.items():
+        layers = pit.layers.get(company) or []
+        if group_of(pit.chains.get(company)) == "power":
+            out[t] = "power"
+        elif any(_BIO.search(s) for s in pit.sector_tags.get(company) or []):
+            out[t] = "biopharma"
+        else:
+            out[t] = SECTOR_OF_LAYER.get(layers[0], "power_semis") if layers else "power_semis"
+    return out
+
+
+def sectors(universe):
+    return sectors_from(pit_map(), universe)

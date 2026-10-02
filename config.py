@@ -117,8 +117,10 @@ DEMEAN_CONVICTION = True          # subtract the day's cross-sectional mean conv
                                   # the ridge's implicit level is a trailing-mean bias with no forecast power; demeaned 500-day replay +1110% vs
                                   # +1157% (inside noise), Sharpe 2.25 vs 2.23, max DD 24.7% vs 29.5%. Adopted 2026-09-16 (afternoon run + 09-17 cycle)
 DEMEAN_GROUP = None               # round 39 candidate (2026-09-16): "chain" = demean within two graph groups: power = names whose only chain
-                                  # tag is power_cooling, chip = everything else. None = one cross-sectional mean
+                                  # tag is power_cooling, chip = everything else; "sector" (round 55) = within graph_pit.sectors. None = one mean
 DEMEAN_GROUP_MIN = 5              # a group with fewer names than this uses the whole mean
+SECTOR_MAX_NAMES = None           # round 55 candidate: at most this many names per graph sector (graph_pit.sectors: power, networking/
+                                  # optical, memory, compute, cloud, equipment, foundry/packaging, …) in the top TOP_N; None = off
 GRAPH_TRANSCRIPTS_ONLY = True     # the graph agents' point-in-time map skips SEC-filing rows (10-K/10-Q/8-K/20-F/6-K/40-F, third-party
                                   # notes), as the Claude agents do since 09-13. Adopted 2026-09-17 (round 41, protocol v4 on the VM: +2.3 bp/d,
                                   # t +1.5, Sharpe 2.20 vs 2.11, max DD +0.8 pts, 5/6 blocks not worse). Live from the 09-18 cycle

@@ -402,7 +402,10 @@ def main():
         REUSE_MARKER.unlink(missing_ok=True)
     shadow_mode = "raw" if config.LEARNER_TARGET_MODE == "beta" else "beta"
     shadow_model = learner.load(shadow_mode)
-    groups = graph_pit.groups(universe) if config.DEMEAN_CONVICTION and config.DEMEAN_GROUP else None
+    groups = None
+    if config.DEMEAN_CONVICTION and config.DEMEAN_GROUP:
+        groups = graph_pit.sectors(universe) if config.DEMEAN_GROUP == "sector" else graph_pit.groups(universe)   # round 55 / 39
+    sector_map = graph_pit.sectors(universe) if config.SECTOR_MAX_NAMES else None   # round 55: names per sector capped
     convictions, breakdown, shadow_convictions = convict(signals, model, shadow_model, notes, groups, today=today)
 
     # 240 minutes: the wait starts only after every agent has run, and a 03:30 PT start whose agents finish by 04:30 would
@@ -457,7 +460,7 @@ def main():
         scaled = realized > config.VOL_TARGET
         notes.append(f"realised vol {realized:.0%} ({config.VOL_LOOKBACK_DAYS}d) vs target {config.VOL_TARGET:.0%}: "
                      + (f"book scaled x{config.VOL_TARGET / realized:.2f}" if scaled else "no scaling"))
-    target_usd = portfolio.targets(convictions_for_sizing, equity, realized_vol=realized)
+    target_usd = portfolio.targets(convictions_for_sizing, equity, realized_vol=realized, groups=sector_map)
     floor_usd = 0.0
     if config.BETA_FLOOR:                                                  # round 47: trend-gated beta floor through the sleeve ETF
         target_usd, floor_usd, why = portfolio.apply_beta_floor(target_usd, prediction_betas, equity, closes, realized)

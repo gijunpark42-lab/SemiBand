@@ -9,7 +9,7 @@ broker's buying power and by the gross ceiling, never beyond either.
 import config
 
 
-def targets(convictions, equity, realized_vol=None):
+def targets(convictions, equity, realized_vol=None, groups=None):
     """{ticker: target USD}.
 
     Each name is sized by its own conviction (conviction x SIZE_PER_CONVICTION of
@@ -17,9 +17,21 @@ def targets(convictions, equity, realized_vol=None):
     cash stays a position. GROSS_TARGET is a ceiling, not a goal: if the sized
     book exceeds it, everything is scaled down proportionally.
     realized_vol: the book's trailing annualised vol (None = unknown); when it exceeds
-    config.VOL_TARGET the whole book is scaled down by VOL_TARGET / realized_vol."""
-    longs = sorted(((t, c) for t, c in convictions.items() if c >= config.MIN_CONVICTION),
-                   key=lambda tc: -tc[1])[:config.TOP_N]
+    config.VOL_TARGET the whole book is scaled down by VOL_TARGET / realized_vol.
+    groups: {ticker: sector}; with config.SECTOR_MAX_NAMES set, at most that many names per sector (round 55)."""
+    ranked = sorted(((t, c) for t, c in convictions.items() if c >= config.MIN_CONVICTION), key=lambda tc: -tc[1])
+    cap = config.SECTOR_MAX_NAMES if groups else None
+    if cap:
+        taken, longs = {}, []
+        for t, c in ranked:
+            g = groups.get(t, "?")
+            if taken.get(g, 0) < cap:
+                taken[g] = taken.get(g, 0) + 1
+                longs.append((t, c))
+            if len(longs) == config.TOP_N:
+                break
+    else:
+        longs = ranked[:config.TOP_N]
     if not longs:
         return {}
     weights = {t: min(c * config.SIZE_PER_CONVICTION, config.MAX_POSITION_PCT) for t, c in longs}

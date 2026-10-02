@@ -1,6 +1,7 @@
 """Thin wrapper over the Alpaca trading API. Honors config.DRY_RUN."""
 import logging
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import AssetClass, AssetStatus, OrderSide, QueryOrderStatus, TimeInForce
@@ -116,9 +117,10 @@ def cleanup_open_orders(prefix, dry_run=None):
             continue
         try:
             _client.cancel_order_by_id(o.id)
-            remaining = float(o.qty or 0) - float(o.filled_qty or 0)
+            # exact: round(remaining, 4) could exceed the shares held (09-30: 567.1017 asked, 567.101695397 held, refused)
+            remaining = float(Decimal(str(o.qty or 0)) - Decimal(str(o.filled_qty or 0)))
             if remaining > 0:
-                _client.submit_order(MarketOrderRequest(symbol=o.symbol, qty=round(remaining, 4), side=o.side,
+                _client.submit_order(MarketOrderRequest(symbol=o.symbol, qty=remaining, side=o.side,
                                                         time_in_force=TimeInForce.DAY,
                                                         client_order_id=(o.client_order_id + "-mkt")[:48]))
                 log.info("cleanup: %s %s remaining %.4f sent as MARKET", o.side.name, o.symbol, remaining)

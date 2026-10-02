@@ -64,16 +64,30 @@ def wait_for_open(max_minutes=45):
 
 
 def wait_until_et(hhmm, cutoff, today):
-    """Close mode (round 48): sleep until `hhmm` ET on `today`; False when `cutoff` ET has already passed (no order may go out)."""
+    """Close mode (round 48): sleep until `hhmm` ET on `today`; False when `cutoff` ET has passed (no order may go out).
+    2026-10-01: waits in steps of at most a minute and re-reads the clock after each, so a PC that slept through the window
+    (09-30: one 76-minute sleep returned at 21:14 PT and the orders went out at 00:14 ET) sees the cutoff on waking."""
     target = pd.Timestamp(f"{today} {hhmm}", tz="America/New_York")
     last = pd.Timestamp(f"{today} {cutoff}", tz="America/New_York")
-    now = pd.Timestamp.now(tz="America/New_York")
-    if now >= last:
-        return False
-    if now < target:
-        log.info("close mode: waiting until %s ET for the close refresh", hhmm)
-        time.sleep((target - now).total_seconds())
-    return True
+    logged = False
+    while True:
+        now = pd.Timestamp.now(tz="America/New_York")
+        if now >= last:
+            return False
+        if now >= target:
+            return True
+        if not logged:
+            log.info("close mode: waiting until %s ET for the close refresh", hhmm)
+            logged = True
+        time.sleep(min(60.0, (target - now).total_seconds()))
+
+
+def window_still_open(window_end):
+    """2026-10-01: checked right before the orders go out. window_end = the ET time after which no order may be sent (close
+    mode: the cutoff, or the end of the extended-hours catch-up); None = open mode, where the market itself must be open."""
+    if window_end is None:
+        return bool(broker.clock().is_open)
+    return pd.Timestamp.now(tz="America/New_York") < window_end
 
 
 def close_times(close_at):
@@ -394,6 +408,7 @@ def main():
     # 240 minutes: the wait starts only after every agent has run, and a 03:30 PT start whose agents finish by 04:30 would
     # give up just before the 06:30 PT open with 120 (audit 2026-09-15; yesterday's run only traded after a relaunch)
     after_hours = False
+    window_end = None                                                   # the last moment an order may go out (None: the open)
     prints_after = "15:30" if config.EXEC_MODE == "close" else "09:30"
     if not dry and config.EXEC_MODE == "close":                        # round 48: the close refresh window instead of the open
         close_at = broker.session_close(today)
@@ -403,6 +418,7 @@ def main():
                                        "notes": notes + ["market closed today: predictions recorded, no orders"]})
             return 0
         refresh_at, cutoff, prints_after = close_times(close_at)        # 15:45 / 15:55 ET; 12:45 / 12:55 on half days
+        window_end = pd.Timestamp(f"{today} {cutoff}", tz="America/New_York")
         if not wait_until_et(refresh_at, cutoff, today):
             if not extended_session_open(close_at):
                 log.info("close mode: past %s ET — predictions recorded, no orders", cutoff)
@@ -410,6 +426,7 @@ def main():
                                            "notes": notes + [f"close mode: past {cutoff} ET, predictions recorded, no orders"]})
                 return 0
             after_hours = True                                          # 2026-09-24: the PC woke late (09-21, 09-23); catch up
+            window_end = pd.Timestamp(close_at).tz_localize("America/New_York") + pd.Timedelta(hours=3, minutes=30)
             log.info("close mode: past %s ET — catching up in the extended session with limit orders", cutoff)
             notes.append(f"close mode: past {cutoff} ET, caught up in the extended session (limit orders, whole shares)")
     elif not dry and not wait_for_open(max_minutes=240):
@@ -488,6 +505,10 @@ def main():
                   + [o for o in orders if o["side"] == "BUY"] + [o for o in sleeve_orders if o["side"] == "BUY"])
     log.info("equity $%.0f cash $%.0f buying power $%.0f positions %d targets %d orders %d",
              equity, cash, buying_power, len(positions), len(target_usd), len(orders))
+    if not dry and orders and not window_still_open(window_end):         # 2026-10-01: the last check before anything is sent
+        log.warning("order window closed before the orders went out (%d orders dropped)", len(orders))
+        notes.append(f"order window closed before the orders went out: {len(orders)} orders not sent")
+        orders = []
 
     # Execution: exits in full now; buys and trims spread over EXECUTION_SLICES slices
     # (first slice now, the rest every EXECUTION_INTERVAL_MIN minutes after the

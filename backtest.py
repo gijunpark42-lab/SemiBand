@@ -183,7 +183,8 @@ def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mod
         margin_rate=0.0, gross_target=None, beta_floor=None, vol_target=None, vol_target_mode=None, shadow=(),
         drift=True, earnings_shift=0, momentum_gate=None, momentum_vol_scale=None, conviction_ema=None,
         momentum_intraday=None, prior_strength=None, events_pre_leg=None, momentum_conf=None, chain_cap=None, exclude_group=None,
-        rebalance_every=None, cost_bps=None, conviction_zscore=None, rebalance_band=None, sector_max=None):
+        rebalance_every=None, cost_bps=None, conviction_zscore=None, rebalance_band=None, sector_max=None, top_n=None,
+        min_conviction=None):
     """tag: suffix for the output files (state/backtest<tag>.sqlite / backtest_report<tag>.json)
     so a long build can run while sweeps read the default files.
     exec_mode: 'close' = trade at the close the signals were computed on (optimistic);
@@ -237,12 +238,16 @@ def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mod
                 "prior_strength": prior_strength,
                 "events_pre_leg": bool(config.EVENTS_PRE_LEG) if events_pre_leg is None else bool(events_pre_leg),          # round 47
                 "momentum_conf": momentum_conf, "chain_cap": chain_cap, "exclude_group": exclude_group,
-                "rebalance_every": int(rebalance_every or 1), "cost_bps": cost_bps, "rebalance_band": rebalance_band, "sector_max": sector_max,                                          # round 49
+                "rebalance_every": int(rebalance_every or 1), "cost_bps": cost_bps, "rebalance_band": rebalance_band, "sector_max": sector_max, "top_n": top_n, "min_conviction": min_conviction,                                          # round 49
                 "conviction_zscore": conviction_zscore,                                                                     # round 51
                 "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     publish_progress(dict(run_info, status="loading", pct=0.0, message="downloading prices and earnings"))
     saved = (config.AGENTS, config.TECHNICAL_RESIDUAL, config.GROSS_TARGET, config.VOL_TARGET, config.COST_BPS, config.REBALANCE_BAND,
-             config.SECTOR_MAX_NAMES)
+             config.SECTOR_MAX_NAMES, config.TOP_N, config.MIN_CONVICTION)
+    if top_n is not None:
+        config.TOP_N = int(top_n)                                        # round 56: sensitivity scan (information only)
+    if min_conviction is not None:
+        config.MIN_CONVICTION = float(min_conviction)                    # round 56: sensitivity scan (information only)
     if sector_max is not None:
         config.SECTOR_MAX_NAMES = int(sector_max)                         # round 55: at most this many names per sector
     if cost_bps is not None:
@@ -256,7 +261,7 @@ def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mod
         raise
     finally:                                                          # a run that dies mid-way leaves no mutated globals behind
         (config.AGENTS, config.TECHNICAL_RESIDUAL, config.GROSS_TARGET, config.VOL_TARGET, config.COST_BPS, config.REBALANCE_BAND,
-         config.SECTOR_MAX_NAMES) = saved
+         config.SECTOR_MAX_NAMES, config.TOP_N, config.MIN_CONVICTION) = saved
         indicators.PRECOMPUTED = {}
 
 
@@ -638,7 +643,8 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info, shadow_mods
         "momentum_intraday": run_info.get("momentum_intraday"), "prior_strength": run_info.get("prior_strength"),   # round 46
         "events_pre_leg": run_info.get("events_pre_leg"), "momentum_conf": run_info.get("momentum_conf"),                  # round 47
         "chain_cap": run_info.get("chain_cap"), "exclude_group": run_info.get("exclude_group"),
-        "rebalance_every": run_info.get("rebalance_every"), "cost_bps": run_info.get("cost_bps"), "rebalance_band": run_info.get("rebalance_band"), "sector_max": run_info.get("sector_max"),                            # round 49
+        "rebalance_every": run_info.get("rebalance_every"), "cost_bps": run_info.get("cost_bps"), "rebalance_band": run_info.get("rebalance_band"), "sector_max": run_info.get("sector_max"), "top_n": run_info.get("top_n"),
+        "min_conviction": run_info.get("min_conviction"),                            # round 49
         "conviction_zscore": run_info.get("conviction_zscore"),                                                              # round 51
         "sizing": {"size": config.SIZE_PER_CONVICTION, "cap": config.MAX_POSITION_PCT, "gross": config.GROSS_TARGET,
                    "long_short": run_info.get("long_short"),
@@ -749,6 +755,8 @@ if __name__ == "__main__":
     p.add_argument("--exclude-group", default=None, help="round 47: drop a graph group from the universe, e.g. power (semiconductor-only book)")
     p.add_argument("--rebalance-every", type=int, default=None, help="round 49: trade only every N sessions (the book drifts between), e.g. 2 or 5")
     p.add_argument("--cost-bps", type=float, default=None, help="round 49: cost per dollar traded for this run, e.g. 20 (default config.COST_BPS)")
+    p.add_argument("--top-n", type=int, default=None, help="round 56: override TOP_N for this run (sensitivity scan)")
+    p.add_argument("--min-conviction", type=float, default=None, help="round 56: override MIN_CONVICTION for this run (sensitivity scan)")
     p.add_argument("--sector-max", type=int, default=None, help="round 55: at most this many names per graph sector in the top TOP_N")
     p.add_argument("--rebalance-band", type=float, default=None, help="round 54: resize a held name only when its target moved by more than this share (default config.REBALANCE_BAND 0.30)")
     p.add_argument("--conviction-zscore", type=float, default=None, help="round 51: rescale the day's convictions to this cross-sectional std before sizing, e.g. 0.08")
@@ -797,5 +805,5 @@ if __name__ == "__main__":
             momentum_intraday=args.momentum_intraday, prior_strength=args.prior_strength,
             events_pre_leg=args.events_pre_leg, momentum_conf=args.momentum_conf, chain_cap=args.chain_cap, exclude_group=args.exclude_group,
             rebalance_every=args.rebalance_every, cost_bps=args.cost_bps, conviction_zscore=args.conviction_zscore,
-            rebalance_band=args.rebalance_band, sector_max=args.sector_max)
+            rebalance_band=args.rebalance_band, sector_max=args.sector_max, top_n=args.top_n, min_conviction=args.min_conviction)
     print(json.dumps({k: v for k, v in r.items() if k != "curve"}, indent=2)[:4000])

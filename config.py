@@ -101,6 +101,8 @@ LEARNER_HALF_LIFE_DAYS = 90       # time decay of scored rows (sweep 2026-09-10:
 LEARNER_PRIOR_STRENGTH = 150.0    # lambda when walk-forward CV cannot run yet
 LEARNER_LAMBDA_GRID = (150.0,)    # fixed: walk-forward CV kept picking 1000 (too timid); sweep: fixed 150 -> Sharpe 2.2-2.3 vs 1.7
 LEARNER_TARGET_MODE = "beta"       # active paper model; original raw labels and comparison model remain available
+BETA_ESTIMATOR = "ols60"          # beta to SOXX for the label, the floor and the ledger: "ols60" (60-day OLS) or "vasicek250" (round 57
+                                  # candidate: 250-day OLS shrunk toward the cross-sectional mean, Levi & Welch 2017)
 # (Hedge below is kept only as a dashboard reference)
 HEDGE_ETA = 0.5                   # step size: w_i *= exp(eta * gain_i)
 WEIGHT_FLOOR = 0.02               # no agent is ever silenced completely (11 agents -> 22% floor mass)

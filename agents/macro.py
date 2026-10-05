@@ -12,6 +12,7 @@ import math
 import pandas as pd
 
 import config
+import learning_targets
 import market
 from agents.base import Signal, clip
 
@@ -73,8 +74,22 @@ def run(universe: dict, ctx: dict) -> list[Signal]:
     r, why = regime(closes, live=ctx.get("asof") is None)   # a replay passes asof: no today-dated inputs there
     hist, asof = ctx.get("hist"), ctx.get("asof_ts")   # backtest fast path: precomputed (name, SOXX) return pairs
     bench_ret = closes[config.BENCHMARK].pct_change() if hist is None else None
+    shared = None
+    if getattr(config, "BETA_ESTIMATOR", "ols60") == "vasicek250":   # round 57: the label's beta, not a separate 60-day one
+        shared = ctx.get("betas")
+        if shared is None:
+            shared = learning_targets.rolling_beta(closes)
     out = []
     for ticker in universe:
+        if shared is not None:
+            if ticker not in shared.columns:
+                continue
+            beta = learning_targets.beta_at(shared, ticker, asof if asof is not None else shared.index[-1])
+            direction = math.tanh(r * (beta - 1.0) * 1.5 + r * 0.3)
+            confidence = clip(0.3 + 0.3 * abs(r), 0.3, 0.6)
+            out.append(Signal(NAME, ticker, direction, confidence, 10,
+                              f"regime {r:+.2f} ({why}); beta {beta:.2f} vs {config.BENCHMARK} (shrunk 250-day)").clipped())
+            continue
         if hist is not None:
             h = hist.get(ticker)
             if h is None or "pair" not in h:

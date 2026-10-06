@@ -34,6 +34,7 @@ import learner
 import ledger
 import learning_targets
 import liquidate
+import manifest
 import market
 import paper_twins
 import portfolio
@@ -699,6 +700,10 @@ def main():
         n = broker.cleanup_open_orders(config.ORDER_PREFIX, dry_run=dry)
         if n:
             notes.append(f"{n} limit remainders converted to market")
+    try:                                # 2026-10-06: what this decision used, and whether any past forecast was altered
+        manifest.write(today, universe, closes, done, llm.MODELS_SEEN, dry_run=dry)
+    except Exception as exc:
+        log.warning("manifest not written: %s", exc)
     log.info("done: %d orders; top: %s", len(done),
              ", ".join(f"{t} {c:+.2f}" for t, c in ranked[:8]))
     return 0

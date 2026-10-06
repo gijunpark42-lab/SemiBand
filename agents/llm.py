@@ -21,6 +21,7 @@ DEADLINE = None                # aware datetime; after it ask_json refuses new c
 TIMINGS = []                   # end-to-end seconds (queue wait + the call, timeouts included) since the last timing_summary()
 SKIPPED = 0                    # calls refused by the deadline since the last timing_summary()
 STAGE_SKIPPED = 0              # calls refused since the cycle reset it at the start of its Claude stage (dashboard note)
+MODELS_SEEN = set()            # 2026-10-06: the serving configurations the server reported (system_fingerprint: model id/effort)
 _LOCK = threading.Lock()
 
 
@@ -141,5 +142,7 @@ def ask_json(system, user, schema=OPINION_SCHEMA, model=None, timeout=None, tool
                 data = json.load(r)
     finally:
         TIMINGS.append(time.time() - t0)
+    with _LOCK:
+        MODELS_SEEN.add(str(data.get("system_fingerprint") or data.get("model") or "?"))
     content = data["choices"][0]["message"]["content"]
     return json.loads(content)

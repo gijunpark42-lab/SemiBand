@@ -121,6 +121,8 @@ DEMEAN_CONVICTION = True          # subtract the day's cross-sectional mean conv
 DEMEAN_GROUP = None               # round 39 candidate (2026-09-16): "chain" = demean within two graph groups: power = names whose only chain
                                   # tag is power_cooling, chip = everything else; "sector" (round 55) = within graph_pit.sectors. None = one mean
 DEMEAN_GROUP_MIN = 5              # a group with fewer names than this uses the whole mean
+MIN_HISTORY_DAYS = None           # round 58 candidate: a name needs this many sessions of price history to be bought (None = off)
+MIN_PRICE = None                  # round 58 candidate: a name below this last price is not bought (None = off)
 SECTOR_MAX_NAMES = None           # round 55 candidate: at most this many names per graph sector (graph_pit.sectors: power, networking/
                                   # optical, memory, compute, cloud, equipment, foundry/packaging, …) in the top TOP_N; None = off
 GRAPH_TRANSCRIPTS_ONLY = True     # the graph agents' point-in-time map skips SEC-filing rows (10-K/10-Q/8-K/20-F/6-K/40-F, third-party

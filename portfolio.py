@@ -9,6 +9,15 @@ broker's buying power and by the gross ceiling, never beyond either.
 import config
 
 
+def buyable(convictions, history_days, last_price, min_history=None, min_price=None):
+    """Round 58: drop names with fewer than `min_history` sessions of price history or a last price under `min_price` (both as of
+    the date; None = no rule). history_days / last_price: {ticker: value}; a name missing from them is dropped when a rule is on."""
+    if not min_history and not min_price:
+        return convictions
+    return {t: c for t, c in convictions.items()
+            if (not min_history or history_days.get(t, 0) >= min_history) and (not min_price or (last_price.get(t) or 0.0) >= min_price)}
+
+
 def targets(convictions, equity, realized_vol=None, groups=None):
     """{ticker: target USD}.
 

@@ -198,7 +198,7 @@ def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mod
         drift=True, earnings_shift=0, momentum_gate=None, momentum_vol_scale=None, conviction_ema=None,
         momentum_intraday=None, prior_strength=None, events_pre_leg=None, momentum_conf=None, chain_cap=None, exclude_group=None,
         rebalance_every=None, cost_bps=None, conviction_zscore=None, rebalance_band=None, sector_max=None, top_n=None,
-        min_conviction=None, beta_estimator=None, null_seed=None, null_rho=None):
+        min_conviction=None, beta_estimator=None, null_seed=None, null_rho=None, min_history=None, min_price=None):
     """tag: suffix for the output files (state/backtest<tag>.sqlite / backtest_report<tag>.json)
     so a long build can run while sweeps read the default files.
     exec_mode: 'close' = trade at the close the signals were computed on (optimistic);
@@ -253,7 +253,7 @@ def run(days=250, refit_every=1, warmup=30, tag="", extra=(), cap=None, exec_mod
                 "events_pre_leg": bool(config.EVENTS_PRE_LEG) if events_pre_leg is None else bool(events_pre_leg),          # round 47
                 "momentum_conf": momentum_conf, "chain_cap": chain_cap, "exclude_group": exclude_group,
                 "rebalance_every": int(rebalance_every or 1), "cost_bps": cost_bps, "rebalance_band": rebalance_band, "sector_max": sector_max, "top_n": top_n, "min_conviction": min_conviction, "beta_estimator": beta_estimator, "null_seed": null_seed,
-                "null_rho": null_rho,                                          # round 49
+                "null_rho": null_rho, "min_history": min_history, "min_price": min_price,                                          # round 49
                 "conviction_zscore": conviction_zscore,                                                                     # round 51
                 "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     publish_progress(dict(run_info, status="loading", pct=0.0, message="downloading prices and earnings"))
@@ -353,6 +353,7 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info, shadow_mods
 
     # numpy views of the price frames: the day loop reads single cells thousands of times (same float64 values as .iloc)
     C = closes.to_numpy(dtype=float)
+    HC = np.cumsum(~np.isnan(C), axis=0)                                   # round 58: sessions of price history to date
     col = {tk: j for j, tk in enumerate(closes.columns)}
     B = C[:, col[config.BENCHMARK]]
     P = px.to_numpy(dtype=float) if px is not closes else C
@@ -536,7 +537,12 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info, shadow_mods
             scale = min(1.0, config.VOL_TARGET / realized) if (config.VOL_TARGET and realized and realized > config.VOL_TARGET) else 1.0
             w = long_short_weights(traded, prediction_betas, long_short, config.GROSS_TARGET * scale)
         else:
-            targets = portfolio.targets(traded, config.CAPITAL, realized_vol=realized, groups=sector_map)   # dollars, as live
+            sizing = traded
+            if run_info.get("min_history") or run_info.get("min_price"):   # round 58: seasoned, non-penny names only
+                sizing = portfolio.buyable(traded, {tk: int(HC[i, col[tk]]) for tk in traded if tk in col},
+                                           {tk: float(C[i, col[tk]]) for tk in traded if tk in col and not np.isnan(C[i, col[tk]])},
+                                           run_info.get("min_history"), run_info.get("min_price"))
+            targets = portfolio.targets(sizing, config.CAPITAL, realized_vol=realized, groups=sector_map)   # dollars, as live
             w = {tk: v / config.CAPITAL for tk, v in targets.items()}   # -> weights
             if run_info.get("chain_cap"):                                   # round 47: the power group's share of equity capped
                 w = portfolio.chain_cap(w, cap_groups, "power", float(run_info["chain_cap"]))
@@ -668,7 +674,8 @@ def _run(days, refit_every, warmup, extra_mods, exec_mode, run_info, shadow_mods
         "chain_cap": run_info.get("chain_cap"), "exclude_group": run_info.get("exclude_group"),
         "rebalance_every": run_info.get("rebalance_every"), "cost_bps": run_info.get("cost_bps"), "rebalance_band": run_info.get("rebalance_band"), "sector_max": run_info.get("sector_max"), "top_n": run_info.get("top_n"),
         "min_conviction": run_info.get("min_conviction"), "beta_estimator": run_info.get("beta_estimator"),
-        "null_seed": run_info.get("null_seed"), "null_rho": run_info.get("null_rho"),                            # round 49
+        "null_seed": run_info.get("null_seed"), "null_rho": run_info.get("null_rho"), "min_history": run_info.get("min_history"),
+        "min_price": run_info.get("min_price"),                            # round 49
         "conviction_zscore": run_info.get("conviction_zscore"),                                                              # round 51
         "sizing": {"size": config.SIZE_PER_CONVICTION, "cap": config.MAX_POSITION_PCT, "gross": config.GROSS_TARGET,
                    "long_short": run_info.get("long_short"),
@@ -779,6 +786,8 @@ if __name__ == "__main__":
     p.add_argument("--exclude-group", default=None, help="round 47: drop a graph group from the universe, e.g. power (semiconductor-only book)")
     p.add_argument("--rebalance-every", type=int, default=None, help="round 49: trade only every N sessions (the book drifts between), e.g. 2 or 5")
     p.add_argument("--cost-bps", type=float, default=None, help="round 49: cost per dollar traded for this run, e.g. 20 (default config.COST_BPS)")
+    p.add_argument("--min-history", type=int, default=None, help="round 58: buy only names with this many sessions of price history")
+    p.add_argument("--min-price", type=float, default=None, help="round 58: buy only names whose last close is at least this")
     p.add_argument("--beta-estimator", choices=("ols60", "vasicek250"), default=None, help="round 57: the beta for the label, the floor and macro")
     p.add_argument("--null-seed", type=int, default=None, help="round 57: replace convictions by a persistent random score (constrained-random null)")
     p.add_argument("--null-rho", type=float, default=None, help="round 57: the null score's day-to-day persistence (default 0.90)")
@@ -833,5 +842,6 @@ if __name__ == "__main__":
             events_pre_leg=args.events_pre_leg, momentum_conf=args.momentum_conf, chain_cap=args.chain_cap, exclude_group=args.exclude_group,
             rebalance_every=args.rebalance_every, cost_bps=args.cost_bps, conviction_zscore=args.conviction_zscore,
             rebalance_band=args.rebalance_band, sector_max=args.sector_max, top_n=args.top_n, min_conviction=args.min_conviction,
-            beta_estimator=args.beta_estimator, null_seed=args.null_seed, null_rho=args.null_rho)
+            beta_estimator=args.beta_estimator, null_seed=args.null_seed, null_rho=args.null_rho, min_history=args.min_history,
+            min_price=args.min_price)
     print(json.dumps({k: v for k, v in r.items() if k != "curve"}, indent=2)[:4000])

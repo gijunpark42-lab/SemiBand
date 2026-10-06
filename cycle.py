@@ -457,6 +457,12 @@ def main():
     else:
         convictions_for_sizing = convictions
         shadow_for_sizing = shadow_convictions
+    if config.MIN_HISTORY_DAYS or config.MIN_PRICE:                     # round 58: seasoned, non-penny names only
+        history = {t: int(closes[t].notna().sum()) for t in convictions_for_sizing if t in closes.columns}
+        before = len(convictions_for_sizing)
+        convictions_for_sizing = portfolio.buyable(convictions_for_sizing, history, last_close, config.MIN_HISTORY_DAYS, config.MIN_PRICE)
+        if before > len(convictions_for_sizing):
+            notes.append(f"{before - len(convictions_for_sizing)} names not buyable (under {config.MIN_HISTORY_DAYS} sessions or ${config.MIN_PRICE})")
     realized = broker.realized_vol(config.VOL_LOOKBACK_DAYS) if config.VOL_TARGET else None
     if realized is not None:
         scaled = realized > config.VOL_TARGET

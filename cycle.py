@@ -34,6 +34,7 @@ import learner
 import ledger
 import learning_targets
 import liquidate
+import live_scorecard
 import manifest
 import market
 import paper_twins
@@ -704,6 +705,11 @@ def main():
         manifest.write(today, universe, closes, done, llm.MODELS_SEEN, dry_run=dry)
     except Exception as exc:
         log.warning("manifest not written: %s", exc)
+    if not dry:
+        try:                            # 2026-10-06: the live record against SOXX for the strategy freeze's evaluation
+            live_scorecard.main()
+        except Exception as exc:
+            log.warning("scorecard not written: %s", exc)
     log.info("done: %d orders; top: %s", len(done),
              ", ".join(f"{t} {c:+.2f}" for t, c in ranked[:8]))
     return 0

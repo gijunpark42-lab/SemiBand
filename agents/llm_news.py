@@ -21,12 +21,14 @@ SYSTEM = (
     "guidance, large contract, regulatory action, capacity or pricing news). Name the source of anything material."
 )
 
+HEADLINES = 24   # 2026-10-26 (user: read more): was market.headlines' default 12; Finnhub is one request per name either way
+
 FOOTER = ("Trading is commission-free but each order costs about 5 bps in slippage, and there is no obligation "
           "to trade: a direction near 0 with low confidence is a valid answer. Give your opinion as JSON.")
 
 
 def _one(ticker, company, search=False):
-    items = market.headlines(ticker)
+    items = market.headlines(ticker, limit=HEADLINES)
     lines = "\n".join(f"- [{i['when'] or '?'}] {i['title']} ({i['publisher'] or '?'})" for i in items) \
         or "(none from the feeds)"
     extra = ""

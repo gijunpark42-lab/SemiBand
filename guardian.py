@@ -123,7 +123,7 @@ def main():
                 f"unrealized {float(pos.unrealized_plpc) * 100:+.1f}%.\nNew headlines since the last check:\n{lines}\n\n"
                 "Judge as JSON.")
         try:
-            v = llm.ask_json(SYSTEM, user, schema=SCHEMA)
+            v = llm.ask_json(SYSTEM, user, schema=SCHEMA, effort=config.LLM_EFFORT_FINAL)
         except Exception as exc:
             log.warning("%s: %s", ticker, exc)
             continue

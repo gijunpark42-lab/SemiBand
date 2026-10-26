@@ -24,7 +24,7 @@ class GuidanceWindow(unittest.TestCase):
                                   "Meta Q1 FY2026 (04-29-2026)"])
 
     def test_window_is_capped_at_max_signals(self):
-        node = {"quarterly_data": [_row(f"Meta Q1 FY{2000 + i} (01-01-{2000 + i})", f"s{i}") for i in range(20)]}
+        node = {"quarterly_data": [_row(f"Meta Q1 FY{2000 + i} (01-01-{2000 + i})", f"s{i}") for i in range(llm_guidance.MAX_SIGNALS + 8)]}
         self.assertEqual(len(llm_guidance._own_signals(node)), llm_guidance.MAX_SIGNALS)
 
 

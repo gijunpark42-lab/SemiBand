@@ -56,7 +56,7 @@ def _one(decision):
         "Write the minutes as JSON."
     )
     try:
-        return llm.ask_json(SYSTEM, user, schema=MINUTES_SCHEMA)
+        return llm.ask_json(SYSTEM, user, schema=MINUTES_SCHEMA, effort=config.LLM_EFFORT_FINAL)
     except Exception as exc:
         log.warning("%s %s: %s", NAME, decision["ticker"], exc)
         return None

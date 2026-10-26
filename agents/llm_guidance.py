@@ -19,7 +19,7 @@ from agents.supply_chain import _load, curated_metrics
 
 log = logging.getLogger(__name__)
 NAME = "llm_guidance"
-MAX_SIGNALS = 12
+MAX_SIGNALS = 60   # 2026-10-26 (user: read more): 12 read all of a name's statements for 21% of the 270 names; 60 for 96%
 MAX_AGE_DAYS = 180
 _DATE = re.compile(r"\((\d{2})-(\d{2})-(\d{4})\)")
 

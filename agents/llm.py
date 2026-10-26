@@ -104,10 +104,11 @@ def _ensure_server(wait_s):
     return False
 
 
-def ask_json(system, user, schema=OPINION_SCHEMA, model=None, timeout=None, tools=""):
+def ask_json(system, user, schema=OPINION_SCHEMA, model=None, timeout=None, tools="", effort=None):
     """One chat completion with a JSON schema; returns the parsed object.
     tools: comma list of Claude Code built-ins to allow, e.g. "WebSearch" (server-side web search).
-    timeout: seconds end to end (queue wait + the call); None = config.LLM_TIMEOUT."""
+    timeout: seconds end to end (queue wait + the call); None = config.LLM_TIMEOUT.
+    effort: Claude Code effort for this call; None = config.LLM_EFFORT (2026-10-26: sent on every call)."""
     global SKIPPED
     timeout = timeout or config.LLM_TIMEOUT
     if DEADLINE is not None and datetime.now(timezone.utc) >= DEADLINE:
@@ -119,6 +120,7 @@ def ask_json(system, user, schema=OPINION_SCHEMA, model=None, timeout=None, tool
     body = {
         "claude_tools": tools,
         "model": model or config.LLM_MODEL,
+        "effort": effort or config.LLM_EFFORT,
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
         "response_format": {"type": "json_schema", "json_schema": {"name": "opinion", "schema": schema}},
     }

@@ -87,6 +87,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
+    llm.API_ENABLED = config.LLM_BACKEND == "api_first"   # 2026-10-26: the guardian spends the API credit first too (config.LLM_BACKEND)
     dry = args.dry_run or config.DRY_RUN
     config.STATE_DIR.mkdir(exist_ok=True)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s",

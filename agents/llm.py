@@ -22,6 +22,10 @@ TIMINGS = []                   # end-to-end seconds (queue wait + the call, time
 SKIPPED = 0                    # calls refused by the deadline since the last timing_summary()
 STAGE_SKIPPED = 0              # calls refused since the cycle reset it at the start of its Claude stage (dashboard note)
 MODELS_SEEN = set()            # 2026-10-06: the serving configurations the server reported (system_fingerprint: model id/effort)
+API_ENABLED = False            # 2026-10-26: cycle.main / guardian.main set it from config.LLM_BACKEND; off for research scripts and tests
+API_OFF = None                 # why the API path stopped for this process (billing, budget, auth, bad request); None = still on
+_API_SPENT = None              # USD spent through the API, summed from state/api_spend.jsonl once per process, then kept up to date
+_API_CLIENT = None
 _LOCK = threading.Lock()
 
 
@@ -104,6 +108,92 @@ def _ensure_server(wait_s):
     return False
 
 
+def _spend_path():
+    return config.STATE_DIR / "api_spend.jsonl"
+
+
+def api_spent():
+    """USD spent through the Claude API so far (all processes, as of this process's first look, plus its own calls)."""
+    global _API_SPENT
+    with _LOCK:
+        if _API_SPENT is None:
+            total = 0.0
+            if _spend_path().exists():
+                for line in _spend_path().read_text(encoding="utf-8").splitlines():
+                    try:
+                        total += float(json.loads(line)["usd"])
+                    except (ValueError, KeyError, TypeError):
+                        pass
+            _API_SPENT = total
+        return _API_SPENT
+
+
+def _use_api(model, tools):
+    global API_OFF
+    if not API_ENABLED or API_OFF or tools or (model and model != config.LLM_MODEL) or not os.getenv("ANTHROPIC_API_KEY_TRADING"):
+        return False
+    if api_spent() >= config.LLM_API_BUDGET_USD:
+        API_OFF = f"budget ${config.LLM_API_BUDGET_USD:.0f} spent"
+        log.warning("Claude API off for this run (%s): calls go to the local server", API_OFF)
+        return False
+    return True
+
+
+_UNSUPPORTED = ("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf", "minLength", "maxLength")
+
+
+def _api_schema(node):
+    """The schema without the keywords the API's structured outputs reject (numeric bounds, string lengths: a 400 on 2026-10-26);
+    a numeric range moves into the description so the model still sees it, and the agents clip the values anyway."""
+    if isinstance(node, list):
+        return [_api_schema(x) for x in node]
+    if not isinstance(node, dict):
+        return node
+    out = {k: _api_schema(v) for k, v in node.items() if k not in _UNSUPPORTED}
+    if "minimum" in node or "maximum" in node:
+        rng = f"from {node.get('minimum', '-inf')} to {node.get('maximum', 'inf')}"
+        out["description"] = f"{node['description']} ({rng})" if node.get("description") else rng
+    return out
+
+
+def _ask_api(system, user, schema, effort, timeout):
+    """One Messages API call with a JSON schema; returns (parsed object, serving label). Records its cost."""
+    global _API_CLIENT, _API_SPENT, API_OFF
+    import anthropic
+    if _API_CLIENT is None:
+        _API_CLIENT = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY_TRADING"], max_retries=2)
+    try:
+        with _API_CLIENT.with_options(timeout=timeout).beta.messages.stream(
+                model=config.LLM_API_MODEL, max_tokens=32000,
+                system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],   # shared prefix (llm_nodus's market block)
+                messages=[{"role": "user", "content": user}],
+                output_config={"effort": effort, "format": {"type": "json_schema", "schema": _api_schema(schema)}},
+                betas=["server-side-fallback-2026-07-01"], fallbacks="default") as stream:
+            msg = stream.get_final_message()
+    except (anthropic.AuthenticationError, anthropic.PermissionDeniedError, anthropic.BadRequestError) as exc:
+        API_OFF = f"{type(exc).__name__}: {str(exc)[:160]}"      # repeats on every call (a low credit balance can come back as a 400)
+        log.warning("Claude API off for this run (%s): calls go to the local server", API_OFF)
+        raise
+    except anthropic.APIStatusError as exc:
+        if exc.status_code == 402:
+            API_OFF = "billing: the credit is used up"
+            log.warning("Claude API off for this run (%s): calls go to the local server", API_OFF)
+        raise
+    u, p = msg.usage, config.LLM_API_PRICES
+    usd = (u.input_tokens * p["input"] + (u.cache_creation_input_tokens or 0) * p["cache_write"]
+           + (u.cache_read_input_tokens or 0) * p["cache_read"] + u.output_tokens * p["output"]) / 1e6
+    with _LOCK:
+        _API_SPENT = (_API_SPENT or 0.0) + usd
+        with _spend_path().open("a", encoding="utf-8") as f:
+            f.write(json.dumps({"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"), "model": msg.model, "effort": effort,
+                                "in": u.input_tokens, "cache_write": u.cache_creation_input_tokens or 0,
+                                "cache_read": u.cache_read_input_tokens or 0, "out": u.output_tokens, "usd": round(usd, 5)}) + "\n")
+    if msg.stop_reason != "end_turn":
+        raise RuntimeError(f"Claude API stopped with {msg.stop_reason}")
+    text = next(b.text for b in msg.content if b.type == "text")
+    return json.loads(text), f"{msg.model}/{effort}/api"
+
+
 def ask_json(system, user, schema=OPINION_SCHEMA, model=None, timeout=None, tools="", effort=None):
     """One chat completion with a JSON schema; returns the parsed object.
     tools: comma list of Claude Code built-ins to allow, e.g. "WebSearch" (server-side web search).
@@ -117,6 +207,16 @@ def ask_json(system, user, schema=OPINION_SCHEMA, model=None, timeout=None, tool
             SKIPPED += 1
             STAGE_SKIPPED += 1
         raise StageDeadline(f"Claude stage deadline {DEADLINE.astimezone().strftime('%H:%M')} passed: call skipped")
+    t0 = time.time()
+    if _use_api(model, tools):
+        try:
+            out, served = _ask_api(system, user, schema, effort or config.LLM_EFFORT, timeout)
+            with _LOCK:
+                MODELS_SEEN.add(served)
+            TIMINGS.append(time.time() - t0)
+            return out
+        except Exception as exc:   # any API failure: this one call goes to the local server (the subscription)
+            log.warning("Claude API call failed, using the local server: %s", str(exc)[:200])
     body = {
         "claude_tools": tools,
         "model": model or config.LLM_MODEL,
@@ -129,7 +229,6 @@ def ask_json(system, user, schema=OPINION_SCHEMA, model=None, timeout=None, tool
         data=json.dumps(body).encode("utf-8"),
         headers={"Content-Type": "application/json"},
     )
-    t0 = time.time()
     try:
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:

@@ -7,3 +7,4 @@ requests
 ddgs
 numpy
 lightgbm
+anthropic

@@ -35,6 +35,16 @@ LLM_EFFORT = "high"               # Claude Code effort for the live Opus calls (
                                   # 2026-10-26 (user): high for the per-stock agents (server logs: high 15 s, max 71 s mean per call), with the
                                   # inputs they read widened instead; every call now sends its effort, so a running server's start value no longer matters
 LLM_EFFORT_FINAL = "max"          # 2026-10-26 (user): the last-stage Claude calls stay on Opus max: the guardian's exit judgment and the moderator's minutes
+LLM_BACKEND = "api_first"         # 2026-10-26 (user: "api 크레딧 먼저 쓰자"): the live cycle and the guardian call the Claude API
+                                  # (ANTHROPIC_API_KEY_TRADING in .env; a name `claude -p` does not read, so the local server stays on the
+                                  # subscription) until LLM_API_BUDGET_USD is spent or the API refuses for billing, then the local server as
+                                  # before; any other API failure sends that one call to the local server. "local" = the local server only.
+                                  # Research scripts and tests never use the API: only cycle.main and guardian.main switch it on
+LLM_API_MODEL = "claude-opus-5-5"
+LLM_API_BUDGET_USD = 160.0        # 2026-10-26 (user: "160불 정도 쓰고 api 그만", "10불 정도 남으면 멈춰"): of the $194 credit, so ~$34 stays
+                                  # (also for the website's Ask if it shares the credit); spend is summed from state/api_spend.jsonl.
+                                  # Estimate from measured calls: ~$42 the first day (every Claude answer asked anew), ~$32 a day after
+LLM_API_PRICES = {"input": 4.0, "cache_write": 5.0, "cache_read": 0.20, "output": 20.0}   # USD per million tokens, Opus 5.5 list prices
 LLM_WORKERS = 6                   # concurrent claude -p calls; also the server's slot count when the cycle starts it. 450 calls at max's ~100 s
                                   # need 6 slots to finish in ~2.1 h (3 slots: ~4.4 h, past the 06:30 PT open); each claude process is ~235 MB.
                                   # 2026-09-13 at xhigh: 41 s / call, 3 slots, ~1.7 h

@@ -320,6 +320,7 @@ def main():
     p.add_argument("--tickers", default="")
     p.add_argument("--reuse-signals", action="store_true")
     args = p.parse_args()
+    llm.API_ENABLED = config.LLM_BACKEND == "api_first"   # 2026-10-26: the live cycle spends the API credit first (config.LLM_BACKEND)
     dry = args.dry_run or config.DRY_RUN
 
     config.STATE_DIR.mkdir(exist_ok=True)

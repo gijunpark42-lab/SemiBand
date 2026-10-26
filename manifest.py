@@ -52,7 +52,7 @@ def config_snapshot():
 
 def prompt_hashes():
     out = {}
-    for name in ("llm_supply", "llm_guidance", "llm_news", "moderator"):
+    for name in ("llm_supply", "llm_guidance", "llm_news", "llm_nodus", "moderator"):
         try:
             mod = __import__(f"agents.{name}", fromlist=["SYSTEM"])
             out[name] = _sha_bytes(str(getattr(mod, "SYSTEM", "")).encode())[:16]

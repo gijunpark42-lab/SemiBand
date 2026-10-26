@@ -82,6 +82,9 @@ AGENTS = [
     "llm_supply",      # reads the supply-chain report: structure, deals, transitions
     "llm_guidance",    # reads the company's own latest call signals: guidance momentum
     "llm_news",        # reads three weeks of headlines: catalysts
+    "llm_nodus",       # 2026-10-26 (user: "모든 거 nodus에서 종합판단"): reads everything the Nodus42 map holds on the name
+                       # (statements, deals, financials, insiders, financing, screener) plus memory/GPU prices and hyperscaler capex.
+                       # No replay is possible (Claude); the learner weights it from its live scores like the other Claude agents
 ]
 SHADOW_AGENTS = ("insider",)      # agents run and recorded every cycle and scored like the others, but never voting: no feature, no
                                   # prior share, no weight, no place in the per-name breakdown. A candidate builds its live record
@@ -171,8 +174,9 @@ AFTER_HOURS_CATCHUP = True        # 2026-09-24 (user: "며칠 타이밍 놓쳤�
                                   # Holidays (no session in Alpaca's calendar) never trade; half days use their 13:00 close
 INSIDER_REFRESH_IN_CYCLE = False  # 2026-09-22: the cycle never fetches insider data (the nightly SemiBand-Insider task does); the
                                   # in-cycle refresh ran 1,316 s against its 300 s budget and delayed the voting Claude agents
-LLM_ORDER = ("llm_news", "llm_guidance", "llm_supply")   # Claude-stage order: news first, because a headline signal cannot be
-                                  # carried to another day, so it is the agent the deadline must not cut
+LLM_ORDER = ("llm_news", "llm_nodus", "llm_guidance", "llm_supply")   # Claude-stage order: news first, because a headline signal cannot be
+                                  # carried to another day, so it is the agent the deadline must not cut; llm_nodus next (2026-10-26):
+                                  # it has no carry-forward, while the last two do
 CARRY_FORWARD_AGENTS = ("llm_supply", "llm_guidance")   # 2026-09-22 (user): when a call fails or is skipped, reuse the name's
 CARRY_FORWARD_SESSIONS = 3        # last signal from the last N recorded sessions (slow-moving inputs); llm_news is never carried
 CONVICTION_EMA = 0.5              # round 52 (adopted 2026-09-23): the traded convictions are smoothed before demeaning, conv = a x today

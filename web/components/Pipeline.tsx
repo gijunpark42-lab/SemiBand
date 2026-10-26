@@ -118,7 +118,8 @@ export const ROLES: { agent: string; role: string; sees: string; speaks: string;
   { agent: "risk", role: "The brake", sees: "20-day volatility ≥ 1.4× the universe median, or a 60-day drawdown 15 pts deeper than SOXX", speaks: "Only when risk is elevated, always negative", cost: "free" },
   { agent: "macro", role: "Market regime", sees: "SOXX vs 50-day, SPY vs 200-day, VIX level, 20-day move in the 10-year yield → one regime score, expressed through each name's 60-day beta to SOXX", speaks: "Every name; high-beta names get the sign of the regime, low-beta the opposite", cost: "free" },
   { agent: "llm_supply", role: "Supply-chain analyst", sees: "The per-name supply-chain report (suppliers, customers, deals, transitions) and whether the price already reflects it", speaks: "Every name", cost: "Claude" },
-  { agent: "llm_guidance", role: "Guidance analyst", sees: "The company's 12 latest call statements plus the curated metrics: guidance raised or cut, backlog, margin direction", speaks: "Names with statements in the last 180 days", cost: "Claude" },
+  { agent: "llm_guidance", role: "Guidance analyst", sees: "The company's 60 latest call statements plus the curated metrics: guidance raised or cut, backlog, margin direction", speaks: "Names with statements in the last 180 days", cost: "Claude" },
   { agent: "llm_news", role: "Catalyst watch", sees: "Three weeks of headlines", speaks: "Names with headlines", cost: "Claude" },
+  { agent: "llm_nodus", role: "Whole-map analyst", sees: "Everything the Nodus42 map holds on the name (statements, deals, financials, consensus, insiders, financing, screener) plus memory and GPU prices and hyperscaler capex", speaks: "Every name on the map", cost: "Claude" },
   { agent: "moderator", role: "Minutes (no vote)", sees: "All ten opinions and the weights", speaks: "Agreement / disagreement / verdict / what to watch, for every order", cost: "Claude" },
 ];

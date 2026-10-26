@@ -19,7 +19,9 @@ from agents.supply_chain import _load, curated_metrics
 
 log = logging.getLogger(__name__)
 NAME = "llm_guidance"
-MAX_SIGNALS = 60   # 2026-10-26 (user: read more): 12 read all of a name's statements for 21% of the 270 names; 60 for 96%
+MAX_SIGNALS = None        # 2026-10-26 (user: read more, then "에이전트당 20만자"): every statement (12 read all of them for 21% of
+                          # the 270 names); the statement block is cut at STATEMENT_CHARS instead
+STATEMENT_CHARS = 200000
 MAX_AGE_DAYS = 180
 _DATE = re.compile(r"\((\d{2})-(\d{2})-(\d{4})\)")
 
@@ -72,7 +74,7 @@ def _one(ticker, company, node, price_line, reuse=None):
                          + "\n".join(f"- {k}: {v}" for k, v in curated.items()
                                      if k != "asof" and v and v != "—") + "\n")
     user = (f"Ticker: {ticker} ({company})\n{price_line}\n{curated_block}\n"
-            f"Company's own recent earnings-call and conference statements, newest first:\n" + "\n".join(lines)
+            f"Company's own recent earnings-call and conference statements, newest first:\n" + "\n".join(lines)[:STATEMENT_CHARS]
             + "\n\nTrading is commission-free but each order costs about 5 bps in slippage, and there is no obligation to trade: a direction near 0 with low confidence is a valid answer. Give your opinion as JSON.")
     try:
         o, since = reuse.ask(ticker, SYSTEM, user, price_line) if reuse else (llm.ask_json(SYSTEM, user), None)

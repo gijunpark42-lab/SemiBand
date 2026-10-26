@@ -26,8 +26,9 @@ from agents.supply_chain import _load
 
 log = logging.getLogger(__name__)
 NAME = "llm_nodus"
-DOSSIER_CHARS = 100000     # per-name cap; the facts come last, newest first, so a cut drops the oldest. Measured 2026-10-26 on the
-                           # 270 names: median 32.8k chars, 98% whole under 100k (NVDA 209k is cut); ~4.6M input tokens a day.
+DOSSIER_CHARS = None       # per-name cap (None = none; user 2026-10-26: "글자제한 두지 말고"); the facts come last, newest first, so a
+                           # cap would drop the oldest. Measured 2026-10-26 on the 270 names: median 32.8k chars, largest NVDA 209k
+                           # (~96k tokens); ~4.7M input tokens a day uncapped.
                            # Micron head to head: this dossier in one prompt 20 s / 49k input tokens; the same model reading
                            # the map through the MCP 47 s / 266k tokens over 13 turns, without the financials or insider data
 FIN_QUARTERS = 8           # quarterly rows of the financial statements
@@ -247,14 +248,15 @@ def _facts(n):
 
 
 def dossier(nid, price_line, today=None):
-    """The company block of the prompt, cut at DOSSIER_CHARS; None when the map has no node for it."""
+    """The company block of the prompt, cut at DOSSIER_CHARS when one is set; None when the map has no node for it."""
     n = _data()["nodes"].get(nid)
     if not n:
         return None
     today = today or date.today()
     parts = [_identity(nid, n, price_line), _calendar(nid), _screener(nid), _financials(nid), _cash(nid),
              _insiders(nid, today), _financing(nid, today), _exposure(nid), _edges(nid), _facts(n)]
-    return "\n\n".join(p for p in parts if p)[:DOSSIER_CHARS]
+    out = "\n\n".join(p for p in parts if p)
+    return out if DOSSIER_CHARS is None else out[:DOSSIER_CHARS]
 
 
 def _series_change(s):

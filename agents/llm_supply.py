@@ -29,7 +29,7 @@ SYSTEM = (
     "Be decisive but honest: use direction near 0 and low confidence when the evidence is thin or stale."
 )
 
-REPORT_CHARS = 30000   # 2026-10-26 (user: read more): 9000 cut 64% of the 270 reports; 30000 reads 99% of them whole
+REPORT_CHARS = 200000  # 2026-10-26 (user: read more, then "에이전트당 20만자"): 9000 cut 64% of the 270 reports; the largest is 41k
 
 
 def _report_builder():

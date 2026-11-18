@@ -4,9 +4,10 @@ import Performance from "@/components/Performance";
 import Pipeline, { ROLES } from "@/components/Pipeline";
 import SiteHeader from "@/components/SiteHeader";
 import Convictions from "@/components/Convictions";
+import Decisions from "@/components/Decisions";
 import { getBenchmarks, getLivePrices } from "@/lib/benchmarks";
-import { BENCHMARKS, type LivePoint } from "@/lib/performance";
-import { getAccount, getDashboard, getHistory, getPositions, getTrades } from "@/lib/alpaca";
+import { BENCHMARKS, marketDate, type LivePoint } from "@/lib/performance";
+import { getAccount, getDashboard, getHistory, getPositions, getTrades, strandedHeld } from "@/lib/alpaca";
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +18,6 @@ const cls = (v: number) => (v >= 0 ? "up" : "down");
 const when = (iso: string) =>
   new Date(iso).toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric",
     hour: "2-digit", minute: "2-digit" });
-const signed = (v: number, digits = 2) => `${v >= 0 ? "+" : ""}${v.toFixed(digits)}`;
 
 export default async function Page() {
   let account, positions, history, trades, dash;
@@ -40,7 +40,10 @@ export default async function Page() {
   }
 
   const equity = Number(account.equity);
-  const lastEquity = Number(account.last_equity);
+  // Alpaca leaves a stranded holding out of last_equity and the daily history but counts it in the live equity:
+  // add its dollars back to both, so "today" and the charts do not show a jump that never happened.
+  const stranded = strandedHeld(positions);
+  const lastEquity = Number(account.last_equity) + stranded.reduce((s, x) => s + x.usd, 0);
   const dayPl = equity - lastEquity;
   const dayPct = lastEquity ? dayPl / lastEquity : 0;
   const invested = positions.reduce((s, p) => s + Number(p.market_value), 0);
@@ -48,7 +51,8 @@ export default async function Page() {
 
   const points = history.timestamp
     .map((t, i) => ({ t, v: history.equity[i] }))
-    .filter((p): p is { t: number; v: number } => p.v !== null && p.v > 0);
+    .filter((p): p is { t: number; v: number } => p.v !== null && p.v > 0)
+    .map((p) => ({ t: p.t, v: p.v + stranded.reduce((s, x) => s + (marketDate(p.t) >= x.since ? x.usd : 0), 0) }));
 
   const weights = dash ? Object.entries(dash.weights).sort((a, b) => b[1] - a[1]) : [];
   const convictions = dash?.convictions ?? [];
@@ -74,7 +78,7 @@ export default async function Page() {
           <span>{dash ? `Published cycle · ${dash.date}${dash.dry_run ? " · dry run" : ""}` : "Awaiting a published cycle"}</span></div>
       </div>
       <nav className="section-nav" aria-label="Dashboard sections">
-        <a href="#overview">Overview</a><a href="#convictions">Convictions</a><a href="#positions">Positions</a>
+        <a href="#overview">Overview</a><a href="#positions">Positions</a><a href="#convictions">Convictions</a>
         <a href="#decisions">Decisions</a><a href="#agents">Agents</a><a href="#guardian">Guardian</a><a href="#trades">Trades</a>
       </nav>
 
@@ -100,6 +104,33 @@ export default async function Page() {
           <div className="value">{usd(Number(account.cash), 0)}</div>
           <div className="delta muted">{equity > 0 ? `${(Number(account.cash) / equity * 100).toFixed(1)}% of equity` : "Available cash"}</div>
         </div>
+      </div>
+
+      <h2 id="positions">Positions <span>{positions.length} open</span></h2>
+      <div className="card scroll">
+        {positions.length === 0 ? <div className="empty">Flat</div> : (
+          <table>
+            <thead><tr>
+              <th>Symbol</th><th className="num">Qty</th><th className="num">Avg entry</th>
+              <th className="num">Price</th><th className="num">Value</th><th className="num">P/L</th>
+            </tr></thead>
+            <tbody>
+              {positions.map((p) => {
+                const pl = Number(p.unrealized_pl);
+                return (
+                  <tr key={p.symbol}>
+                    <td><b>{p.symbol}</b></td>
+                    <td className="num">{Number(p.qty).toLocaleString()}</td>
+                    <td className="num">{usd(Number(p.avg_entry_price))}</td>
+                    <td className="num">{usd(Number(p.current_price))}</td>
+                    <td className="num">{usd(Number(p.market_value))}</td>
+                    <td className={`num ${cls(pl)}`}>{usd(pl)} ({pct(Number(p.unrealized_plpc))})</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
       </div>
 
       <h2>Account equity <span>Last 3 months · live mark at the end</span></h2>
@@ -280,60 +311,17 @@ export default async function Page() {
         })()}
       </div>
 
-      <h2 id="decisions">Decisions <span>The minutes of every order</span></h2>
+      <h2 id="decisions">Decisions <span>The minutes of the latest cycle&apos;s orders</span></h2>
       <div className="card">
         {!dash || (dash.history ?? []).length === 0 ? (
           <div className="empty">No decisions recorded yet</div>
         ) : (
-          (dash.history ?? []).slice().reverse().map((cycle, ci) => (
-            <details key={cycle.date} open={ci === 0} style={{ marginBottom: 12 }}>
-              <summary style={{ cursor: "pointer" }}>
-                <b>{cycle.date}</b>{cycle.dry_run ? " · dry run" : ""} · {cycle.decisions.length} order{cycle.decisions.length === 1 ? "" : "s"} ·
-                weights {Object.entries(cycle.weights).map(([a, w]) => `${a} ${(w * 100).toFixed(0)}%`).join(", ")}
-              </summary>
-              {(cycle.notes ?? []).map((n, i) => <div key={i} className="muted" style={{ fontSize: 12, margin: "6px 0" }}>· {n}</div>)}
-              {cycle.decisions.length === 0 && <div className="muted" style={{ fontSize: 12, margin: "6px 0" }}>no orders this cycle</div>}
-              {cycle.decisions.map((d) => (
-                <div key={d.ticker + d.side} style={{ margin: "10px 0 14px" }}>
-                  <div>
-                    <span className={`pill ${d.side.toLowerCase()}`}>{d.side}</span> <b>{d.ticker}</b>{" "}
-                    {d.notional != null ? usd(d.notional, 0) : "all"} · conviction{" "}
-                    <span className={cls(d.conviction)}>{signed(d.conviction)}</span>
-                    {d.target_usd != null && <span className="muted"> · target {usd(d.target_usd, 0)}, held before {usd(d.held_before_usd, 0)}</span>}
-                  </div>
-                  <div className="scroll">
-                    <table style={{ marginTop: 6 }}>
-                      <thead><tr>
-                        <th>Agent</th><th className="num">Weight</th><th className="num">Direction</th>
-                        <th className="num">Confidence</th><th className="num">Contribution</th><th>Why</th>
-                      </tr></thead>
-                      <tbody>
-                        {Object.entries(d.agents).sort((a, b) => Math.abs(b[1].contribution) - Math.abs(a[1].contribution)).map(([a, v]) => (
-                          <tr key={a}>
-                            <td>{a}</td>
-                            <td className="num">{(v.weight * 100).toFixed(0)}%</td>
-                            <td className={`num ${cls(v.direction)}`}>{signed(v.direction)}</td>
-                            <td className="num">{v.confidence.toFixed(2)}</td>
-                            <td className={`num ${cls(v.contribution)}`}>{signed(v.contribution, 3)}</td>
-                            <td className="reason">{v.reason}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  {d.discussion && (
-                    <div style={{ marginTop: 8, fontSize: 13, lineHeight: 1.5 }}>
-                      <div><b>Agreement</b> · {d.discussion.agreement}</div>
-                      <div><b>Disagreement</b> · {d.discussion.disagreement}</div>
-                      <div><b>Verdict</b> · {d.discussion.verdict}</div>
-                      <div className="muted"><b>Watch</b> · {d.discussion.watch}</div>
-                    </div>
-                  )}
-                  <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>{d.rule}</div>
-                </div>
-              ))}
-            </details>
-          ))
+          <>
+            <Decisions cycles={(dash.history ?? []).slice(-1)} />
+            {(dash.history ?? []).length > 1 && (
+              <Link href="/decisions" prefetch={false} className="text-button">Earlier cycles ({(dash.history ?? []).length - 1}) →</Link>
+            )}
+          </>
         )}
       </div>
 
@@ -367,33 +355,6 @@ export default async function Page() {
       <h2 id="convictions">Convictions <span>Explore the published ranking</span></h2>
       <div className="card">
         <Convictions rows={convictions} agentNames={agentNames} />
-      </div>
-
-      <h2 id="positions">Positions <span>{positions.length} open</span></h2>
-      <div className="card scroll">
-        {positions.length === 0 ? <div className="empty">Flat</div> : (
-          <table>
-            <thead><tr>
-              <th>Symbol</th><th className="num">Qty</th><th className="num">Avg entry</th>
-              <th className="num">Price</th><th className="num">Value</th><th className="num">P/L</th>
-            </tr></thead>
-            <tbody>
-              {positions.map((p) => {
-                const pl = Number(p.unrealized_pl);
-                return (
-                  <tr key={p.symbol}>
-                    <td><b>{p.symbol}</b></td>
-                    <td className="num">{Number(p.qty).toLocaleString()}</td>
-                    <td className="num">{usd(Number(p.avg_entry_price))}</td>
-                    <td className="num">{usd(Number(p.current_price))}</td>
-                    <td className="num">{usd(Number(p.market_value))}</td>
-                    <td className={`num ${cls(pl)}`}>{usd(pl)} ({pct(Number(p.unrealized_plpc))})</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
       </div>
 
       <h2 id="trades">Trade journal <span>What changed and why</span></h2>

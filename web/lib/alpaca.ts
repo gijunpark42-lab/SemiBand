@@ -26,6 +26,7 @@ export type Position = {
   qty: string;
   avg_entry_price: string;
   current_price: string;
+  lastday_price: string;
   market_value: string;
   unrealized_pl: string;
   unrealized_plpc: string;
@@ -109,6 +110,15 @@ export type Dashboard = {
   orders?: { ticker: string; side: string; notional: number | null; reason: string }[];
   notes?: string[];
 };
+
+// A held asset that stopped trading -> the first session Alpaca's daily history (and the account's last_equity) values it
+// at zero, while the live equity still counts it. Same list as broker.STRANDED: SLP was taken private at $18.50 a share in
+// cash (closed 2026-10-06) and the paper account never turned the shares into cash.
+export const STRANDED: Record<string, string> = { SLP: "2026-10-07" };
+
+// Dollars of the STRANDED assets still held (shares x the last price), with the session each one is missing from.
+export const strandedHeld = (positions: Position[]) => positions.filter((p) => p.symbol in STRANDED)
+  .map((p) => ({ since: STRANDED[p.symbol], usd: Number(p.qty) * Number(p.lastday_price) }));
 
 export const getAccount = () => get<Account>("/v2/account");
 export const getPositions = () => get<Position[]>("/v2/positions");
